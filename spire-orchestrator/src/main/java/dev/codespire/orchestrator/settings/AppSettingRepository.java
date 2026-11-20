@@ -42,6 +42,51 @@ public class AppSettingRepository {
         }
     }
 
+    /**
+     * The stored value for a key, or empty when unset; a read fault throws instead of reading as unset.
+     *
+     * <p>For a caller that must not mistake a database hiccup for "not configured": the review path refuses a review
+     * with no default model, and a refusal is final, while a thrown read is redelivered.
+     *
+     * @throws SettingReadFailed when the database cannot be read
+     */
+    public Optional<String> require(String key) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT value FROM app_setting WHERE key = ?")) {
+            ps.setString(1, key);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.ofNullable(rs.getString("value")) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new SettingReadFailed(key, e);
+        }
+    }
+
+    /** A setting could not be read; whether it is set is unknown, never assumed. */
+    public static final class SettingReadFailed extends RuntimeException {
+        public SettingReadFailed(String key, SQLException cause) {
+            super("app_setting read failed for '" + key + "'", cause);
+        }
+    }
+
+    /** Remove a key, so its reader falls back to "unset". Removing an absent key is not an error. */
+    @Transactional
+    public void delete(String key) {
+        try (Connection c = dataSource.getConnection()) {
+            delete(c, key);
+        } catch (SQLException e) {
+            throw new IllegalStateException("app_setting delete failed for '" + key + "'", e);
+        }
+    }
+
+    /** Remove a key on the caller's connection, inside the caller's transaction. */
+    public void delete(Connection c, String key) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("DELETE FROM app_setting WHERE key = ?")) {
+            ps.setString(1, key);
+            ps.executeUpdate();
+        }
+    }
+
     @Transactional
     public void set(String key, String value) {
         try (Connection c = dataSource.getConnection();

@@ -23,12 +23,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Which LLM provider a review spends (harness reviews, decision 1): the provider its repository names,
- * else the global default. A named provider that cannot be spent refuses; it never falls back, so the
- * payer never changes without the operator choosing it.
+ * Which LLM provider and model a review spends: the provider and model its repository names, else the default
+ * provider with the default review model ({@code llm.default-model}). A named provider that cannot be spent refuses;
+ * it never falls back, so the payer never changes without the operator choosing it.
  *
- * <p>The repository's choice is written with SQL rather than through {@link RepositoryRegistry}, so this
- * suite tests the resolution alone; the registry's own write is {@code RepositoryResourceTest}'s.
+ * <p>The repository's choice and the default model are written with SQL rather than through their registries, so this
+ * suite tests the resolution alone.
  */
 @QuarkusTest
 class WorkerLlmCredentialsTest {
@@ -46,19 +46,21 @@ class WorkerLlmCredentialsTest {
     private String namedModel;
 
     @BeforeEach
-    void defaultProvider() {
+    void defaultProvider() throws Exception {
+        execute("DELETE FROM app_setting WHERE key=?", LlmDefaultModel.KEY);
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         workspace = "TEST-llm-" + suffix;
-        defaultModel = catalogued("TEST-default-model-" + suffix);
-        namedModel = catalogued("TEST-named-model-" + suffix);
-        UUID defaultId = provider("TEST-default-" + suffix, defaultModel, true);
+        defaultModel = catalogued("TEST-default-model-" + suffix, true);
+        namedModel = catalogued("TEST-named-model-" + suffix, true);
+        UUID defaultId = provider("TEST-default-" + suffix, "openai", true);
         providers.setDefault(defaultId);
+        execute("INSERT INTO app_setting(key,value) VALUES (?,?)", LlmDefaultModel.KEY, defaultModel);
     }
 
     /**
      * The repository row and the review row go first, because the repository names a provider and a
-     * provider a repository names cannot be deleted; then this suite's providers, so the next suite's
-     * reset finds nothing of ours.
+     * provider a repository names cannot be deleted; then this suite's providers and the default model, so the next
+     * suite's reset finds nothing of ours.
      */
     @AfterEach
     void removeFixture() throws Exception {
@@ -67,27 +69,28 @@ class WorkerLlmCredentialsTest {
         execute("DELETE FROM repository_account WHERE repository_id IN (SELECT id FROM repository WHERE workspace=?)", workspace);
         execute("DELETE FROM repository WHERE workspace=?", workspace);
         for (UUID id : createdProviders) execute("DELETE FROM llm_provider WHERE id=?", id);
+        execute("DELETE FROM app_setting WHERE key=?", LlmDefaultModel.KEY);
     }
 
     @Test
-    void aReviewSpendsTheProviderItsRepositoryNames() throws Exception {
-        UUID named = provider("TEST-named", namedModel, true);
-        String reviewId = reviewOn(repository(named));
+    void aRepositoryProviderUsesTheRepositoryModel() throws Exception {
+        UUID named = provider("TEST-named", "openai", true);
+        String reviewId = reviewOn(repository(named, namedModel));
 
         DefaultLlm llm = credentials.resolveForReview(reviewId);
 
-        assertTrue(llm.isSpendable(), "an enabled, priceable named provider is spendable: " + llm.detail());
-        assertEquals(namedModel, llm.model(), "the review must spend the provider its repository names");
+        assertTrue(llm.isSpendable(), "an enabled, priceable named choice is spendable: " + llm.detail());
+        assertEquals(namedModel, llm.model(), "the review must spend the model its repository names");
     }
 
     @Test
-    void aRepositoryThatNamesNoProviderUsesTheGlobalDefault() throws Exception {
-        String reviewId = reviewOn(repository(null));
+    void theDefaultProviderUsesTheDefaultModel() throws Exception {
+        String reviewId = reviewOn(repository(null, null));
 
         DefaultLlm llm = credentials.resolveForReview(reviewId);
 
         assertTrue(llm.isSpendable(), llm.detail());
-        assertEquals(defaultModel, llm.model());
+        assertEquals(defaultModel, llm.model(), "a repository naming no provider spends the default review model");
     }
 
     /** A legacy review row has no repository (V60 left it null), and some reviews have no row yet. */
@@ -105,9 +108,21 @@ class WorkerLlmCredentialsTest {
     }
 
     @Test
+    void noDefaultModelIsRefusedNoDefaultModel() throws Exception {
+        execute("DELETE FROM app_setting WHERE key=?", LlmDefaultModel.KEY);
+        String reviewId = reviewOn(repository(null, null));
+
+        DefaultLlm llm = credentials.resolveForReview(reviewId);
+
+        assertEquals(DefaultLlm.Refusal.NO_DEFAULT_MODEL, llm.refusal(),
+                "a default provider without a default model must refuse, not spend some other model");
+        assertEquals("No default review model is selected. Choose one in Settings → LLM.", llm.note());
+    }
+
+    @Test
     void aSwitchedOffNamedProviderRefusesRatherThanFallingBack() throws Exception {
-        UUID named = provider("TEST-switched-off", namedModel, false);
-        String reviewId = reviewOn(repository(named));
+        UUID named = provider("TEST-switched-off", "openai", false);
+        String reviewId = reviewOn(repository(named, namedModel));
 
         DefaultLlm llm = credentials.resolveForReview(reviewId);
 
@@ -116,41 +131,66 @@ class WorkerLlmCredentialsTest {
         assertTrue(llm.note().contains("TEST-switched-off"), "the note names the provider: " + llm.note());
     }
 
-    /** The priceability guard applies to a named provider exactly as to the default. */
+    /** The priceability guard applies to a repository's model exactly as to the default. */
     @Test
-    void aNamedProviderWithAnUnpriceableModelIsRefused() throws Exception {
-        UUID named = provider("TEST-unpriceable", namedModel, true);
+    void anUnpriceableModelIsStillRefused() throws Exception {
+        UUID named = provider("TEST-unpriceable", "openai", true);
         String rateless = "TEST-uncatalogued-" + UUID.randomUUID().toString().substring(0, 8);
-        // As V30 does: a provider whose model has no pricing exists without passing the registry guard.
-        execute("UPDATE llm_provider SET model=? WHERE id=?", rateless, named);
-        String reviewId = reviewOn(repository(named));
+        String reviewId = reviewOn(repository(named, rateless));
 
         DefaultLlm llm = credentials.resolveForReview(reviewId);
 
         assertEquals(DefaultLlm.Refusal.MODEL_NOT_PRICEABLE, llm.refusal());
-        assertEquals(rateless, llm.model(), "the refusal names the named provider's model, not the default's");
+        assertEquals(rateless, llm.model(), "the refusal names the repository's model, not the default's");
+    }
+
+    /** A gateway setup: an anthropic-type provider in front of an openai model runs, as it did before the split. */
+    @Test
+    void aVendorMismatchStillRuns() throws Exception {
+        UUID named = provider("TEST-gateway", "anthropic", true);
+        String reviewId = reviewOn(repository(named, namedModel));
+
+        DefaultLlm llm = credentials.resolveForReview(reviewId);
+
+        assertTrue(llm.isSpendable(), "a vendor mismatch is a warning, not a refusal: " + llm.detail());
+        assertEquals(namedModel, llm.model());
+    }
+
+    /** A switched-off model keeps running for API reviews (pricing ignores enabled); attention asks for another. */
+    @Test
+    void aSwitchedOffChosenModelStillRuns() throws Exception {
+        String off = catalogued("TEST-off-model-" + UUID.randomUUID().toString().substring(0, 8), false);
+        UUID named = provider("TEST-named-off-model", "openai", true);
+        String reviewId = reviewOn(repository(named, off));
+
+        DefaultLlm llm = credentials.resolveForReview(reviewId);
+
+        assertTrue(llm.isSpendable(), "a switched-off chosen model still runs: " + llm.detail());
+        assertEquals(off, llm.model());
     }
 
     // ---- fixture -------------------------------------------------------------
 
-    private String catalogued(String name) {
+    private String catalogued(String name, boolean enabled) {
         models.create(new LlmModelInput("openai", name, name, "UNMETERED", Map.of(),
-                null, null, null, null, true, List.of()));
+                null, null, null, null, enabled, List.of()));
         return name;
     }
 
-    private UUID provider(String name, String model, boolean enabled) {
-        UUID id = UUID.fromString(providers.create(new LlmProviderInput(name, "openai",
-                "https://llm.example.invalid", "TEST-key", model, null, null, enabled, false)).id());
+    /** The provider's own model is the default model, so a test that spends anything else proves where it came from. */
+    private UUID provider(String name, String type, boolean enabled) {
+        UUID id = UUID.fromString(providers.create(new LlmProviderInput(name, type,
+                "https://llm.example.invalid", "TEST-key", defaultModel, null, null, enabled, false)).id());
         createdProviders.add(id);
         return id;
     }
 
-    private UUID repository(UUID reviewProvider) throws Exception {
+    private UUID repository(UUID reviewProvider, String reviewModel) throws Exception {
         UUID id = repositories.create(new RepositoryInput("github", "https://github.example.invalid",
                 workspace, "TEST-repo", true, null, null)).id();
         if (reviewProvider != null) {
-            execute("UPDATE repository SET review_llm_provider_id=? WHERE id=?", reviewProvider, id);
+            execute("UPDATE repository SET review_llm_provider_id=?, review_llm_model=? WHERE id=?",
+                    reviewProvider, reviewModel, id);
         }
         return id;
     }

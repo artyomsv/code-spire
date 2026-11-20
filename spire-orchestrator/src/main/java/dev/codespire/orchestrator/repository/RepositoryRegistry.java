@@ -205,11 +205,25 @@ public class RepositoryRegistry {
 
     /** The provider a repository's reviews use (harness reviews, decision 1); empty means the global default. */
     public Optional<UUID> reviewLlmProviderId(UUID id) {
+        return reviewLlmChoice(id).map(ReviewLlmChoice::providerId);
+    }
+
+    /** A repository's own API choice: the provider and the model it reviews with, read together. */
+    public record ReviewLlmChoice(UUID providerId, String model) {
+    }
+
+    /**
+     * The provider and model a repository's reviews use, in one read so the two never come from different saves;
+     * empty means the global default (no provider named, or no such row).
+     */
+    public Optional<ReviewLlmChoice> reviewLlmChoice(UUID id) {
         try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(
-                "SELECT review_llm_provider_id FROM repository WHERE id=?")) {
+                "SELECT review_llm_provider_id, review_llm_model FROM repository WHERE id=?")) {
             statement.setObject(1, id);
             try (ResultSet rows = statement.executeQuery()) {
-                return rows.next() ? Optional.ofNullable(rows.getObject(1, UUID.class)) : Optional.empty();
+                if (!rows.next()) return Optional.empty();
+                UUID provider = rows.getObject(1, UUID.class);
+                return provider == null ? Optional.empty() : Optional.of(new ReviewLlmChoice(provider, rows.getString(2)));
             }
         } catch (SQLException failure) { throw database(failure); }
     }
