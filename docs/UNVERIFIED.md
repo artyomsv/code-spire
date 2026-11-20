@@ -46,12 +46,14 @@ Built and tested in CI only; no live deployment has read the catalog yet.
   against a TEST catalog; no live Claude Code run has used a model offered this way.
 - **`cacheWrite1h` is recorded, not charged.** The ledger has one `CACHE_WRITE` type and no harness reports the
   cache lifetime, so a 1-hour write is charged at the 5-minute rate (`cacheWrite`).
-- **Long-context tiers are not modelled.** OpenAI prices prompts over 272K input tokens at 2x input and cache and
-  1.5x output, and Claude Haiku 5.5 prompts over 100,000 tokens higher; the catalog holds one rate per type, so
-  such calls are under-priced (ai-catalog/PRICES-REVIEW.md).
-- **The catalog's API dialect is absent** for every model in the first file: no vendor page stated `temperature`
-  support or `max_tokens` against `max_completion_tokens`, so an API review on a catalog-only model uses the
-  default dialect. Whether each vendor accepts it is not proven; a manual model of the same name can set it.
+- **Long-context calls are under-charged, by decision (operator, 2026-11-20).** The catalog holds one rate per
+  token type, the short-context one. A call above OpenAI's 272K-input threshold (which OpenAI bills at 2x input
+  and cache, 1.5x output) or above Claude Haiku 5.5's 100,000-token threshold (higher rates on every type) is
+  charged at the base rate, so the ledger under-states it, until the catalog can price tiers.
+- **The catalog's request settings are read from the vendors' API reference pages, not from a live call.**
+  OpenAI models use `max_completion_tokens` and send `temperature`; Claude models send `max_tokens` and omit
+  `temperature` (each model's migration guide says to omit it). No API review has run on a catalog-only model.
+  The review worker cannot send Anthropic's `output_config.effort`, so `reasoningEffort` stays null for Claude.
 - **OpenAI cache writes.** The 30-minute write price is recorded as `cacheWrite`; the 12-hour price has no field.
   Whether Codex reports cache-write tokens separately from input (PR #182 counts them as input) decides whether
   the rate is ever applied.

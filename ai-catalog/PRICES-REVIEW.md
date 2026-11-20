@@ -23,22 +23,43 @@ this file in the commit after the check.
 
 1. **Long-context tiers are not modelled.** OpenAI prices >272K input at 2x input and cache, 1.5x output;
    Claude Haiku 5.5 prices prompts >100,000 tokens higher ($0.50 in, $2.50 out, $0.05 cache read, $0.625 5m
-   write, $1 1h write). The ledger has one rate per type, so those calls are under-priced. Alternative: leave
-   Haiku 5.5 (and any OpenAI model) out until tiers exist.
+   write, $1 1h write). The ledger has one rate per type, so those calls are under-charged. Decided on
+   2026-11-20: keep the base rates; the gap is recorded in docs/UNVERIFIED.md and ai-catalog/README.md.
 2. **OpenAI cache writes.** The page lists "Short context 30m write" and "12h write". `cacheWrite` holds the
    30m price; the 12h price has no field (`cacheWrite1h` is a 1-hour price). gpt-5.5 and gpt-5.4 show "-",
    so CACHE_WRITE is unpriced for them and a Codex build on them is refused `model_pricing_incomplete` until
    a manual model or a later catalog change prices it.
 3. **GPT-5.6 Sol is promotional:** "GPT-5.6 Sol's promotional pricing is available until November 30, 2026."
    Its row needs a new price and `observedAt` after that date.
-4. **`api` is null for every model.** No official page states `temperature` support or `max_tokens` versus
-   `max_completion_tokens`, so the review path's default dialect (max_tokens, temperature sent) applies. A
-   manual model of the same name can set it.
+4. **Request settings (`api`)** are set from the vendors' API reference pages; see "Request settings" below.
 5. **Left out:** `gpt-daybreak-blue-latest`, `gpt-daybreak-red-latest` and `codex-auto-review` (in the Codex
    image's list, not on the pricing page). No Gemini model.
 6. **Aliases** come from the model pages: `gpt-5.6` ("The `gpt-5.6` alias routes requests to GPT-5.6 Sol."),
    `gpt-5.5-2026-04-23` and `gpt-5.4-2026-03-05` (each page's default snapshot).
 7. Anthropic's "1M tokens" is written as 1000000 and "128K tokens" as 128000.
+
+## Request settings
+
+What the review worker sends (`spire-llm`, `LangChain4jLlmProvider`): for `openai` it calls Chat Completions and
+puts the output cap on `max_tokens` (MAX_TOKENS) or `max_completion_tokens` (MAX_COMPLETION_TOKENS), sends
+`temperature` only when `temperature: true` (and retries once without it if the vendor rejects it), and sends
+`reasoning_effort` when it is not null. For `anthropic` it calls the Messages API natively: it always sends
+`max_tokens`, sends `temperature` only when `temperature: true`, and ignores `reasoningEffort`.
+
+| Model(s) | Field | Value | Stated on the page | Page |
+|---|---|---|---|---|
+| all OpenAI | outputTokenParam | MAX_COMPLETION_TOKENS | `max_tokens`: "This value is now deprecated in favor of `max_completion_tokens`, and is not compatible with o-series models." | https://developers.openai.com/api/docs/api-reference/chat/create |
+| all OpenAI | temperature | true | `temperature: optional number or null (default: 1)`, "What sampling temperature to use, between 0 and 2." No restriction names these models. | https://developers.openai.com/api/docs/api-reference/chat/create |
+| all OpenAI | reasoningEffort | null | "Not all reasoning models support every value." Supported values differ per model (gpt-6-astra has no `none`; gpt-5.4 defaults to `none`), so nothing is sent and each model's default applies. | https://developers.openai.com/api/docs/models/<id>, https://developers.openai.com/api/docs/guides/reasoning |
+| all Anthropic | outputTokenParam | MAX_TOKENS | `max_tokens`: "The maximum number of tokens to generate before stopping." (the native client always sends it) | https://platform.claude.com/docs/en/api/messages/create |
+| claude-opus-5-5 | temperature | false | "Omit `temperature`, `top_p`, and `top_k`. Use prompting to guide the model's behavior." | https://platform.claude.com/docs/en/models/opus-5-5/migration-guide |
+| claude-fable-5-2 | temperature | false | "Omit `temperature`, `top_p`, and `top_k`, as on Claude Fable 5.1." | https://platform.claude.com/docs/en/models/fable-5-2/migration-guide |
+| claude-sonnet-5-5 | temperature | false | "Remove `temperature`, `top_p`, and `top_k`." | https://platform.claude.com/docs/en/models/sonnet-5-5/migration-guide |
+| claude-haiku-5-5 | temperature | false | "On Claude Haiku 5.5, omit `temperature`, `top_p`, and `top_k`" | https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide |
+| all Anthropic | reasoningEffort | null | The Messages API's control is `output_config.effort` ("Valid values are `low`, `medium`, `high`, `xhigh`, or `max`."); the review worker does not send it, so a value here would do nothing. | https://platform.claude.com/docs/en/api/messages/create |
+
+Mismatches found, not fixed here: the review worker cannot send Anthropic's `output_config.effort`, and the
+catalog's `reasoningEffort` accepts only low, medium and high although both vendors document more levels.
 
 ## Every price
 

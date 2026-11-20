@@ -68,6 +68,15 @@ CI (`./gradlew :spire-llm-catalog:checkCatalog`) refuses a change that breaks an
   priced, so a run that started before is still charged, but no new run uses it.
 - **A changed price changes `observedAt`.**
 
+## Known limits
+
+- **One rate per token type.** Vendors that price long prompts higher are entered at their base (short-context)
+  rate: a call above OpenAI's 272K-input threshold, or above Claude Haiku 5.5's 100,000-token threshold, is
+  charged at the base rate and so under-charged, until the catalog can price tiers.
+- **`cacheWrite1h` is recorded, not charged.** The ledger has one cache-write type, charged at `cacheWrite`.
+- **`api` is optional.** When it is null the review path's default applies (`max_tokens`, `temperature` sent).
+  Each value written comes from the vendor's API reference, listed with the prices it was reviewed with.
+
 ## Where prices come from
 
 A person, or an agent preparing the pull request, reads each price from the vendor's own pricing page

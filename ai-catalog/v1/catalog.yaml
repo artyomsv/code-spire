@@ -6,7 +6,7 @@
 # - one rate per type: OpenAI's long-context tier (>272K input) and Claude Haiku 5.5's (>100K) are
 #   not modelled, so such calls are priced at the short-context rates below;
 # - OpenAI's shortest cache write is 30 minutes; it is recorded as cacheWrite. Its 12-hour price has no field;
-# - `api` is absent: no vendor page states the request dialect, so the review path's default applies.
+# - `api`: sources in ai-catalog/PRICES-REVIEW.md, "Request settings". reasoningEffort is null: the vendor's default applies.
 providers:
   - code: openai
     displayName: OpenAI
@@ -34,7 +34,10 @@ models:
       structuredOutput: true
       imageInput: true
       promptCache: true
-    api: null
+    api:
+      outputTokenParam: MAX_TOKENS
+      temperature: false
+      reasoningEffort: null
     pricing:
       input: 800000
       output: 4000000
@@ -61,7 +64,10 @@ models:
       structuredOutput: true
       imageInput: true
       promptCache: true
-    api: null
+    api:
+      outputTokenParam: MAX_TOKENS
+      temperature: false
+      reasoningEffort: null
     pricing:
       input: 400000
       output: 2000000
@@ -88,7 +94,10 @@ models:
       structuredOutput: true
       imageInput: true
       promptCache: true
-    api: null
+    api:
+      outputTokenParam: MAX_TOKENS
+      temperature: false
+      reasoningEffort: null
     pricing:
       input: 200000
       output: 1000000
@@ -115,7 +124,10 @@ models:
       structuredOutput: true
       imageInput: true
       promptCache: true
-    api: null
+    api:
+      outputTokenParam: MAX_TOKENS
+      temperature: false
+      reasoningEffort: null
     pricing:
       input: 10000
       output: 50000
@@ -142,7 +154,10 @@ models:
       structuredOutput: true
       imageInput: true
       promptCache: true
-    api: null
+    api:
+      outputTokenParam: MAX_COMPLETION_TOKENS
+      temperature: true
+      reasoningEffort: null
     pricing:
       input: 1000000
       output: 5000000
@@ -168,7 +183,10 @@ models:
       structuredOutput: true
       imageInput: true
       promptCache: true
-    api: null
+    api:
+      outputTokenParam: MAX_COMPLETION_TOKENS
+      temperature: true
+      reasoningEffort: null
     pricing:
       input: 200000
       output: 1000000
@@ -194,7 +212,10 @@ models:
       structuredOutput: true
       imageInput: true
       promptCache: true
-    api: null
+    api:
+      outputTokenParam: MAX_COMPLETION_TOKENS
+      temperature: true
+      reasoningEffort: null
     pricing:
       input: 10000
       output: 50000
@@ -220,7 +241,10 @@ models:
       structuredOutput: true
       imageInput: true
       promptCache: true
-    api: null
+    api:
+      outputTokenParam: MAX_COMPLETION_TOKENS
+      temperature: true
+      reasoningEffort: null
     pricing:
       input: 400000
       output: 2000000
@@ -246,7 +270,10 @@ models:
       structuredOutput: true
       imageInput: true
       promptCache: true
-    api: null
+    api:
+      outputTokenParam: MAX_COMPLETION_TOKENS
+      temperature: true
+      reasoningEffort: null
     pricing:
       input: 200000
       output: 1200000
@@ -272,7 +299,10 @@ models:
       structuredOutput: true
       imageInput: true
       promptCache: true
-    api: null
+    api:
+      outputTokenParam: MAX_COMPLETION_TOKENS
+      temperature: true
+      reasoningEffort: null
     pricing:
       input: 20000
       output: 120000
@@ -298,7 +328,10 @@ models:
       structuredOutput: true
       imageInput: true
       promptCache: true
-    api: null
+    api:
+      outputTokenParam: MAX_COMPLETION_TOKENS
+      temperature: true
+      reasoningEffort: null
     pricing:
       input: 500000
       output: 3000000
@@ -323,7 +356,10 @@ models:
       structuredOutput: true
       imageInput: true
       promptCache: true
-    api: null
+    api:
+      outputTokenParam: MAX_COMPLETION_TOKENS
+      temperature: true
+      reasoningEffort: null
     pricing:
       input: 250000
       output: 1500000
