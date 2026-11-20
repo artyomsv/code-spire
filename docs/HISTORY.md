@@ -2567,3 +2567,13 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   repository's provider model into `review_llm_model`; V119 drops the column. There is no rollback without a database
   backup. An older dashboard that saves a repository with a provider and no model is refused 400. Not yet run live:
   see the docs/UNVERIFIED.md entry.
+
+- **PR #442's first review (2026-11-20, branch `feat/ai-catalog`).** Thirteen findings, fixed on the branch: a review
+  read the default provider and the default model in two queries, so a default switched between them mixed them, now
+  one statement; writers of the default pair take one advisory lock; a second instance on a new database could store the
+  bundled catalog over an accepted remote file, now only an empty row is written; a fractional price (bound as a whole
+  one by Jackson) and a model with no display name are refused; "Use catalog" keeps the in-use guard when another
+  manual row answers to the entry's names; the harness picker trusts the server's alias-aware `keyPriced`; failed
+  catalog and default-model reads are shown with a retry; the new model controls use `SettingField`, and the settings
+  contract now counts the shared Select; a byte-cap test proves the read stops at the cap; and the new code moved out
+  of classes over the size limit. Each guard is paired with its test in the commit that added it.

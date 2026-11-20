@@ -62,8 +62,14 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   Kafka, with the React dashboard. Bitbucket Cloud, GitHub and GitLab have measured live reviewer
   parity. Jira, Confluence, GitHub/GitLab Issues, repository rules and rung-2 code knowledge supply
   context. Repository prompts, /finding, learned memory, analytics and operator SCM sign-in remain.
-  Reviews and replies may use a per-repository LLM provider (Settings → Repositories → Settings →
-  Review with, V105); a named provider that is switched off refuses rather than falls back.
+  An LLM provider is a connection (name, type, base URL, key) with no model; the review model is chosen
+  where it is used: the default review model (app setting `llm.default-model`) beside the default
+  provider, changed with it in one request, or a repository's provider and `review_llm_model` together
+  (Settings → Repositories → Settings → Review with). A named provider that is switched off refuses
+  rather than falls back. Chat models, their capabilities and prices come from the public catalog file
+  `ai-catalog/v1/catalog.yaml` (module `spire-llm-catalog`, ADR-051), read from `SPIRE_LLM_CATALOG_URL`
+  every `SPIRE_LLM_CATALOG_REFRESH_INTERVAL` (default 6 h) and kept in `llm_catalog_state` (V117);
+  manual models in Settings → LLM → Models override it by name.
 - **Operations are delivered.** Hybrid OIDC uses separate service prefixes and session cookies;
   stored sensitive content is encrypted with Tink. The charge ledger, fleet caps, refused status,
   archive policy, attention, circuit breakers, provider-neutral boundaries and split licensing
@@ -255,6 +261,13 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   Blocker posted Approve, on the same MAJOR finding. The land gate at another level is proven by tests only.
 
 **Limits that remain:**
+
+- **The model catalog and the provider/model split are on branch `feat/ai-catalog` (PR #442), not on master.**
+  CI is green on the branch; nothing is live-proven: no deployment has read the catalog URL, run V117–V119 on a
+  real database, or reviewed on a catalog-only model (docs/UNVERIFIED.md, the two 2026-11-20 entries). Upgrading
+  needs every orchestrator stopped first (V119 drops `llm_provider.model`) and has no rollback without a backup
+  (docs/HISTORY.md; designs docs/superpowers/specs/2026-11-20-ai-catalog-design.md and
+  2026-11-20-llm-provider-without-model-design.md).
 
 - **Specification, plan and steps ran on one model and one harness** (Codex `gpt-6-astra` on a seat). The
   run row of a step that is not the last keeps `awaiting_delivery`; a lost checkpoint, a failed step, the
