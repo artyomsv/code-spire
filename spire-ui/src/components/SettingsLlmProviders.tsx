@@ -272,6 +272,7 @@ export default function SettingsLlmProviders() {
         <LlmProviderForm
           initial={providerForm === 'new' ? null : providerForm}
           models={models}
+          hasEnabledDefault={providers.some((p) => p.isDefault && p.enabled)}
           onClose={() => setProviderForm(null)}
           onSaved={async () => {
             setProviderForm(null);
@@ -377,11 +378,14 @@ function ConnCell({ conn, enabled, onRecheck }: { conn: Conn | undefined; enable
 function LlmProviderForm({
   initial,
   models,
+  hasEnabledDefault,
   onClose,
   onSaved,
 }: {
   initial: LlmProviderView | null;
   models: LlmModelView[];
+  /** Replacing an enabled default needs the new default's model in the same request (the server refuses it otherwise). */
+  hasEnabledDefault: boolean;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
@@ -398,6 +402,7 @@ function LlmProviderForm({
   const [error, setError] = useState<string | null>(null);
 
   const typeModels = vendorModelOptions(models, type);
+  const modelRequired = !editing && isDefault && hasEnabledDefault;
 
   function chooseType(t: LlmType) {
     setType(t);
@@ -527,7 +532,9 @@ function LlmProviderForm({
               <small className="field-hint">
                 {typeModels.length === 0
                   ? `No enabled ${type} models — add one under Models first.`
-                  : 'Written with the default provider; leave empty to choose it later.'}
+                  : modelRequired
+                    ? 'Required: it replaces the current default model, together with the default provider.'
+                    : 'Written with the default provider; leave empty to choose it later.'}
               </small>
             </label>
           )}
@@ -538,7 +545,7 @@ function LlmProviderForm({
             <button type="button" className="btn-ghost" onClick={onClose}>
               Cancel
             </button>
-            <button type="submit" className="btn" disabled={busy}>
+            <button type="submit" className="btn" disabled={busy || (modelRequired && defaultModel === '')}>
               {busy ? 'Saving…' : editing ? 'Save changes' : 'Add provider'}
             </button>
           </div>

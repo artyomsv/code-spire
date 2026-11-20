@@ -379,3 +379,40 @@ describe('SettingsLlmProviders — default provider and model', () => {
     await waitFor(() => expect(setDefault).toHaveBeenCalledWith('TEST-provider-2', 'TEST-a'));
   });
 });
+
+describe('SettingsLlmProviders — a new default provider', () => {
+  const openaiModel = manualModel({ id: 'TEST-o-id', name: 'TEST-o', label: 'TEST openai' });
+
+  beforeEach(() => {
+    vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([openaiModel]);
+    vi.spyOn(api, 'checkLlmProvider').mockResolvedValue({ ok: true, detail: null });
+  });
+
+  async function openNewDefaultForm(): Promise<HTMLElement> {
+    renderPage();
+    await screen.findByText('TEST-provider');
+    fireEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
+    const form = (await screen.findByRole('heading', { name: 'Add LLM provider' })).closest('.modal') as HTMLElement;
+    fireEvent.click(within(form).getByLabelText('Use as the default provider'));
+    return form;
+  }
+
+  it('replacing an enabled default requires its model before Save', async () => {
+    vi.spyOn(api, 'fetchLlmProviders').mockResolvedValue([provider()]);
+    const form = await openNewDefaultForm();
+
+    expect(within(form).getByText(/Required: it replaces the current default model/)).toBeInTheDocument();
+    expect(within(form).getByRole('button', { name: 'Add provider' })).toBeDisabled();
+    fireEvent.click(within(form).getByRole('combobox', { name: 'Default review model' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'TEST openai (TEST-o)' }));
+    expect(within(form).getByRole('button', { name: 'Add provider' })).toBeEnabled();
+  });
+
+  it('with no enabled default the model may be chosen later', async () => {
+    vi.spyOn(api, 'fetchLlmProviders').mockResolvedValue([provider({ enabled: false })]);
+    const form = await openNewDefaultForm();
+
+    expect(within(form).getByText(/leave empty to choose it later/)).toBeInTheDocument();
+    expect(within(form).getByRole('button', { name: 'Add provider' })).toBeEnabled();
+  });
+});
