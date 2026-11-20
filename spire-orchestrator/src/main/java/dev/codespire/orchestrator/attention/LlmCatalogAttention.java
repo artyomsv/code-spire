@@ -33,7 +33,8 @@ public class LlmCatalogAttention {
     static final String INVALID_PREFIX = "invalid: ";
     private static final int INTERVALS_BEFORE_STALE = 3;
     private static final Duration STALE_WHEN_INTERVAL_OFF = Duration.ofHours(24);
-    private static final String OFF = "off";
+    /** The values Quarkus reads as "never run the schedule" for {@code every}. */
+    private static final java.util.Set<String> SWITCHED_OFF = java.util.Set.of("off", "disabled");
 
     @Inject
     LlmModelCatalog catalog;
@@ -97,7 +98,7 @@ public class LlmCatalogAttention {
     }
 
     private Duration staleAfter() {
-        if (refreshInterval == null || OFF.equalsIgnoreCase(refreshInterval.strip())) {
+        if (refreshInterval == null || SWITCHED_OFF.contains(refreshInterval.strip().toLowerCase(java.util.Locale.ROOT))) {
             return STALE_WHEN_INTERVAL_OFF;
         }
         return DurationConverter.parseDuration(refreshInterval.strip()).multipliedBy(INTERVALS_BEFORE_STALE);

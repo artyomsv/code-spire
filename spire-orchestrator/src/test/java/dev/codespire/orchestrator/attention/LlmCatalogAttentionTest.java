@@ -74,6 +74,13 @@ class LlmCatalogAttentionTest {
         assertEquals(1, staleRows(attention(REMOTE, lastSuccess(NOW.minus(Duration.ofHours(25)), null), "off")).size());
     }
 
+    /** Quarkus switches a schedule off with `off` or `disabled`; both wait a day, and neither may throw. */
+    @Test
+    void disabledIsReadLikeOff() {
+        assertEquals(List.of(), staleRows(attention(REMOTE, lastSuccess(NOW.minus(Duration.ofHours(23)), null), "disabled")));
+        assertEquals(1, staleRows(attention(REMOTE, lastSuccess(NOW.minus(Duration.ofHours(25)), null), "DISABLED")).size());
+    }
+
     @Test
     void nothingStoredYetIsNotStale() {
         LlmCatalogState empty = new LlmCatalogState(null, null, null, null, null, null, null, null, null, null);
