@@ -1659,7 +1659,12 @@ public class ReviewProjection {
         List<ReviewSummary> out = new ArrayList<>();
         for (UntypedSummary row : rows) {
             String model = row.ledger().model();
-            String type = model == null ? null : types.computeIfAbsent(model, this::llmTypeFor);
+            // containsKey, not computeIfAbsent: an unknown model or a fault answers null, and null is an answer
+            // too, asked once per model for the whole list rather than once per row.
+            if (model != null && !types.containsKey(model)) {
+                types.put(model, llmTypeFor(model));
+            }
+            String type = model == null ? null : types.get(model);
             out.add(row.row().toSummary(row.ledger().withLlmType(type), openCounts(row.row())));
         }
         return out;

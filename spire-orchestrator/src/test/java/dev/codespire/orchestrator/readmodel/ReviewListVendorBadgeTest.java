@@ -8,12 +8,16 @@ import dev.codespire.orchestrator.llm.ChargeCall;
 import dev.codespire.orchestrator.llm.ChargeKind;
 import dev.codespire.orchestrator.llm.ChargeLine;
 import dev.codespire.orchestrator.llm.catalog.CatalogTestDoubles;
+import dev.codespire.orchestrator.llm.catalog.LlmModelCatalog;
+import dev.codespire.orchestrator.llm.catalog.ResolvedModel;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
 import javax.sql.DataSource;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -60,6 +64,33 @@ class ReviewListVendorBadgeTest {
 
         assertEquals("TEST-cat-a", row.model());
         assertEquals("anthropic", row.llmType());
+    }
+
+    /** An unknown model's badge is null, and null is remembered: one resolve per model for the whole list. */
+    @Test
+    void anUnknownModelIsResolvedOncePerList() {
+        String unknown = "TEST-badge-unknown-" + ReviewFixtures.newPr();
+        seedReviewChargedOn(unknown);
+        seedReviewChargedOn(unknown);
+        AtomicInteger asked = new AtomicInteger();
+        ReviewProjection counting = new ReviewProjection();
+        counting.dataSource = dataSource;
+        counting.mapper = mapper;
+        counting.encryption = encryption;
+        counting.attention = attention;
+        counting.catalog = new LlmModelCatalog() {
+            @Override
+            public Optional<ResolvedModel> resolve(String name) {
+                if (unknown.equals(name)) {
+                    asked.incrementAndGet();
+                }
+                return Optional.empty();
+            }
+        };
+
+        counting.listSummaries(false);
+
+        assertEquals(1, asked.get(), "two rows on one unknown model, so one resolve");
     }
 
     @Test
