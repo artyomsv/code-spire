@@ -38,6 +38,26 @@ this file in the commit after the check.
    `gpt-5.5-2026-04-23` and `gpt-5.4-2026-03-05` (each page's default snapshot).
 7. Anthropic's "1M tokens" is written as 1000000 and "128K tokens" as 128000.
 
+## Names, lifecycle and capabilities
+
+| Model(s) | Field | Value | Stated on the page | Page |
+|---|---|---|---|---|
+| claude-fable-5-2, claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5 | displayName | Claude Fable 5.2, Claude Opus 5.5, Claude Sonnet 5.5, Claude Haiku 5.5 | the "Latest models" table's header row | https://platform.claude.com/docs/en/about-claude/models/overview |
+| the four Claude models | lifecycle.status | ACTIVE | listed under "## Latest models"; retirement "Not sooner than" a 2027 date for each | https://platform.claude.com/docs/en/about-claude/models/overview |
+| the four Claude models | capabilities.promptCache | true | each has "Cache hits and refreshes" and cache-write prices in the "Model pricing" table | https://platform.claude.com/docs/en/about-claude/pricing |
+| the four Claude models | capabilities.tools, imageInput | true | "All current models support text and image input, text output, multilingual capabilities, vision, and tool use." | https://platform.claude.com/docs/en/about-claude/models/overview |
+| the four Claude models | capabilities.structuredOutput | true | listed in the page's `supportedModels` | https://platform.claude.com/docs/en/build-with-claude/structured-outputs |
+| gpt-6-astra … gpt-5.4 | displayName | GPT-6 Astra, GPT-6 Sol, GPT-6 Luna, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, GPT-5.5, GPT-5.4 | each model page's title | https://developers.openai.com/api/docs/models/<id> |
+| the eight OpenAI models | capabilities.promptCache | true | "prompt_caching" under "Supported features", and a "Cached input" price | https://developers.openai.com/api/docs/models/<id> |
+| the eight OpenAI models | capabilities.tools, structuredOutput, imageInput | true | function calling and structured outputs under "Supported features"; "Input modalities: text, image" | https://developers.openai.com/api/docs/models/<id> |
+| the eight OpenAI models | lifecycle.status | ACTIVE | **Not stated.** No page says current, latest, legacy or deprecated. The schema requires a status, so ACTIVE (not retired) is written on the evidence that each is on the current pricing page with no deprecation note. gpt-6-sol's page says "See GPT-6.1 Sol for the newer Sol model." Confirm or change. | https://developers.openai.com/api/docs/pricing |
+
+**claude-fable-5-2 cache read, re-checked.** The row reads "| Claude Fable 5.2 | $8 / MTok | $10 / MTok | $16 / MTok |
+$0.20 / MTok<sup>1</sup> | $40 / MTok |" (columns: base input, 5m cache writes, 1h cache writes, cache hits and
+refreshes, output), and footnote 1 reads "Cache hits and refreshes on Claude Fable 5.2, Claude Mythos 5.2, Claude Fable
+5.1, and Claude Mythos 5.1 are priced at 0.025x the base input price." 0.025 × $8 = $0.20, so the figure equals Opus
+5.5's ($0.05 × $4) by the page's own multipliers.
+
 ## Request settings
 
 What the review worker sends (`spire-llm`, `LangChain4jLlmProvider`): for `openai` it calls Chat Completions and

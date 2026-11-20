@@ -140,7 +140,7 @@ models:
       observedAt: 2026-11-20
   - modelId: gpt-6-astra
     provider: openai
-    displayName: GPT-6-Astra
+    displayName: GPT-6 Astra
     aliases: []
     lifecycle:
       status: ACTIVE
@@ -169,7 +169,7 @@ models:
       observedAt: 2026-11-20
   - modelId: gpt-6-sol
     provider: openai
-    displayName: GPT-6-Sol
+    displayName: GPT-6 Sol
     aliases: []
     lifecycle:
       status: ACTIVE
@@ -198,7 +198,7 @@ models:
       observedAt: 2026-11-20
   - modelId: gpt-6-luna
     provider: openai
-    displayName: GPT-6-Luna
+    displayName: GPT-6 Luna
     aliases: []
     lifecycle:
       status: ACTIVE
@@ -227,7 +227,7 @@ models:
       observedAt: 2026-11-20
   - modelId: gpt-5.6-sol
     provider: openai
-    displayName: GPT-5.6-Sol
+    displayName: GPT-5.6 Sol
     aliases: [gpt-5.6]
     lifecycle:
       status: ACTIVE
@@ -256,7 +256,7 @@ models:
       observedAt: 2026-11-20
   - modelId: gpt-5.6-terra
     provider: openai
-    displayName: GPT-5.6-Terra
+    displayName: GPT-5.6 Terra
     aliases: []
     lifecycle:
       status: ACTIVE
@@ -285,7 +285,7 @@ models:
       observedAt: 2026-11-20
   - modelId: gpt-5.6-luna
     provider: openai
-    displayName: GPT-5.6-Luna
+    displayName: GPT-5.6 Luna
     aliases: []
     lifecycle:
       status: ACTIVE
