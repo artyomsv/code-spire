@@ -57,6 +57,14 @@ class HarnessPolicyTest {
     }
 
     @Test
+    void onlyClaudeCodeTakesItsOfferFromTheCatalog() {
+        assertTrue(HarnessPolicy.offersFromCatalog("claude_code"));
+        assertTrue(HarnessPolicy.offersFromCatalog(" Claude_Code "));
+        assertFalse(HarnessPolicy.offersFromCatalog("codex"));
+        assertFalse(HarnessPolicy.offersFromCatalog(null));
+    }
+
+    @Test
     void claudeCodeReportsNoReasoningBucket() {
         assertEquals(Set.of(TokenType.INPUT, TokenType.CACHED_INPUT, TokenType.CACHE_WRITE, TokenType.OUTPUT),
                 HarnessTokenReport.reportedBy("claude_code"));

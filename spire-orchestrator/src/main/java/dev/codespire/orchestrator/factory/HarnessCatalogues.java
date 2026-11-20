@@ -5,6 +5,9 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.command.HarnessImageCommand;
 import dev.codespire.contract.event.HarnessImageResult;
+import dev.codespire.contract.llm.HarnessPolicy;
+import dev.codespire.orchestrator.llm.catalog.LlmModelCatalog;
+import dev.codespire.orchestrator.llm.catalog.ResolvedModel;
 import dev.codespire.orchestrator.pipeline.KafkaSends;
 import io.quarkus.runtime.StartupEvent;
 import io.quarkus.scheduler.Scheduled;
@@ -21,6 +24,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +48,8 @@ public class HarnessCatalogues {
     @Inject DataSource dataSource;
     @Inject ObjectMapper mapper;
     @Inject FactoryConfig config;
+    /** The offer of a harness that takes its models from the catalog (HarnessPolicy.offersFromCatalog). */
+    @Inject LlmModelCatalog models;
 
     @Inject @Channel("harness-image-commands-out")
     Emitter<HarnessImageCommand> commands;
@@ -196,6 +202,41 @@ public class HarnessCatalogues {
      * asked yet" and "the image declares nothing" send an operator to different places.
      */
     public Optional<Catalogue> get(String harness) {
+        Optional<Catalogue> stored = stored(harness);
+        if (!HarnessPolicy.offersFromCatalog(harness)) return stored;
+        String configured = config.configuredAgentImages().get(harness);
+        if (configured == null) return Optional.empty();
+        return Optional.of(catalogOffer(harness, configured, stored));
+    }
+
+    /**
+     * A harness whose CLI cannot list its models offers every enabled model of the vendor whose key pays it
+     * (manual models first, then the catalog), in the resolver's order, with no thinking levels. The image
+     * and its pin still come from what the run worker last read, when it has read anything.
+     */
+    private Catalogue catalogOffer(String harness, String configured, Optional<Catalogue> stored) {
+        Optional<String> vendor = HarnessPolicy.keyKind(harness);
+        List<ResolvedModel> known;
+        try {
+            known = models.effective();
+        } catch (LlmModelCatalog.CatalogueReadFailed unreadable) {
+            // The same failure a lost harness_catalogue read is: callers already refuse on it.
+            throw new IllegalStateException("The model catalogue for " + harness + " could not be read", unreadable);
+        }
+        List<HarnessImageResult.Model> offer = new ArrayList<>();
+        for (ResolvedModel model : known) {
+            if (model.enabled() && vendor.isPresent() && vendor.get().equals(model.type())) {
+                offer.add(new HarnessImageResult.Model(model.name(), model.label(), null, List.of(), true, offer.size()));
+            }
+        }
+        String image = stored.map(Catalogue::image).orElse(configured);
+        Instant observedAt = stored.map(Catalogue::observedAt).orElse(Instant.EPOCH);
+        String pinned = stored.map(Catalogue::pinnedImage).orElse(null);
+        return new Catalogue(harness, image, HarnessImageResult.Status.OK, List.copyOf(offer), observedAt, pinned);
+    }
+
+    /** What the run worker last read from this harness's configured image, or empty. */
+    private Optional<Catalogue> stored(String harness) {
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
                 "SELECT harness, image, status, models::text, observed_at, pinned_image FROM harness_catalogue WHERE harness=?")) {
             ps.setString(1, harness);

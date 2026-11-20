@@ -245,10 +245,12 @@ rather than guessing. `deploy/agent/build-codex.sh` is what produces it for the 
 plain `docker build` of the same Dockerfile leaves it empty, because a `LABEL` cannot read a `RUN`'s
 output and the value must exist before the build that carries it.
 
-The Claude Code image is the exception to "generated from the binary": Claude Code has no command that prints its
-model list without a credential, so the list is `deploy/agent/claude-code/models.json`, written from Anthropic's model
-list (`d` is `null` and `e` is empty: no thinking levels are offered), and `deploy/agent/build-claude-code.sh` bakes it
-in with one pass. It is re-read against Anthropic's list whenever the pinned CLI version changes.
+The label is declared, never required. The Claude Code image ships without it: Claude Code has no command that
+prints its models, and it runs any Anthropic API model by name, so the orchestrator takes that harness's offer from
+the model catalog instead (`HarnessPolicy.offersFromCatalog`): every enabled `anthropic` model in
+`ai-catalog/v1/catalog.yaml` and in Settings → LLM → Models, with no thinking levels. A new Claude model is a catalog
+change, not an image rebuild, and a name of another vendor is refused `model_not_run_by_harness`. (Until 2026-11-20
+the list was a hand-kept `deploy/agent/claude-code/models.json` baked in by `build-claude-code.sh`.)
 
 ---
 

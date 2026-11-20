@@ -213,8 +213,8 @@ jobs:
   # set a LABEL from a RUN's output — build-codex.sh says why at length). Calling the script rather than
   # restating it here keeps one recipe: the one an operator runs is the one CI publishes, and a vendor
   # change to `codex debug models` fails here, at build time, exactly as it would on an operator's host.
-  # The Claude Code image is one build from deploy/agent/claude-code/models.json; its script is called
-  # for the same reason.
+  # The Claude Code image is one build with no model label (its offer comes from the model catalog,
+  # ai-catalog/README.md); its script is called for the same reason.
   #
   # No setup-buildx here, on purpose. The scripts call plain `docker build` and then `docker run` the
   # result; under a buildx docker-container builder that build would not be loaded into the local
