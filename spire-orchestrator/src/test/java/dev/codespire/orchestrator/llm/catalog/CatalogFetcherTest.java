@@ -122,6 +122,15 @@ class CatalogFetcherTest {
                 "the read waited past its deadline");
     }
 
+    /**
+     * The client's policy, stated. Deleting {@code followRedirects(NEVER)} changes nothing, since NEVER is the
+     * JDK default; what refuses a redirect is the fetcher's own non-2xx check, which aRedirectIsAFailure pairs.
+     */
+    @Test
+    void theProductionClientFollowsNoRedirect() {
+        assertEquals(java.net.http.HttpClient.Redirect.NEVER, CatalogFetcher.clientBuilder().build().followRedirects());
+    }
+
     @Test
     void aBodyOverTheCapIsAFailure() {
         assertInstanceOf(CatalogFetcher.Failed.class, fetcher.fetch(at("/large"), null));

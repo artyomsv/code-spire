@@ -93,17 +93,28 @@ class LlmCatalogRefreshTest {
         assertEquals(List.of(URI.create(REMOTE)), fetcher.asked);
     }
 
+    /** onStart's own guard: with the URL none no first refresh is even scheduled. */
     @Test
-    void urlNoneNeverWritesTheRow() {
-        StubFetcher fetcher = new StubFetcher(new CatalogFetcher.Fetched(STORED, null));
-        LlmCatalogRefresh refresh = refresh("none", fetcher);
+    void urlNoneStartsNoRefresh() {
+        List<Runnable> scheduled = new ArrayList<>();
+        LlmCatalogRefresh refresh = refresh("none", new StubFetcher(new CatalogFetcher.Fetched(STORED, null)));
+        refresh.startup = scheduled::add;
 
         refresh.onStart(null);
 
-        assertEquals(LlmCatalogRefresh.RefreshOutcome.DISABLED, refresh.refreshNow());
+        assertEquals(List.of(), scheduled);
+    }
+
+    /** refreshNow's own guard: with the URL none a refresh ("Reload now") reads and writes nothing. */
+    @Test
+    void urlNoneNeverWritesTheRow() {
+        StubFetcher fetcher = new StubFetcher(new CatalogFetcher.Fetched(STORED, null));
+
+        assertEquals(LlmCatalogRefresh.RefreshOutcome.DISABLED, refresh("none", fetcher).refreshNow());
+
         assertEquals(List.of(), fetcher.asked);
         assertEquals(List.of(), states.stored);
-        assertEquals(List.of(), states.failures);
+        assertEquals(List.of(), states.failures, "not even url_not_https");
     }
 
     @Test
