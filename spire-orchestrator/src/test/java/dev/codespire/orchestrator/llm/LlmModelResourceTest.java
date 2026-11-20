@@ -37,8 +37,9 @@ class LlmModelResourceTest {
 
     @BeforeEach
     void clean() {
-        // Providers first: the catalog's delete guard refuses to remove a model an llm_provider row
-        // names, and every @QuarkusTest class in this module shares one application and one database.
+        // Providers first: the catalog's delete guard refuses to remove the default review model while
+        // a default provider exists, and deleting the default provider clears it. Every @QuarkusTest class in this
+        // module shares one application and one database.
         // A sibling class that leaves a provider behind — this class included, if a test fails between
         // creating a model and its provider — would otherwise make this method throw, and whether it
         // throws would depend on which class or test ran first: a green suite that depends on order.
@@ -294,6 +295,6 @@ class LlmModelResourceTest {
                 .when().put("/api/llm-models/" + modelId)
                 .then().statusCode(409)
                 .body(containsString("TEST-RENAME-CONFLICT"))
-                .body(containsString("Point them at another model first"));
+                .body(containsString("Choose another model there first"));
     }
 }

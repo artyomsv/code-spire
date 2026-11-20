@@ -121,11 +121,11 @@ public class LlmModelRegistry {
         PricingMode mode = validated.mode();
         Map<TokenType, ModelRate> rates = validated.rates();
         try (Connection c = dataSource.getConnection()) {
-            String existingName = nameOf(c, id);
-            if (existingName == null) {
+            ManualRow existing = manualRow(c, id);
+            if (existing == null) {
                 return Optional.empty();
             }
-            requireRenameIsSafe(c, existingName, in.name());
+            requireChangeIsSafe(c, existing, in);
             try (PreparedStatement ps = c.prepareStatement("""
                     UPDATE llm_model SET type=?, name=?, label=?, pricing_mode=?, output_token_param=?,
                             supports_temperature=?, reasoning_effort=?, extra_params=?, enabled=?,
@@ -153,20 +153,17 @@ public class LlmModelRegistry {
     @Transactional
     public boolean delete(UUID id) {
         try (Connection c = dataSource.getConnection()) {
-            String name = nameOf(c, id);
-            if (name == null) {
+            ManualRow existing = manualRow(c, id);
+            if (existing == null) {
                 return false;
             }
-            // Without this, the save-time guard that a provider's model must be catalogued is
-            // defeated after the fact: deleting the entry leaves the provider pointing at nothing
-            // and every call it makes unpriceable.
-            // "Use catalog": a manual model that shadows an enabled, priced catalog entry may go while in
-            // use, because its name still resolves (to the catalog entry) after the delete.
-            int users = CatalogModelViews.stillResolvesAfterDelete(catalog.snapshot(), name)
-                    ? 0 : countProvidersUsing(c, name);
-            if (users > 0) {
-                throw new ModelInUseException("Model '" + name + "' is in use by " + users
-                        + " LLM provider(s). Point them at another model first.");
+            // Without this, deleting a chosen model leaves the default or a repository pointing at nothing, and every
+            // review on it unpriceable. "Use catalog": a manual model that shadows an enabled, priced catalog entry of
+            // the same vendor may go while in use, because its name still resolves (to that entry) after the delete.
+            // Not serialised against a concurrent setting or repository save: the review path (the pricing refusal)
+            // and the attention rows are the backstop for that race (spec section 6).
+            if (!CatalogModelViews.stillResolvesAfterDelete(catalog.snapshot(), existing.name(), existing.type())) {
+                requireUnused(c, existing.name(), ". Choose another model there first.");
             }
             try (PreparedStatement ps = c.prepareStatement("DELETE FROM llm_model WHERE id = ?")) {
                 ps.setObject(1, id);
@@ -250,37 +247,35 @@ public class LlmModelRegistry {
     // ---- helpers -----------------------------------------------------------
 
     /**
-     * {@code llm_provider.model} is a bare string reference, not a foreign key, so renaming a
-     * catalogued model out from under a referencing provider would orphan it exactly as deleting the
-     * model would — {@link #delete} already guards that; a rename needs the same guard. Only the
-     * name is load-bearing here: every other field stays freely editable while the model is in use.
+     * A chosen model is referenced by name ({@link ModelUses}), so renaming it orphans the choice exactly as deleting it
+     * would, and changing its type makes the choice a model of another vendor than its provider. Every other field
+     * stays freely editable while the model is in use. Not serialised against a concurrent setting or repository save;
+     * the review path and the attention rows are the backstop (spec section 6).
      */
-    private void requireRenameIsSafe(Connection c, String existingName, String newName) throws SQLException {
-        if (existingName.equals(newName)) {
-            return;
-        }
-        int users = countProvidersUsing(c, existingName);
-        if (users > 0) {
-            throw new ModelInUseException("Model '" + existingName + "' is in use by " + users
-                    + " LLM provider(s). Point them at another model first, then rename it.");
+    private void requireChangeIsSafe(Connection c, ManualRow existing, LlmModelInput in) throws SQLException {
+        if (!existing.name().equals(in.name())) {
+            requireUnused(c, existing.name(), ". Choose another model there first, then rename it.");
+        } else if (!existing.type().equals(in.type())) {
+            requireUnused(c, existing.name(), ". Choose another model there first, then change its type.");
         }
     }
 
-    private String nameOf(Connection c, UUID id) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT name FROM llm_model WHERE id = ?")) {
+    private void requireUnused(Connection c, String name, String fix) throws SQLException {
+        List<String> uses = ModelUses.of(c, catalog.snapshot(), name);
+        if (!uses.isEmpty()) {
+            throw new ModelInUseException("Model '" + name + "' is in use by " + String.join(", ", uses) + fix);
+        }
+    }
+
+    /** The name and type a manual model is stored with; null when there is no such row. */
+    private record ManualRow(String name, String type) {
+    }
+
+    private static ManualRow manualRow(Connection c, UUID id) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT name, type FROM llm_model WHERE id = ?")) {
             ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? rs.getString("name") : null;
-            }
-        }
-    }
-
-    private int countProvidersUsing(Connection c, String name) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement(
-                "SELECT count(*) FROM llm_provider WHERE model = ?")) {
-            ps.setString(1, name);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? rs.getInt(1) : 0;
+                return rs.next() ? new ManualRow(rs.getString("name"), rs.getString("type")) : null;
             }
         }
     }

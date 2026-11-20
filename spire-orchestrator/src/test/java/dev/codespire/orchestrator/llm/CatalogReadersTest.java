@@ -38,6 +38,9 @@ class CatalogReadersTest {
     @Inject
     LlmProviderRegistry providers;
 
+    @Inject
+    LlmDefaultModel defaultModels;
+
     @AfterEach
     void removeTestRows() {
         providers.list().stream().filter(p -> p.name().equals(PROVIDER))
@@ -52,9 +55,11 @@ class CatalogReadersTest {
                 Map.of("INPUT", 5L, "OUTPUT", 6L), null, null, null, Map.of(), true, List.of())).id();
     }
 
-    private void provideWith(String model) {
-        providers.create(new LlmProviderInput(PROVIDER, "openai", "http://example.invalid", "sk-test", 0.2,
-                null, true, false, null));
+    /** Put the model in use: the default review model of an enabled default provider of its vendor. */
+    private void provideWith(String model, String type) {
+        UUID provider = UUID.fromString(providers.create(new LlmProviderInput(PROVIDER, type, "http://example.invalid",
+                "sk-test", 0.2, null, true, false, null)).id());
+        defaultModels.setDefaultProvider(provider, model);
     }
 
     private static List<Long> costs(List<ChargeLine> lines) {
@@ -115,7 +120,7 @@ class CatalogReadersTest {
     @Test
     void useCatalogDeletesAnInUseManualModelThatShadowsAPricedCatalogEntry() {
         String id = createManual("TEST-cat-o", "openai");
-        provideWith("TEST-cat-o");
+        provideWith("TEST-cat-o", "openai");
 
         assertTrue(registry.delete(UUID.fromString(id)));
 
@@ -126,7 +131,7 @@ class CatalogReadersTest {
     @Test
     void deleteStillRefusesAnInUseManualModelWithNoCatalogEntry() {
         String id = createManual("TEST-rd-manual-only", "openai");
-        provideWith("TEST-rd-manual-only");
+        provideWith("TEST-rd-manual-only", "openai");
 
         assertThrows(ModelInUseException.class, () -> registry.delete(UUID.fromString(id)));
     }
@@ -134,7 +139,7 @@ class CatalogReadersTest {
     @Test
     void deleteStillRefusesAnInUseManualModelShadowingARetiredEntry() {
         String id = createManual("TEST-cat-retired", "anthropic");
-        provideWith("TEST-cat-retired");
+        provideWith("TEST-cat-retired", "anthropic");
 
         assertThrows(ModelInUseException.class, () -> registry.delete(UUID.fromString(id)));
     }

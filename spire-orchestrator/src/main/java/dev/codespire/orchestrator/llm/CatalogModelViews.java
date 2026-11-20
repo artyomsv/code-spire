@@ -34,12 +34,14 @@ final class CatalogModelViews {
     }
 
     /**
-     * Whether the name still resolves once its manual model is gone: the catalog has it, not retired,
-     * with an input and an output price. Read from the catalog entry itself, not through the resolver,
-     * which would still answer with the manual row being deleted.
+     * Whether the name still resolves once its manual model is gone: the catalog has it, of the manual
+     * model's vendor, not retired, with an input and an output price. Read from the catalog entry itself,
+     * not through the resolver, which would still answer with the manual row being deleted. An entry of
+     * another vendor would leave a choice of this model pointing at another vendor than its provider.
      */
-    static boolean stillResolvesAfterDelete(CatalogSnapshot snapshot, String name) {
+    static boolean stillResolvesAfterDelete(CatalogSnapshot snapshot, String name, String type) {
         return snapshot.byName(name)
+                .filter(entry -> entry.provider().equals(type))
                 .filter(entry -> !entry.isRetired())
                 .map(CatalogModel::pricing)
                 .filter(CatalogModelViews::hasInputAndOutput)
