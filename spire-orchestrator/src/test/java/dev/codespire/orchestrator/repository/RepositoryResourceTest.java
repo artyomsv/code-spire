@@ -165,6 +165,36 @@ class RepositoryResourceTest extends RepositoryFixture {
                 .then().statusCode(400).body(containsString("model_not_for_provider"));
     }
 
+    /**
+     * A pair saved before the vendor rule (a gateway pair V118 copied) is not a new choice: saving another setting
+     * sends it back unchanged and must succeed. Choosing another model of the wrong vendor is still refused.
+     */
+    @Test void aStoredCrossVendorPairStillSavesAndANewOneIsRefused() throws Exception {
+        UUID provider = llmProvider("gateway");
+        String anthropic = anthropicModel("gateway");
+        String otherAnthropic = anthropicModel("gateway-other");
+        RepositoryView repo = repositories.create(repository(null, null));
+        execute("UPDATE repository SET review_llm_provider_id=?, review_llm_model=? WHERE id=?", provider, anthropic, repo.id());
+
+        RepositoryInput onlyEnabledChanged = new RepositoryInput("gitlab", origin, workspace, "TEST-repo", false, null, null,
+                null, provider).withReviewLlm(provider, anthropic);
+        given().contentType("application/json").body(onlyEnabledChanged)
+                .put("/api/repositories/" + repo.id() + "?revision=1").then().statusCode(200)
+                .body("enabled", equalTo(false)).body("reviewLlmModel", equalTo(anthropic));
+
+        RepositoryInput newCrossVendor = onlyEnabledChanged.withReviewLlm(provider, otherAnthropic);
+        given().contentType("application/json").body(newCrossVendor)
+                .put("/api/repositories/" + repo.id() + "?revision=2").then().statusCode(400)
+                .body(containsString("model_not_for_provider"));
+    }
+
+    String anthropicModel(String name) {
+        String model = "TEST-repository-anthropic-" + name + "-" + UUID.randomUUID();
+        llmModels.create(new LlmModelInput("anthropic", model, model, "UNMETERED", java.util.Map.of(),
+                null, null, null, null, true, java.util.List.of()));
+        return model;
+    }
+
     /** A harness review takes its model from the harness; an API model beside it is refused before the write. */
     @Test void aHarnessWithAModelIs400() {
         RepositoryInput harnessWithModel = repositoryReviewingOn(new ReviewHarness("codex", "TEST-model", null, "API_KEY"))

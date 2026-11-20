@@ -83,7 +83,7 @@ public class RepositoryRegistry {
         RepositoryInput input = normalize(raw);
         requireReviewProvider(input);
         requireReviewHarness(input);
-        requireReviewModel(input);
+        requireReviewModel(input, Optional.empty());
         UUID id = UUID.randomUUID();
         try (Connection connection = dataSource.getConnection()) {
             insert(connection, id, input);
@@ -100,7 +100,8 @@ public class RepositoryRegistry {
         RepositoryInput input = normalize(raw);
         requireReviewProvider(input);
         requireReviewHarness(input);
-        requireReviewModel(input);
+        // Read inside this transaction: an unchanged pair is the stored one, not a new choice.
+        requireReviewModel(input, reviewLlmChoice(id));
         try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement("""
                 UPDATE repository SET enabled=?, reviewer_may_approve=?, review_llm_provider_id=?, review_llm_model=?,
                        review_harness=?, review_harness_model=?, review_harness_effort=?, review_harness_pay_with=?,
@@ -216,8 +217,12 @@ public class RepositoryRegistry {
      * harness; and a new choice is a model of the provider's vendor that the ledger can price. Checked before any
      * write, so a mistake is the caller's (400), not a CHECK violation. A PUT naming a provider with no model (an older
      * dashboard) is refused rather than silently clearing the repository's model.
+     *
+     * <p>The vendor and pricing rule applies to a NEW choice only (spec sections 3 and 12): a pair saved before, such
+     * as a gateway pair V118 copied, is sent back unchanged by every save of another setting and must keep saving.
+     * The runtime path and the attention rows report such a pair.
      */
-    private void requireReviewModel(RepositoryInput input) {
+    private void requireReviewModel(RepositoryInput input, Optional<ReviewLlmChoice> stored) {
         UUID provider = input.reviewLlmProviderId();
         String model = input.reviewLlmModel();
         if (input.reviewHarness() != null) {
@@ -228,6 +233,7 @@ public class RepositoryRegistry {
         if (provider == null || model == null) {
             throw new IllegalArgumentException("Review with: choose an LLM provider and its model together, or neither to use the default");
         }
+        if (stored.equals(Optional.of(new ReviewLlmChoice(provider, model)))) return;
         String type = llmProviders.get(provider).map(LlmProviderView::type).orElseThrow(
                 () -> new IllegalArgumentException("LLM provider " + provider + " does not exist; choose one listed in Settings → LLM"));
         try {
