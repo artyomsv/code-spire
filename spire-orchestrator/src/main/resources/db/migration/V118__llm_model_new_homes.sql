@@ -21,3 +21,6 @@ SELECT 'llm.default-model', model, now()
   FROM llm_provider
  WHERE is_default
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
+
+-- The code writes providers without a model from here on; V119 drops the column.
+ALTER TABLE llm_provider ALTER COLUMN model DROP NOT NULL;

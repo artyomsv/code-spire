@@ -53,8 +53,8 @@ class CatalogReadersTest {
     }
 
     private void provideWith(String model) {
-        providers.create(new LlmProviderInput(PROVIDER, "openai", "http://example.invalid", "sk-test", model, 0.2,
-                null, true, false));
+        providers.create(new LlmProviderInput(PROVIDER, "openai", "http://example.invalid", "sk-test", 0.2,
+                null, true, false, null));
     }
 
     private static List<Long> costs(List<ChargeLine> lines) {

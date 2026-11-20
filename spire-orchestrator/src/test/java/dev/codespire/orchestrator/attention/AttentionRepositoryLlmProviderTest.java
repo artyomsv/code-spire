@@ -109,7 +109,7 @@ class AttentionRepositoryLlmProviderTest {
 
     private UUID provider(String name, String model, boolean enabled) {
         UUID id = UUID.fromString(providers.create(new LlmProviderInput(name, "openai",
-                "https://llm.example.invalid", "TEST-key", model, null, null, enabled, false)).id());
+                "https://llm.example.invalid", "TEST-key", null, null, enabled, false, null)).id());
         createdProviders.add(id);
         return id;
     }

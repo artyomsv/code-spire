@@ -46,7 +46,7 @@ public class LlmProviderResource {
     LlmKeyValidator validator;
 
     @Inject
-    LlmModelRegistry models;
+    LlmDefaultModel defaultModels;
 
     /** Mirrors ProviderResource: fail-closed https+public-address check, relaxed only in %dev/%test. */
     @ConfigProperty(name = "spire.security.allow-insecure-provider-urls")
@@ -67,8 +67,11 @@ public class LlmProviderResource {
     @RolesAllowed("spire-admin")
     public Response create(LlmProviderInput in) {
         validate(in, true);
+        if (Boolean.TRUE.equals(in.isDefault()) && in.defaultModel() != null) {
+            requireChoice(in.type(), in.defaultModel());
+        }
         validator.ping(in.type(), in.baseUrl(), in.apiKey());
-        LlmProviderView created = registry.create(in);
+        LlmProviderView created = refusingAsBadRequest(() -> registry.create(in));
         // validator.ping(...) just proved the key works; an apiKey is required to create
         // (validate() above), so this call always re-validated it.
         registry.recordCheck(UUID.fromString(created.id()), true, null);
@@ -85,7 +88,7 @@ public class LlmProviderResource {
         if (rotatingKey) {
             validator.ping(in.type(), in.baseUrl(), in.apiKey());
         }
-        LlmProviderView updated = registry.update(uuid(id), in)
+        LlmProviderView updated = refusingAsBadRequest(() -> registry.update(uuid(id), in))
                 .orElseThrow(() -> new NotFoundException("No LLM provider " + id));
         // Only record when a key was actually supplied and pinged: that's the only case that
         // re-validated the credential. Recording success unconditionally would silently clear a
@@ -100,9 +103,38 @@ public class LlmProviderResource {
     @PUT
     @RolesAllowed("spire-admin")
     @Path("/{id}/default")
-    public LlmProviderView makeDefault(@PathParam("id") String id) {
-        return registry.setDefault(uuid(id))
-                .orElseThrow(() -> new NotFoundException("No LLM provider " + id));
+    public LlmProviderView makeDefault(@PathParam("id") String id, DefaultChoice body) {
+        if (body == null || body.model() == null || body.model().isBlank()) {
+            throw badRequest("model is required: the default provider and its model change together");
+        }
+        UUID providerId = uuid(id);
+        try {
+            return defaultModels.setDefaultProvider(providerId, body.model().strip())
+                    .orElseThrow(() -> new NotFoundException("No LLM provider " + id));
+        } catch (LlmDefaultModel.ChoiceRefused refused) {
+            throw badRequest(refused.getMessage());
+        }
+    }
+
+    /** Body of {@link #makeDefault}: the default review model to write with the new default provider. */
+    public record DefaultChoice(String model) {
+    }
+
+    private void requireChoice(String providerType, String model) {
+        try {
+            defaultModels.requireChoice(providerType, model);
+        } catch (LlmDefaultModel.ChoiceRefused refused) {
+            throw badRequest(refused.getMessage());
+        }
+    }
+
+    /** A registry refusal (a missing default model, a type change) is the caller's mistake: 400 with its message. */
+    private static <T> T refusingAsBadRequest(java.util.function.Supplier<T> write) {
+        try {
+            return write.get();
+        } catch (IllegalArgumentException refused) {
+            throw badRequest(refused.getMessage());
+        }
     }
 
     @DELETE
@@ -162,22 +194,9 @@ public class LlmProviderResource {
         requireField(in.name(), "name");
         requireField(in.type(), "type");
         requireField(in.baseUrl(), "baseUrl");
-        requireField(in.model(), "model");
         if (!TYPES.contains(in.type())) {
             throw badRequest("Unsupported LLM provider type '" + in.type()
                     + "' (expected one of: " + String.join(", ", TYPES.stream().sorted().toList()) + ")");
-        }
-        // A model outside the catalog has no rates, so every call this provider makes would be
-        // recorded unpriced. Refuse the configuration rather than discover it per review.
-        //
-        // This duplicates LlmProviderRegistry.requirePriceableModel — deliberately, not redundantly.
-        // The registry throws a plain IllegalArgumentException, which no ExceptionMapper in this
-        // module translates, so without this check the same refusal would answer 500 instead of 400.
-        // Keep this until that mapper exists (tracked in techdebt) — do not delete it as duplication.
-        if (!models.isPriceable(in.model())) {
-            throw badRequest("Model '" + in.model() + "' is not in the catalog with usable"
-                    + " pricing. Add it under Settings -> LLM -> Models first, with a rate for input and"
-                    + " output tokens — or mark it UNMETERED if it is self-hosted and costs nothing.");
         }
         // SSRF guard: the baseUrl is dereferenced server-side (key ping) and later by the worker.
         PublicHttpsGuard.validate(in.baseUrl(), allowInsecureProviderUrls);

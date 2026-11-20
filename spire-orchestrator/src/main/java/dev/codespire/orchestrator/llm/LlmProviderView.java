@@ -11,7 +11,6 @@ public record LlmProviderView(
         String name,
         String type,
         String baseUrl,
-        String model,
         double temperature,
         Integer maxTokens,
         boolean hasApiKey,

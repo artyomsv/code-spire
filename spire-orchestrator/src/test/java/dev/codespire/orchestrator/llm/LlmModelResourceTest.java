@@ -245,7 +245,7 @@ class LlmModelResourceTest {
                 "METERED", Map.of("INPUT", 200_000L, "OUTPUT", 400_000L),
                 null, null, null, Map.of(), true, java.util.List.of()));
         providers.create(new LlmProviderInput("TEST provider", "openai", "http://example.invalid",
-                "sk-test", "TEST-CLEAN-COLLISION", 0.2, null, true, true));
+                "sk-test", 0.2, null, true, true, "TEST-CLEAN-COLLISION"));
 
         assertDoesNotThrow(this::clean);
     }
@@ -263,7 +263,7 @@ class LlmModelResourceTest {
         String modelId = registry.list().stream()
                 .filter(m -> m.name().equals("TEST-IN-USE")).findFirst().orElseThrow().id();
         providers.create(new LlmProviderInput("TEST provider", "openai", "http://example.invalid",
-                "sk-test", "TEST-IN-USE", 0.2, null, true, true));
+                "sk-test", 0.2, null, true, true, "TEST-IN-USE"));
 
         given().when().delete("/api/llm-models/" + modelId)
                 .then().statusCode(409).body(containsString("TEST-IN-USE"));
@@ -285,7 +285,7 @@ class LlmModelResourceTest {
         String modelId = registry.list().stream()
                 .filter(m -> m.name().equals("TEST-RENAME-CONFLICT")).findFirst().orElseThrow().id();
         providers.create(new LlmProviderInput("TEST-RENAME-CONFLICT-PROVIDER", "openai",
-                "http://example.invalid", "sk-test", "TEST-RENAME-CONFLICT", 0.2, null, true, true));
+                "http://example.invalid", "sk-test", 0.2, null, true, true, "TEST-RENAME-CONFLICT"));
 
         given().contentType(ContentType.JSON)
                 .body(Map.of("type", "openai", "name", "TEST-RENAME-CONFLICT-NEW",

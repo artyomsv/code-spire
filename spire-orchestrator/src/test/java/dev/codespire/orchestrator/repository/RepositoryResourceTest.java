@@ -250,7 +250,7 @@ class RepositoryResourceTest extends RepositoryFixture {
         llmModels.create(new LlmModelInput("openai", model, model, "UNMETERED", java.util.Map.of(),
                 null, null, null, null, true, java.util.List.of()));
         UUID id = UUID.fromString(llmProviders.create(new LlmProviderInput("TEST-" + name, "openai",
-                "https://llm.example.invalid", "TEST-key", model, null, null, true, false)).id());
+                "https://llm.example.invalid", "TEST-key", null, null, true, false, null)).id());
         createdLlmProviders.add(id);
         return id;
     }

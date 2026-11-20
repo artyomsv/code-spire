@@ -54,6 +54,7 @@ class OperatorAuthTest {
             "/api/settings/conversation",
             "/api/settings/conversation-level",
             "/api/settings/caps",
+            "/api/settings/llm-default-model",
     };
 
     @Test

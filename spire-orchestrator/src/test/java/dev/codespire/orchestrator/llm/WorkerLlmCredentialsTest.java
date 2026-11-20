@@ -27,14 +27,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * provider with the default review model ({@code llm.default-model}). A named provider that cannot be spent refuses;
  * it never falls back, so the payer never changes without the operator choosing it.
  *
- * <p>The repository's choice and the default model are written with SQL rather than through their registries, so this
- * suite tests the resolution alone.
+ * <p>The repository's choice is written with SQL rather than through its registry, so this suite tests the resolution
+ * alone; the default provider and model are set together, as the dashboard sets them.
  */
 @QuarkusTest
 class WorkerLlmCredentialsTest {
 
     @Inject WorkerLlmCredentials credentials;
     @Inject LlmProviderRegistry providers;
+    @Inject LlmDefaultModel defaultModels;
     @Inject LlmModelRegistry models;
     @Inject RepositoryRegistry repositories;
     @Inject ReviewProjection reviews;
@@ -53,8 +54,7 @@ class WorkerLlmCredentialsTest {
         defaultModel = catalogued("TEST-default-model-" + suffix, true);
         namedModel = catalogued("TEST-named-model-" + suffix, true);
         UUID defaultId = provider("TEST-default-" + suffix, "openai", true);
-        providers.setDefault(defaultId);
-        execute("INSERT INTO app_setting(key,value) VALUES (?,?)", LlmDefaultModel.KEY, defaultModel);
+        defaultModels.setDefaultProvider(defaultId, defaultModel);
     }
 
     /**
@@ -177,10 +177,9 @@ class WorkerLlmCredentialsTest {
         return name;
     }
 
-    /** The provider's own model is the default model, so a test that spends anything else proves where it came from. */
     private UUID provider(String name, String type, boolean enabled) {
         UUID id = UUID.fromString(providers.create(new LlmProviderInput(name, type,
-                "https://llm.example.invalid", "TEST-key", defaultModel, null, null, enabled, false)).id());
+                "https://llm.example.invalid", "TEST-key", null, null, enabled, false, null)).id());
         createdProviders.add(id);
         return id;
     }

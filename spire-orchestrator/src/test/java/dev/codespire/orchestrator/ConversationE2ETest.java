@@ -64,6 +64,9 @@ class ConversationE2ETest {
     @Inject
     dev.codespire.orchestrator.llm.LlmModelRegistry llmModels;
 
+    @Inject
+    dev.codespire.orchestrator.settings.AppSettingRepository appSettings;
+
     @Inject dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
     @Inject dev.codespire.orchestrator.readmodel.ReviewProjection reviewProjection;
     private UUID repositoryId;
@@ -98,8 +101,11 @@ class ConversationE2ETest {
         }
         if (llmProviders.resolveDefault().isEmpty()) {
             llmProviders.create(new dev.codespire.orchestrator.llm.LlmProviderInput(
-                    "test-llm", "openai", "http://localhost", "sk-test", "TEST-MODEL", 0.2, null, true, true));
+                    "test-llm", "openai", "http://localhost", "sk-test", 0.2, null, true, true, "TEST-MODEL"));
         }
+        // The model lives beside the provider (llm.default-model). Written directly, so a default another suite left of
+        // another vendor still reviews with this catalogued model, as a gateway setup does.
+        appSettings.set(dev.codespire.orchestrator.llm.LlmDefaultModel.KEY, "TEST-MODEL");
         // Mark the thread as bot-owned (scope A) so the reply is in-scope.
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(

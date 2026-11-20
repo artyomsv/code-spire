@@ -131,7 +131,7 @@ class RepositoryReviewHarnessSchemaTest {
         llmModels.create(new LlmModelInput("openai", model, model, "UNMETERED", Map.of(),
                 null, null, null, null, true, List.of()));
         UUID id = UUID.fromString(llmProviders.create(new LlmProviderInput("TEST-v109", "openai",
-                "https://llm.example.invalid", "TEST-key", model, null, null, true, false)).id());
+                "https://llm.example.invalid", "TEST-key", null, null, true, false, null)).id());
         createdProviders.add(id);
         return id;
     }

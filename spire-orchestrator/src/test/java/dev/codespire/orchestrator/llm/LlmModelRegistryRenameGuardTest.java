@@ -33,7 +33,7 @@ class LlmModelRegistryRenameGuardTest {
     void renamingAModelInUseByAProviderIsRefused() {
         LlmModelView created = models.create(meteredModel("TEST-RENAME-GUARD-INUSE"));
         providers.create(new LlmProviderInput("TEST-RENAME-GUARD-PROVIDER", "openai",
-                "http://localhost", "sk-test", "TEST-RENAME-GUARD-INUSE", 0.2, null, true, false));
+                "http://localhost", "sk-test", 0.2, null, true, false, null));
 
         // The EXACT type, not its IllegalStateException supertype: LlmModelRegistry wraps every
         // SQLException as a plain IllegalStateException too, so asserting the supertype accepts a
@@ -61,7 +61,7 @@ class LlmModelRegistryRenameGuardTest {
     void otherFieldsRemainEditableWhileAModelIsReferenced() {
         LlmModelView created = models.create(meteredModel("TEST-RENAME-GUARD-EDITABLE"));
         providers.create(new LlmProviderInput("TEST-RENAME-GUARD-EDITABLE-PROVIDER", "openai",
-                "http://localhost", "sk-test", "TEST-RENAME-GUARD-EDITABLE", 0.2, null, true, false));
+                "http://localhost", "sk-test", 0.2, null, true, false, null));
 
         // Same name (no rename), but label/rates/outputTokenParam all change — none of that is the
         // reference, so none of it should be blocked by the guard.

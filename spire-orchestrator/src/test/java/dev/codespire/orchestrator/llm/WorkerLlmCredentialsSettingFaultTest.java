@@ -41,7 +41,7 @@ class WorkerLlmCredentialsSettingFaultTest {
             @Override
             public Optional<LlmProviderConfig> resolveDefault() {
                 return Optional.of(new LlmProviderConfig(UUID.randomUUID(), "TEST-provider", "openai",
-                        "https://TEST-llm.example.invalid", "TEST-key", "TEST-provider-model", 0.2, null, true, true));
+                        "https://TEST-llm.example.invalid", "TEST-key", 0.2, null, true, true));
             }
         };
     }
