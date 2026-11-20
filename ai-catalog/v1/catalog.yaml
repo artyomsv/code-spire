@@ -172,7 +172,7 @@ models:
     displayName: GPT-6 Sol
     aliases: []
     lifecycle:
-      status: ACTIVE
+      status: DEPRECATED
       deprecationDate: null
       retirementDate: null
       successor: null
