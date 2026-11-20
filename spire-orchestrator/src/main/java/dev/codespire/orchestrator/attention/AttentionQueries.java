@@ -76,6 +76,10 @@ public class AttentionQueries {
     @Inject
     LlmCatalogAttention catalogAttention;
 
+    /** A chosen model of another vendor than its provider, or switched off: warnings, never refusals. */
+    @Inject
+    LlmChoiceAttentionRows choiceRows;
+
     @ConfigProperty(name = "spire.attention.stuck-minutes")
     int stuckMinutes;
 
@@ -121,7 +125,15 @@ public class AttentionQueries {
                     "/settings/llm"));
             return; // no default resolves to no model, so there is nothing to price-check
         }
-        modelPricingRow(defaultProviderModel(c), rows);
+        DefaultChoice choice = defaultChoice(c);
+        if (choice.model() == null) {
+            rows.add(new AttentionView("LLM_DEFAULT_MODEL_MISSING", Severity.BLOCKING, null,
+                    "No default review model is selected, so every review on the default provider is refused."
+                            + " Choose one in Settings → LLM.", "/settings/llm"));
+            return;
+        }
+        modelPricingRow(choice.model(), rows);
+        choiceRows.checkDefault(choice.providerType(), choice.model(), rows);
     }
 
     /**
@@ -149,7 +161,7 @@ public class AttentionQueries {
                 // subject would render an empty label; the message alone carries it.
                 model.isBlank() ? null : model,
                 catalogAttention.catalogText(model, REQUIRED_RATES).orElse(
-                        "The default LLM provider's model has no usable pricing, so every review stops before"
+                        "The default review model has no usable pricing, so every review stops before"
                         + " it calls the model. Set input and output rates in Settings → LLM → Models,"
                         + " or mark the model unmetered if it is self-hosted."), "/settings/llm"));
     }
@@ -202,16 +214,16 @@ public class AttentionQueries {
      * have nothing to use.
      */
     private void repositoryLlmProviderRows(Connection c, List<AttentionView> rows) throws SQLException {
-        record Named(String repository, String provider, String model, boolean enabled) {}
+        record Named(String repository, String provider, String type, String model, boolean enabled) {}
         List<Named> named = new ArrayList<>();
         try (PreparedStatement ps = c.prepareStatement("""
-                SELECT r.workspace || '/' || r.slug AS repository, p.name, p.model, p.enabled
+                SELECT r.workspace || '/' || r.slug AS repository, p.name, p.type, r.review_llm_model, p.enabled
                   FROM repository r JOIN llm_provider p ON p.id = r.review_llm_provider_id
                  WHERE r.enabled = TRUE
                 """);
              ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) named.add(new Named(rs.getString("repository"), rs.getString("name"),
-                    rs.getString("model"), rs.getBoolean("enabled")));
+            while (rs.next()) named.add(new Named(rs.getString("repository"), rs.getString("name"), rs.getString("type"),
+                    blankIfNull(rs.getString("review_llm_model")), rs.getBoolean("enabled")));
         }
         for (Named repository : named) {
             if (!repository.enabled()) {
@@ -223,20 +235,33 @@ public class AttentionQueries {
                 rows.add(new AttentionView("REPOSITORY_LLM_MODEL_NOT_PRICEABLE", Severity.BLOCKING,
                         repository.repository(), catalogAttention.catalogText(repository.model(), REQUIRED_RATES).orElse(
                                 "This repository reviews with LLM provider " + repository.provider()
-                                + ", whose model " + repository.model() + " has no usable pricing, so its reviews and"
+                                + " and model " + repository.model() + ", which has no usable pricing, so its reviews and"
                                 + " replies are refused. Set input and output rates in Settings → LLM → Models, or"
                                 + " mark the model unmetered if it is self-hosted."), "/settings/llm"));
+            } else {
+                choiceRows.checkRepository(repository.repository(), repository.type(), repository.model(), rows);
             }
         }
     }
 
-    /** The model the default provider would use, or null when no enabled default is set. */
-    private static String defaultProviderModel(Connection c) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement(
-                "SELECT model FROM llm_provider WHERE enabled = TRUE AND is_default = TRUE");
+    /** The enabled default provider's type and the default review model (null when none is chosen). */
+    private record DefaultChoice(String providerType, String model) {
+    }
+
+    /** Read only once an enabled default exists (the caller checked), so the provider row is there. */
+    private static DefaultChoice defaultChoice(Connection c) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("""
+                SELECT p.type, s.value FROM llm_provider p
+                  LEFT JOIN app_setting s ON s.key = 'llm.default-model'
+                 WHERE p.enabled = TRUE AND p.is_default = TRUE
+                """);
              ResultSet rs = ps.executeQuery()) {
-            return rs.next() ? rs.getString("model") : null;
+            return rs.next() ? new DefaultChoice(rs.getString(1), rs.getString(2)) : new DefaultChoice(null, null);
         }
+    }
+
+    private static String blankIfNull(String value) {
+        return value == null ? "" : value;
     }
 
     private void accountScopeRows(Connection c, List<AttentionView> rows) throws SQLException {

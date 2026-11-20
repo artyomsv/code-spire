@@ -48,7 +48,7 @@ class AttentionQueriesTest {
     }
 
     /**
-     * The model name every {@code llm_provider} fixture here uses, deliberately NOT the repo-wide
+     * The default review model every fixture here chooses, deliberately NOT the repo-wide
      * {@code TEST-MODEL}. Whether the default provider's model is priceable now decides a row, and
      * priceability lives in {@code llm_model} — a table other suites also write. Sharing a name would
      * make this class's outcome depend on which suite ran first.
@@ -58,6 +58,7 @@ class AttentionQueriesTest {
     @BeforeEach
     void reset() {
         sql("DELETE FROM llm_provider");
+        sql("DELETE FROM app_setting WHERE key = 'llm.default-model'");
         // Providers before the catalog they reference, matching the in-use guard's own direction.
         // Reset rather than tolerated: an uncatalogued model is unpriceable BY DESIGN, so a stray
         // catalog row left by an earlier suite would silently decide MODEL_NOT_PRICEABLE here.
@@ -155,11 +156,56 @@ class AttentionQueriesTest {
     void aNonDefaultProvidersUnpriceableModelIsNotReported() {
         catalogueMeteredModelWithRates();
         insertLlmProvider("TEST-llm-default", true, true);
-        sql("INSERT INTO llm_provider (id, name, type, base_url, api_key, model, temperature, enabled, "
-                + "is_default) VALUES ('" + UUID.randomUUID() + "', 'TEST-llm-other', 'openai', "
-                + "'https://llm.example.invalid', 'TEST-KEY', 'TEST-UNCATALOGUED-MODEL', 0.0, TRUE, FALSE)");
+        insertLlmProvider("TEST-llm-other", true, false);
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         assertFalse(codes().contains("MODEL_NOT_PRICEABLE"), codes().toString());
+    }
+
+    /** A default provider with no default review model refuses every review on it. */
+    @Test
+    void aDefaultProviderWithNoDefaultModelIsReportedAsBlocking() {
+        catalogueMeteredModelWithRates();
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        sql("DELETE FROM app_setting WHERE key = 'llm.default-model'");
+
+        AttentionView row = queries.collect().stream()
+                .filter(v -> "LLM_DEFAULT_MODEL_MISSING".equals(v.code()))
+                .findFirst().orElseThrow(() -> new AssertionError("no row in " + queries.collect()));
+        assertEquals(AttentionView.Severity.BLOCKING, row.severity());
+        assertEquals("/settings/llm", row.action());
+        assertFalse(codes().contains("MODEL_NOT_PRICEABLE"), "nothing to price when no model is chosen");
+    }
+
+    /** A gateway setup: the default model is of another vendor than its provider. Runs, with a warning. */
+    @Test
+    void aDefaultModelOfAnotherVendorIsAWarningNamingTheDefault() {
+        catalogueMeteredModelWithRates();
+        insertLlmProvider("TEST-llm", "anthropic", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+
+        AttentionView row = queries.collect().stream()
+                .filter(v -> "LLM_MODEL_NOT_FOR_PROVIDER".equals(v.code()))
+                .findFirst().orElseThrow(() -> new AssertionError("no row in " + queries.collect()));
+        assertEquals(AttentionView.Severity.WARNING, row.severity());
+        assertNull(row.subject(), "the default has no repository subject");
+        assertTrue(row.message().contains(MODEL) && row.message().contains("the default review model"), row.message());
+    }
+
+    /** A switched-off default model still runs for API reviews; the operator is asked to choose another. */
+    @Test
+    void aSwitchedOffDefaultModelIsAWarningNamingTheDefault() {
+        catalogueMeteredModelWithRates();
+        sql("UPDATE llm_model SET enabled = FALSE WHERE name = '" + MODEL + "'");
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+
+        AttentionView row = queries.collect().stream()
+                .filter(v -> "LLM_MODEL_SWITCHED_OFF".equals(v.code()))
+                .findFirst().orElseThrow(() -> new AssertionError("no row in " + queries.collect()));
+        assertEquals(AttentionView.Severity.WARNING, row.severity());
+        assertTrue(row.message().contains(MODEL) && row.message().contains("the default review model"), row.message());
+        assertFalse(codes().contains("LLM_MODEL_NOT_FOR_PROVIDER"), codes().toString());
     }
 
     /** An enabled provider exists but nothing is marked default, so brokering cannot pick one. */
@@ -510,10 +556,18 @@ class AttentionQueriesTest {
     // ---- fixtures: obviously-synthetic values only --------------------------
 
     private void insertLlmProvider(String name, boolean enabled, boolean isDefault) {
-        sql("INSERT INTO llm_provider (id, name, type, base_url, api_key, model, temperature, enabled, is_default) "
-                + "VALUES ('" + UUID.randomUUID() + "', '" + name + "', 'openai', "
-                + "'https://llm.example.invalid', 'TEST-KEY', '" + MODEL + "', 0.0, "
-                + enabled + ", " + isDefault + ")");
+        insertLlmProvider(name, "openai", enabled, isDefault);
+    }
+
+    /** A default provider gets {@link #MODEL} as the default review model, as the dashboard writes them together. */
+    private void insertLlmProvider(String name, String type, boolean enabled, boolean isDefault) {
+        sql("INSERT INTO llm_provider (id, name, type, base_url, api_key, temperature, enabled, is_default) "
+                + "VALUES ('" + UUID.randomUUID() + "', '" + name + "', '" + type + "', "
+                + "'https://llm.example.invalid', 'TEST-KEY', 0.0, " + enabled + ", " + isDefault + ")");
+        if (isDefault) {
+            sql("INSERT INTO app_setting (key, value) VALUES ('llm.default-model', '" + MODEL + "')"
+                    + " ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value");
+        }
     }
 
     /** Catalogue {@link #MODEL} in the given pricing mode, with no rates. */

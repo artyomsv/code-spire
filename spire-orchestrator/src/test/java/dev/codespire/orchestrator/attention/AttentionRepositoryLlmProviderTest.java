@@ -36,6 +36,8 @@ class AttentionRepositoryLlmProviderTest {
 
     static final String PROVIDER_OFF = "REPOSITORY_LLM_PROVIDER_OFF";
     static final String MODEL_NOT_PRICEABLE = "REPOSITORY_LLM_MODEL_NOT_PRICEABLE";
+    static final String NOT_FOR_PROVIDER = "LLM_MODEL_NOT_FOR_PROVIDER";
+    static final String SWITCHED_OFF = "LLM_MODEL_SWITCHED_OFF";
     private static final String WORKSPACE = "TEST-attention-llm";
 
     @Inject AttentionQueries queries;
@@ -49,7 +51,7 @@ class AttentionRepositoryLlmProviderTest {
     /** The repositories go first: a provider a repository names cannot be deleted. */
     @AfterEach
     void removeFixture() throws Exception {
-        execute("UPDATE repository SET review_llm_provider_id=NULL WHERE workspace=?", WORKSPACE);
+        execute("UPDATE repository SET review_llm_provider_id=NULL, review_llm_model=NULL WHERE workspace=?", WORKSPACE);
         execute("DELETE FROM repository_account WHERE repository_id IN (SELECT id FROM repository WHERE workspace=?)", WORKSPACE);
         execute("DELETE FROM repository WHERE workspace=?", WORKSPACE);
         for (UUID id : createdProviders) execute("DELETE FROM llm_provider WHERE id=?", id);
@@ -58,8 +60,8 @@ class AttentionRepositoryLlmProviderTest {
     @Test
     void aRepositoryWhoseNamedProviderIsSwitchedOffIsBlocking() throws Exception {
         String suffix = suffix();
-        UUID provider = provider("TEST-off-" + suffix, catalogued("TEST-attention-off-" + suffix), false);
-        String repository = repositoryNaming(provider, suffix);
+        UUID provider = provider("TEST-off-" + suffix, "openai", false);
+        String repository = repositoryNaming(provider, catalogued("openai", "TEST-attention-off-" + suffix, true), suffix);
 
         List<AttentionView> rows = rowsFor(PROVIDER_OFF, repository);
         assertEquals(1, rows.size(), "one row for this repository: " + queries.collect());
@@ -70,11 +72,10 @@ class AttentionRepositoryLlmProviderTest {
     @Test
     void aRepositoryWhoseNamedProviderCannotBePricedIsNamed() throws Exception {
         String suffix = suffix();
-        UUID provider = provider("TEST-rateless-" + suffix, catalogued("TEST-attention-priced-" + suffix), true);
+        UUID provider = provider("TEST-rateless-" + suffix, "openai", true);
         String rateless = "TEST-attention-uncatalogued-" + suffix;
-        // As V30 does: a provider whose model has no pricing exists without passing the registry guard.
-        execute("UPDATE llm_provider SET model=? WHERE id=?", rateless, provider);
-        String repository = repositoryNaming(provider, suffix);
+        // As V30 left legacy rows: a chosen model with no pricing exists without passing the save guard.
+        String repository = repositoryNaming(provider, rateless, suffix);
 
         List<AttentionView> rows = rowsFor(MODEL_NOT_PRICEABLE, repository);
         assertEquals(1, rows.size(), "one row for this repository: " + queries.collect());
@@ -85,11 +86,41 @@ class AttentionRepositoryLlmProviderTest {
     @Test
     void aSpendableNamedProviderRaisesNothing() throws Exception {
         String suffix = suffix();
-        UUID provider = provider("TEST-fine-" + suffix, catalogued("TEST-attention-fine-" + suffix), true);
-        String repository = repositoryNaming(provider, suffix);
+        UUID provider = provider("TEST-fine-" + suffix, "openai", true);
+        String repository = repositoryNaming(provider, catalogued("openai", "TEST-attention-fine-" + suffix, true), suffix);
 
         assertEquals(List.of(), rowsFor(PROVIDER_OFF, repository));
         assertEquals(List.of(), rowsFor(MODEL_NOT_PRICEABLE, repository));
+        assertEquals(List.of(), rowsFor(NOT_FOR_PROVIDER, repository));
+        assertEquals(List.of(), rowsFor(SWITCHED_OFF, repository));
+    }
+
+    /** A gateway setup on one repository: runs, and the repository's row says which model and provider. */
+    @Test
+    void aRepositoryModelOfAnotherVendorIsAWarning() throws Exception {
+        String suffix = suffix();
+        UUID provider = provider("TEST-gateway-" + suffix, "anthropic", true);
+        String model = catalogued("openai", "TEST-attention-gateway-" + suffix, true);
+        String repository = repositoryNaming(provider, model, suffix);
+
+        List<AttentionView> rows = rowsFor(NOT_FOR_PROVIDER, repository);
+        assertEquals(1, rows.size(), "one row for this repository: " + queries.collect());
+        assertEquals(AttentionView.Severity.WARNING, rows.getFirst().severity());
+        assertTrue(rows.getFirst().message().contains(model) && rows.getFirst().message().contains("repository "
+                + repository), rows.getFirst().message());
+    }
+
+    @Test
+    void aSwitchedOffRepositoryModelIsAWarning() throws Exception {
+        String suffix = suffix();
+        UUID provider = provider("TEST-off-model-" + suffix, "openai", true);
+        String model = catalogued("openai", "TEST-attention-off-model-" + suffix, false);
+        String repository = repositoryNaming(provider, model, suffix);
+
+        List<AttentionView> rows = rowsFor(SWITCHED_OFF, repository);
+        assertEquals(1, rows.size(), "one row for this repository: " + queries.collect());
+        assertEquals(AttentionView.Severity.WARNING, rows.getFirst().severity());
+        assertTrue(rows.getFirst().message().contains(model), rows.getFirst().message());
     }
 
     private List<AttentionView> rowsFor(String code, String repository) {
@@ -101,25 +132,25 @@ class AttentionRepositoryLlmProviderTest {
         return UUID.randomUUID().toString().substring(0, 8);
     }
 
-    private String catalogued(String name) {
-        models.create(new LlmModelInput("openai", name, name, "UNMETERED", Map.of(),
-                null, null, null, null, true, List.of()));
+    private String catalogued(String type, String name, boolean enabled) {
+        models.create(new LlmModelInput(type, name, name, "UNMETERED", Map.of(),
+                null, null, null, null, enabled, List.of()));
         return name;
     }
 
-    private UUID provider(String name, String model, boolean enabled) {
-        UUID id = UUID.fromString(providers.create(new LlmProviderInput(name, "openai",
+    private UUID provider(String name, String type, boolean enabled) {
+        UUID id = UUID.fromString(providers.create(new LlmProviderInput(name, type,
                 "https://llm.example.invalid", "TEST-key", null, null, enabled, false, null)).id());
         createdProviders.add(id);
         return id;
     }
 
     /** Returns the repository's subject on the panel, {@code workspace/slug}. */
-    private String repositoryNaming(UUID provider, String suffix) throws Exception {
+    private String repositoryNaming(UUID provider, String model, String suffix) throws Exception {
         String slug = "TEST-repo-" + suffix;
         UUID id = repositories.create(new RepositoryInput("github", "https://github.example.invalid",
                 WORKSPACE, slug, true, null, null)).id();
-        execute("UPDATE repository SET review_llm_provider_id=? WHERE id=?", provider, id);
+        execute("UPDATE repository SET review_llm_provider_id=?, review_llm_model=? WHERE id=?", provider, model, id);
         return WORKSPACE + "/" + slug;
     }
 
