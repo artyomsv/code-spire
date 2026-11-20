@@ -61,8 +61,7 @@ class CatalogFetcherTest {
             // Headers and a first chunk, then nothing: the body never ends until the test is over.
             exchange.sendResponseHeaders(200, 1000);
             OutputStream out = exchange.getResponseBody();
-            out.write("providers: []
-".getBytes(StandardCharsets.UTF_8));
+            out.write("providers: []\n".getBytes(StandardCharsets.UTF_8));
             out.flush();
             try {
                 released.await(10, TimeUnit.SECONDS);

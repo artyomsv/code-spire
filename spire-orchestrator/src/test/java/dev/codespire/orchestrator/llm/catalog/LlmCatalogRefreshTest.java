@@ -134,12 +134,8 @@ class LlmCatalogRefreshTest {
     @Test
     void anInvalidFilesErrorIsFlatAndCapped() {
         states.holding(STORED);
-        String hostile = "providers: []
-models:
-  - modelId: \"TEST-a\nforged log line\r" + "x".repeat(500_000) + "\"
-"
-                + "    provider: openai
-";
+        String hostile = "providers: []\nmodels:\n  - modelId: \"TEST-a\nforged log line\r" + "x".repeat(500_000) + "\"\n"
+                + "    provider: openai\n";
         LlmCatalogRefresh refresh = refresh(REMOTE, new StubFetcher(new CatalogFetcher.Fetched(hostile, null)));
 
         assertEquals(LlmCatalogRefresh.RefreshOutcome.INVALID, refresh.refreshNow());
