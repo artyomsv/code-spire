@@ -49,6 +49,16 @@ class CatalogParserTest {
         assertEquals(2L, strict.models().getFirst().pricing().output());
     }
 
+    /** A price is a whole number of millicents; 1.9 must be refused, never bound as 1. */
+    @Test
+    void aFractionalPriceIsRefusedInBothModes() {
+        String fractional = VALID.replace("      input: 1", "      input: 1.9");
+        assertTrue(fractional.contains("input: 1.9"), "the fixture must carry the fractional price");
+
+        assertThrows(CatalogException.class, () -> CatalogParser.parse(fractional, CatalogParser.Mode.STRICT));
+        assertThrows(CatalogException.class, () -> CatalogParser.parse(fractional, CatalogParser.Mode.LENIENT));
+    }
+
     @Test
     void strictRefusesAnUnknownField() {
         assertTrue(WITH_FUTURE_FIELD.contains("futureField"), "the fixture must carry the unknown field");

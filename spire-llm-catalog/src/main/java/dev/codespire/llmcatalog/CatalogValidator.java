@@ -25,9 +25,9 @@ public final class CatalogValidator {
     public static List<String> problems(CatalogDocument doc, LocalDate today) {
         List<String> problems = new ArrayList<>();
         Set<String> providers = providerProblems(doc.providers(), problems);
-        Set<String> names = new HashSet<>();
+        Seen seen = new Seen(providers, new HashSet<>(), problems);
         for (CatalogModel model : doc.models()) {
-            modelProblems(model, providers, names, problems);
+            modelProblems(model, seen);
             if (model.pricing() == null) {
                 problems.add(label(model) + ": pricing is required");
             } else {
@@ -49,17 +49,25 @@ public final class CatalogValidator {
         return codes;
     }
 
-    private static void modelProblems(CatalogModel model, Set<String> providers, Set<String> names,
-            List<String> problems) {
+    /** The listed provider codes, the model names used so far, and where problems are collected. */
+    private record Seen(Set<String> providers, Set<String> names, List<String> problems) {
+    }
+
+    private static void modelProblems(CatalogModel model, Seen seen) {
+        List<String> problems = seen.problems();
         if (model.modelId() == null || model.modelId().isBlank()) {
             problems.add("a model has no modelId");
             return;
         }
-        if (!providers.contains(model.provider())) {
+        if (!seen.providers().contains(model.provider())) {
             problems.add(label(model) + ": provider " + model.provider() + " is not a listed provider");
         }
+        // Every picker sorts and labels by it; a missing one would reach the dashboard as null.
+        if (model.displayName() == null || model.displayName().isBlank()) {
+            problems.add(label(model) + ": displayName is required");
+        }
         for (String name : model.names()) {
-            if (name == null || name.isBlank() || !names.add(name)) {
+            if (name == null || name.isBlank() || !seen.names().add(name)) {
                 problems.add(label(model) + ": name " + name + " is blank or already used by another model");
             }
         }
@@ -92,8 +100,8 @@ public final class CatalogValidator {
         if (pricing.output() == null) {
             problems.add(label(model) + ": pricing.output is required");
         }
-        rates(pricing).forEach((field, rate) -> rateProblem(model, field, rate, problems));
-        rateProblem(model, "cacheWrite1h", pricing.cacheWrite1h(), problems);
+        rates(pricing).forEach((field, rate) -> rateProblem(label(model) + ": pricing." + field, rate, problems));
+        rateProblem(label(model) + ": pricing.cacheWrite1h", pricing.cacheWrite1h(), problems);
         notBilledProblems(model, problems);
         if (pricing.sourceUrl() == null || !pricing.sourceUrl().startsWith(HTTPS)) {
             problems.add(label(model) + ": pricing.sourceUrl must be an https URL");
@@ -103,9 +111,10 @@ public final class CatalogValidator {
         }
     }
 
-    private static void rateProblem(CatalogModel model, String field, Long rate, List<String> problems) {
+    /** @param where the model and the field, as a problem names them */
+    private static void rateProblem(String where, Long rate, List<String> problems) {
         if (rate != null && (rate <= 0 || rate > CatalogLimits.MAX_RATE_MILLICENTS_PER_MILLION)) {
-            problems.add(label(model) + ": pricing." + field + " must be positive and at most "
+            problems.add(where + " must be positive and at most "
                     + CatalogLimits.MAX_RATE_MILLICENTS_PER_MILLION);
         }
     }

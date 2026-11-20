@@ -130,6 +130,32 @@ class LlmCatalogRefreshTest {
         assertTrue(states.failures.getFirst().startsWith("invalid: "), states.failures.toString());
     }
 
+    /** A fractional price would bind as a smaller whole one; refused, and the stored rates stay in force. */
+    @Test
+    void aFractionalPriceKeepsTheCurrentCatalog() {
+        assertRefusedKeepingStored(REPRICED.replace("output: 3", "output: 3.5"));
+    }
+
+    /** A model with no display name would reach every picker as null; refused, and the stored catalog stays. */
+    @Test
+    void aMissingDisplayNameKeepsTheCurrentCatalog() {
+        assertRefusedKeepingStored(REPRICED.replace("    displayName: TEST stored", "    displayName: \"\""));
+    }
+
+    private void assertRefusedKeepingStored(String received) {
+        assertTrue(!received.equals(REPRICED), "the fixture must differ from the valid file");
+        states.holding(STORED);
+        LlmCatalogRefresh refresh = refresh(REMOTE, new StubFetcher(new CatalogFetcher.Fetched(received, null)));
+        String before = refresh.catalog.snapshot().sha256();
+
+        assertEquals(LlmCatalogRefresh.RefreshOutcome.INVALID, refresh.refreshNow());
+
+        assertEquals(before, refresh.catalog.snapshot().sha256());
+        assertEquals(List.of(), states.stored);
+        assertEquals(2L, refresh.catalog.snapshot().byName("TEST-stored").orElseThrow().pricing().output(),
+                "the stored rate stays in force");
+    }
+
     /** A validation message names text from the file; what is stored is flat and capped, whatever the file held. */
     @Test
     void anInvalidFilesErrorIsFlatAndCapped() {

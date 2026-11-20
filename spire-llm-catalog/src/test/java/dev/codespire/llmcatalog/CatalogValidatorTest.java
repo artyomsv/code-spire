@@ -10,6 +10,8 @@ import static dev.codespire.llmcatalog.CatalogFixtures.TODAY;
 import static dev.codespire.llmcatalog.CatalogFixtures.document;
 import static dev.codespire.llmcatalog.CatalogFixtures.model;
 import static dev.codespire.llmcatalog.CatalogFixtures.pricing;
+import static dev.codespire.llmcatalog.CatalogFixtures.withAliases;
+import static dev.codespire.llmcatalog.CatalogFixtures.withDisplayName;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -32,7 +34,7 @@ class CatalogValidatorTest {
 
     @Test
     void aValidDocumentHasNoProblems() {
-        assertEquals(List.of(), problemsOf(model("TEST-a", "openai", pricing(1L, 2L), "TEST-a-dated"),
+        assertEquals(List.of(), problemsOf(withAliases(model("TEST-a", "openai", pricing(1L, 2L)), "TEST-a-dated"),
                 model("TEST-b", "anthropic", pricing(1L, 2L))));
     }
 
@@ -41,6 +43,13 @@ class CatalogValidatorTest {
         CatalogDocument doc = CatalogParser.parse(CatalogParserTest.VALID, CatalogParser.Mode.STRICT);
 
         assertEquals(List.of(), CatalogValidator.problems(doc, TODAY));
+    }
+
+    /** Every picker sorts and labels by the display name; a missing one is refused, not shown as null. */
+    @Test
+    void aMissingDisplayNameIsRefused() {
+        assertOneProblemNaming(problemsOf(withDisplayName(model("TEST-a"), null)), "TEST-a", "displayName");
+        assertOneProblemNaming(problemsOf(withDisplayName(model("TEST-a"), " ")), "TEST-a", "displayName");
     }
 
     @Test
@@ -90,7 +99,7 @@ class CatalogValidatorTest {
 
     @Test
     void namesAreUniqueAcrossModelIdsAndAliases() {
-        assertOneProblemNaming(problemsOf(model("TEST-a"), model("TEST-b", "openai", pricing(1L, 2L), "TEST-a")),
+        assertOneProblemNaming(problemsOf(model("TEST-a"), withAliases(model("TEST-b", "openai", pricing(1L, 2L)), "TEST-a")),
                 "TEST-b", "TEST-a");
     }
 

@@ -27,8 +27,8 @@ public final class CatalogParser {
 
     public enum Mode { STRICT, LENIENT }
 
-    private static final ObjectMapper STRICT_MAPPER = mapper(true);
-    private static final ObjectMapper LENIENT_MAPPER = mapper(false);
+    private static final ObjectMapper STRICT_MAPPER = mapper(Mode.STRICT);
+    private static final ObjectMapper LENIENT_MAPPER = mapper(Mode.LENIENT);
 
     private CatalogParser() {
     }
@@ -95,10 +95,15 @@ public final class CatalogParser {
         return message != null && message.startsWith("Duplicate field") ? " (a duplicate key)" : "";
     }
 
-    private static ObjectMapper mapper(boolean strict) {
+    /**
+     * A fraction is never coerced to a whole number: Jackson would bind 1.9 to 1, and a price is a whole number of
+     * millicents, so a fractional one is refused rather than silently changed.
+     */
+    private static ObjectMapper mapper(Mode mode) {
         ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
         mapper.enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
-        mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, strict);
+        mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, mode == Mode.STRICT);
+        mapper.disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT);
         mapper.registerModule(new JavaTimeModule());
         return mapper;
     }
