@@ -70,6 +70,14 @@ tasks.test {
     systemProperty("spire.test.packaged-app", layout.buildDirectory.file("quarkus-app/quarkus-run.jar").get().asFile.absolutePath)
 }
 
+// The bundled model catalog: the copy the app uses before its first fetch, on a new database, and
+// alone when spire.llm.catalog.url is `none`. Read from the classpath as llm-catalog/catalog.yaml.
+tasks.processResources {
+    from(rootProject.file("ai-catalog/v1/catalog.yaml")) {
+        into("llm-catalog")
+    }
+}
+
 // quarkusDev runs with the module dir as CWD, but the single dev-env .env lives
 // at the repo root — point dev mode there so ${POSTGRES_*} et al. resolve.
 tasks.named<io.quarkus.gradle.tasks.QuarkusDev>("quarkusDev") {

@@ -475,6 +475,19 @@ spire:
     # stuck threshold). Server-side and shared by every connection, and a push happens only when the
     # condition set changed -- so an idle system is silent however many dashboards are open.
     sweep-seconds: ${SPIRE_ATTENTION_SWEEP_SECONDS:10}
+  llm:
+    catalog:
+      # The public model catalog (ai-catalog/README.md). A default on purpose, and an exception to the
+      # "no defaults for environment values" rule: the file is public, not a credential, and an install
+      # should price its models with no setup. `none` switches remote loading off and uses the copy
+      # built into this image, in memory only. Must be https.
+      url: ${SPIRE_LLM_CATALOG_URL:https://raw.githubusercontent.com/artyomsv/code-spire/master/ai-catalog/v1/catalog.yaml}
+      # How often the URL is read; `off` reads it once, at startup.
+      refresh-interval: ${SPIRE_LLM_CATALOG_REFRESH_INTERVAL:6h}
+      # The copy built into the image (spire-orchestrator/build.gradle.kts, processResources).
+      bundled-resource: llm-catalog/catalog.yaml
+      # Whether this instance follows llm_catalog_changed. Off only in tests, which start it by hand.
+      listener: "on"
 
 # Prod: the packaged deployment runs behind the dashboard image's nginx, which is the ONLY ingress
 # and puts all four services on one origin so ADR-022's cookie-path scoping actually isolates them.
@@ -557,6 +570,14 @@ spire:
     work-effects-interval: "off"
     work-scan-interval: "off"
     repository-history-interval: "off"
+    llm:
+      catalog:
+        # Tests never call GitHub. The test catalog holds only TEST- models, so a test that expects an
+        # uncatalogued name to be unpriced keeps its meaning.
+        url: none
+        refresh-interval: "off"
+        bundled-resource: llm-catalog-test/catalog.yaml
+        listener: "off"
     review:
       # Tests exercise the active pipeline — seed active (prod/dev seed observe in code).
       mode: active

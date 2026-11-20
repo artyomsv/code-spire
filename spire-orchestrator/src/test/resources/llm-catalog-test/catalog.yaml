@@ -1,0 +1,69 @@
+# The catalog every @QuarkusTest reads (%test: url none). Synthetic: TEST- names, rates 1, 2, 3.
+providers:
+  - code: anthropic
+    displayName: TEST anthropic
+    pricingUrl: https://example.invalid/pricing
+  - code: openai
+    displayName: TEST openai
+    pricingUrl: https://example.invalid/pricing
+models:
+  - modelId: TEST-cat-a
+    provider: anthropic
+    displayName: TEST catalog anthropic
+    aliases: [TEST-cat-a-dated]
+    lifecycle:
+      status: ACTIVE
+    contextWindow: 1
+    maxOutputTokens: 1
+    capabilities:
+      tools: true
+      structuredOutput: true
+      imageInput: false
+      promptCache: true
+    api:
+      outputTokenParam: MAX_TOKENS
+      temperature: true
+      reasoningEffort: null
+    pricing:
+      input: 1
+      output: 2
+      cacheRead: 3
+      cacheWrite: 3
+      cacheWrite1h: 3
+      sourceUrl: https://example.invalid/pricing
+      observedAt: 2026-11-20
+  - modelId: TEST-cat-o
+    provider: openai
+    displayName: TEST catalog openai
+    lifecycle:
+      status: ACTIVE
+    capabilities:
+      tools: true
+    api:
+      outputTokenParam: MAX_COMPLETION_TOKENS
+      temperature: false
+      reasoningEffort: low
+    pricing:
+      input: 1
+      output: 2
+      cacheRead: 3
+      reasoning: 2
+      notBilled: [CACHE_WRITE]
+      sourceUrl: https://example.invalid/pricing
+      observedAt: 2026-11-20
+  - modelId: TEST-cat-retired
+    provider: anthropic
+    displayName: TEST catalog retired
+    lifecycle:
+      status: RETIRED
+      successor: TEST-cat-a
+    api:
+      outputTokenParam: MAX_TOKENS
+      temperature: true
+    pricing:
+      input: 1
+      output: 2
+      cacheRead: 3
+      cacheWrite: 3
+      sourceUrl: https://example.invalid/pricing
+      observedAt: 2026-11-20

@@ -295,7 +295,8 @@ public class LlmModelRegistry {
         return parseTokenParam(raw).name();
     }
 
-    private static OutputTokenParam parseTokenParam(String raw) {
+    /** A stored token-param name as the enum; MAX_TOKENS when blank or unknown. */
+    public static OutputTokenParam parseTokenParam(String raw) {
         if (raw == null || raw.isBlank()) {
             return OutputTokenParam.MAX_TOKENS;
         }
