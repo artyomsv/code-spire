@@ -245,7 +245,7 @@ class LlmProviderResourceTest {
                 .when().post("/api/llm-providers").then().statusCode(201).extract().path("id");
         UUID repository = repositories.create(new dev.codespire.orchestrator.repository.RepositoryInput(
                 "github", "https://github.example.invalid", NAMING_WORKSPACE, "TEST-repo", true, null, null)).id();
-        execute("UPDATE repository SET review_llm_provider_id=? WHERE id=?", UUID.fromString(id), repository);
+        execute("UPDATE repository SET review_llm_provider_id=?, review_llm_model='TEST-MODEL' WHERE id=?", UUID.fromString(id), repository);
 
         given().when().delete("/api/llm-providers/" + id)
                 .then().statusCode(409).body(org.hamcrest.Matchers.containsString(NAMING_WORKSPACE + "/TEST-repo"));
