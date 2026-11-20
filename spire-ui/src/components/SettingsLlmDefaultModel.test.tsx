@@ -35,8 +35,9 @@ describe('SettingsLlmDefaultModel', () => {
     vi.spyOn(api, 'fetchLlmDefaultModel').mockResolvedValue({ provider: null, model: null });
     renderWithQuery(<SettingsLlmDefaultModel providers={[provider({ isDefault: false })]} models={MODELS} />);
 
-    expect(await screen.findByRole('combobox', { name: 'Default review model' })).toBeDisabled();
-    expect(screen.getByText('Choose a default provider first.')).toBeInTheDocument();
+    const select = await screen.findByRole('combobox', { name: 'Default review model' });
+    expect(select).toBeDisabled();
+    expect(select).toHaveTextContent('Choose a default provider first');
   });
 
   it('choosing a model saves only the model', async () => {
@@ -58,5 +59,20 @@ describe('SettingsLlmDefaultModel', () => {
     renderWithQuery(<SettingsLlmDefaultModel providers={[provider()]} models={models} />);
 
     expect(await screen.findByRole('combobox', { name: 'Default review model' })).toHaveTextContent('TEST-off (switched off)');
+  });
+});
+
+describe('SettingsLlmDefaultModel — a failed read', () => {
+  it('says the read failed and offers a retry, instead of an empty disabled select', async () => {
+    const read = vi.spyOn(api, 'fetchLlmDefaultModel').mockRejectedValue(new Error('TEST-settings down'));
+    renderWithQuery(<SettingsLlmDefaultModel providers={[provider()]} models={MODELS} />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load the default review model: TEST-settings down');
+    expect(screen.getByRole('combobox', { name: 'Default review model' })).toBeDisabled();
+    read.mockResolvedValue({ provider: 'TEST-provider-1', model: 'TEST-o' });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading the default model' }));
+
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(screen.getByRole('combobox', { name: 'Default review model' })).toHaveTextContent('TEST openai (TEST-o)');
   });
 });

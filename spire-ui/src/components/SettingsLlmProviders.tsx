@@ -41,6 +41,12 @@ import { useEachRead } from '../hooks/useEachRead';
 import { invalidateLive } from '../liveCache';
 import { preparationKeys } from './work-items/workQueries';
 
+/** A failed read as a sentence, or null while it has not failed. */
+function readFailure(error: unknown): string | null {
+  if (!error) return null;
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** One array each while nothing is read, so the deep link's effect does not re-run on every render. */
 const NO_PROVIDERS: LlmProviderView[] = [];
 const NO_MODELS: LlmModelView[] = [];
@@ -255,7 +261,8 @@ export default function SettingsLlmProviders() {
             </button>
           </Tooltip>
         </div>
-        <SettingsLlmCatalogHeader catalog={catalogRead.data} />
+        <SettingsLlmCatalogHeader catalog={catalogRead.data} failure={readFailure(catalogRead.error)}
+          onRetry={() => void catalogRead.refetch()} />
         {modelsLoading ? (
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
         ) : models.length === 0 && catalogRows.length === 0 ? (
@@ -299,7 +306,7 @@ export default function SettingsLlmProviders() {
             <h3>{confirmDelete.useCatalog ? `Use the catalog for “${confirmDelete.name}”?` : `Delete “${confirmDelete.name}”?`}</h3>
             <p style={{ color: 'var(--text-3)', fontSize: 13 }}>
               {confirmDelete.useCatalog
-                ? 'This deletes the manual model. The catalog model with the same name takes its place.'
+                ? 'This deletes the manual model. The catalog model with the same name takes its place, unless another manual model answers to one of its names; while it is in use that case is refused.'
                 : 'This cannot be undone.'}
             </p>
             <div className="modal-actions">

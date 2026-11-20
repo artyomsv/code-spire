@@ -70,7 +70,8 @@ const isScreen = (body: string) => /className="(card|content)\b/.test(body);
  * The field rule used to apply to screens only; once create and edit moved into side panels and
  * step forms, no non-legacy screen held a control and the rule checked nothing while passing.
  */
-const FIELD_COMPONENTS = ['AutoTextarea.tsx', 'ActorPicker.tsx', 'PromptScopePicker.tsx'];
+// Select.tsx is the shared select itself: it renders the control, it is not a settings form.
+const FIELD_COMPONENTS = ['AutoTextarea.tsx', 'ActorPicker.tsx', 'PromptScopePicker.tsx', 'Select.tsx'];
 const fieldComponent = (file: string) => FIELD_COMPONENTS.some(name => file.endsWith(name));
 
 /**
@@ -88,8 +89,11 @@ const LEGACY_SCREENS = [
 ];
 const legacy = (file: string) => LEGACY_SCREENS.some(name => file.endsWith(name));
 
-/** Controls that need a label and an explanation. A checkbox states its own text beside it. */
-const controlsIn = (body: string) => [...body.matchAll(/<(input|select|textarea)\b[^>]*>/g)]
+/**
+ * Controls that need a label and an explanation. A checkbox states its own text beside it. The shared Select counts
+ * as a control too: it once let a settings field skip SettingField unseen, as only native tags were recognised.
+ */
+const controlsIn = (body: string) => [...body.matchAll(/<(input|select|textarea|Select)\b[^>]*>/g)]
   .filter(match => !/type="checkbox"/.test(match[0]));
 
 /** Each convention a settings file must meet, as one verdict per rule. */
@@ -111,6 +115,11 @@ it('carries every settings control on a SettingField, not a hand-rolled label', 
   // Verified by mutation: replace PresetForm's SettingField with a bare label, leaving its select
   // intact — this fails. A file that renders only checkboxes is not required to import it.
   expect(offenders('field'), 'A settings form with controls must use SettingField').toEqual([]);
+  // The shared Select is seen: these two hold only a Select (no native control), so dropping Select from controlsIn
+  // fails this; giving either a bare label instead of SettingField fails the rule above.
+  for (const name of ['SettingsLlmDefaultModel.tsx', 'LlmMakeDefaultDialog.tsx']) {
+    expect(inspected.some(([file]) => file.endsWith(name)), `${name} is inspected by the field rule`).toBe(true);
+  }
 });
 
 it('changes things in a side panel rather than a form inline on the screen', () => {

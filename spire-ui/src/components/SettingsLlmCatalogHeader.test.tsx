@@ -50,3 +50,14 @@ describe('SettingsLlmCatalogHeader', () => {
     expect(keys).toContain(JSON.stringify(api.llmCatalogKey));
   });
 });
+
+describe('SettingsLlmCatalogHeader — a failed read', () => {
+  it('says the catalog could not be loaded and offers a retry, instead of showing nothing', () => {
+    const retry = vi.fn();
+    renderWithQuery(<SettingsLlmCatalogHeader catalog={undefined} failure="TEST-catalog down" onRetry={retry} />);
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not load the model catalog: TEST-catalog down');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading the catalog' }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+});
