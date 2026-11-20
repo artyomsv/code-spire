@@ -45,9 +45,9 @@ class LlmDefaultModelResourceTest {
     private String openaiModel;
     private String anthropicModel;
 
+    /** Only this suite's TEST-ldmr- rows are touched, by SQL, so a repository another suite left cannot fail it. */
     @BeforeEach
-    void noProvidersNoSetting() throws SQLException {
-        providers.list().forEach(p -> providers.delete(UUID.fromString(p.id())));
+    void noSetting() throws SQLException {
         execute("DELETE FROM app_setting WHERE key=?", LlmDefaultModel.KEY);
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         openaiModel = catalogued("openai", "TEST-ldmr-openai-" + suffix);
@@ -56,7 +56,7 @@ class LlmDefaultModelResourceTest {
 
     @AfterEach
     void removeFixture() throws SQLException {
-        providers.list().forEach(p -> providers.delete(UUID.fromString(p.id())));
+        execute("DELETE FROM llm_provider WHERE name LIKE ?", "TEST-ldmr-%");
         execute("DELETE FROM app_setting WHERE key=?", LlmDefaultModel.KEY);
         execute("DELETE FROM llm_model WHERE name LIKE ?", "TEST-ldmr-%");
     }
@@ -72,7 +72,10 @@ class LlmDefaultModelResourceTest {
     }
 
     @Test
-    void settingTheModelWithNoDefaultProviderIs409() {
+    void settingTheModelWithNoDefaultProviderIs409() throws SQLException {
+        UUID provider = defaultOpenaiProvider();
+        execute("UPDATE llm_provider SET enabled = FALSE WHERE id=?", provider);
+
         given().contentType(ContentType.JSON).body(Map.of("model", openaiModel))
                 .when().put(PATH).then().statusCode(409);
     }
@@ -129,10 +132,17 @@ class LlmDefaultModelResourceTest {
 
     // ---- fixture -------------------------------------------------------------
 
-    /** The first provider, so the default one. */
+    /** This suite's provider, made the only default by SQL (through the API it would need a model). */
     private UUID defaultOpenaiProvider() {
-        return UUID.fromString(providers.create(new LlmProviderInput("TEST-ldmr-openai", "openai",
+        UUID id = UUID.fromString(providers.create(new LlmProviderInput("TEST-ldmr-openai", "openai",
                 "https://llm.example.invalid", "TEST-key", null, null, true, false, null)).id());
+        try {
+            execute("UPDATE llm_provider SET is_default = FALSE WHERE is_default");
+            execute("UPDATE llm_provider SET is_default = TRUE WHERE id=?", id);
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not make the TEST provider the default", e);
+        }
+        return id;
     }
 
     private String catalogued(String type, String name) {

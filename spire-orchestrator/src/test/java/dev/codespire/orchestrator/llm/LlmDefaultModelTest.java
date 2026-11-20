@@ -37,9 +37,13 @@ class LlmDefaultModelTest {
     private String openaiModel;
     private String anthropicModel;
 
+    /**
+     * Only this suite's TEST-ldm- rows are touched, by SQL: deleting every provider through the registry fails the whole
+     * class with ProviderInUse when another suite leaves a repository naming one. Each test that needs a default moves it
+     * to its own provider.
+     */
     @BeforeEach
-    void noProvidersNoSetting() throws SQLException {
-        providers.list().forEach(p -> providers.delete(UUID.fromString(p.id())));
+    void noSetting() throws SQLException {
         execute("DELETE FROM app_setting WHERE key=?", LlmDefaultModel.KEY);
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         openaiModel = catalogued("openai", "TEST-ldm-openai-" + suffix);
@@ -48,7 +52,10 @@ class LlmDefaultModelTest {
 
     @AfterEach
     void removeFixture() throws SQLException {
-        providers.list().forEach(p -> providers.delete(UUID.fromString(p.id())));
+        execute("DROP TRIGGER IF EXISTS test_ldm_explode_write ON app_setting");
+        execute("DROP TRIGGER IF EXISTS test_ldm_explode_delete ON app_setting");
+        execute("DROP FUNCTION IF EXISTS test_ldm_explode()");
+        execute("DELETE FROM llm_provider WHERE name LIKE ?", "TEST-ldm-%");
         execute("DELETE FROM app_setting WHERE key=?", LlmDefaultModel.KEY);
         execute("DELETE FROM llm_model WHERE name LIKE ?", "TEST-ldm-%");
     }
@@ -161,6 +168,71 @@ class LlmDefaultModelTest {
 
         assertEquals("Provider type cannot change; create a new provider for another vendor.", refused.getMessage());
         assertEquals("openai", providers.get(openai).orElseThrow().type());
+    }
+
+    /**
+     * The transaction: the setting write fails after the provider row moved, so the move must roll back. A trigger
+     * raises only for this suite's TEST-ldm-explode model; without {@code @Transactional} the default would stay moved.
+     */
+    @Test
+    void aFailedModelWriteLeavesTheDefaultProviderWhereItWas() throws SQLException {
+        UUID first = provider("TEST-ldm-first", "openai");
+        defaultModels.setDefaultProvider(first, openaiModel);
+        UUID second = provider("TEST-ldm-second", "openai");
+        String explode = catalogued("openai", "TEST-ldm-explode-" + UUID.randomUUID().toString().substring(0, 8));
+        explodeOnWrite();
+
+        assertThrows(RuntimeException.class, () -> defaultModels.setDefaultProvider(second, explode));
+
+        assertTrue(providers.get(first).orElseThrow().isDefault(), "the default provider did not move");
+        assertFalse(providers.get(second).orElseThrow().isDefault());
+        assertEquals(Optional.of(openaiModel), setting());
+    }
+
+    /** The same for a create with isDefault: the new row and the cleared default roll back with the failed write. */
+    @Test
+    void aFailedModelWriteOnCreateLeavesNoNewDefault() throws SQLException {
+        UUID first = provider("TEST-ldm-first", "openai");
+        defaultModels.setDefaultProvider(first, openaiModel);
+        String explode = catalogued("openai", "TEST-ldm-explode-" + UUID.randomUUID().toString().substring(0, 8));
+        explodeOnWrite();
+
+        assertThrows(RuntimeException.class, () -> providers.create(new LlmProviderInput("TEST-ldm-new", "openai",
+                "https://llm.example.invalid", "TEST-key", null, null, true, true, explode)));
+
+        assertTrue(providers.get(first).orElseThrow().isDefault(), "the old default is still the default");
+        assertTrue(providers.list().stream().noneMatch(p -> p.name().equals("TEST-ldm-new")), "no new provider row");
+    }
+
+    /** And for a delete of the default: a failed clear of the setting keeps the provider. */
+    @Test
+    void aFailedClearOnDeleteKeepsTheProvider() throws SQLException {
+        UUID first = provider("TEST-ldm-first", "openai");
+        String explode = catalogued("openai", "TEST-ldm-explode-" + UUID.randomUUID().toString().substring(0, 8));
+        defaultModels.setDefaultProvider(first, explode);
+        explodeOnDelete();
+
+        assertThrows(RuntimeException.class, () -> providers.delete(first));
+
+        assertTrue(providers.get(first).isPresent(), "the provider row is still there");
+        assertEquals(Optional.of(explode), setting());
+    }
+
+    private void explodeFunction() throws SQLException {
+        execute("CREATE OR REPLACE FUNCTION test_ldm_explode() RETURNS trigger LANGUAGE plpgsql AS"
+                + " $$ BEGIN RAISE EXCEPTION 'TEST-ldm-explode'; END $$");
+    }
+
+    private void explodeOnWrite() throws SQLException {
+        explodeFunction();
+        execute("CREATE TRIGGER test_ldm_explode_write BEFORE INSERT OR UPDATE ON app_setting FOR EACH ROW"
+                + " WHEN (NEW.value LIKE 'TEST-ldm-explode%') EXECUTE FUNCTION test_ldm_explode()");
+    }
+
+    private void explodeOnDelete() throws SQLException {
+        explodeFunction();
+        execute("CREATE TRIGGER test_ldm_explode_delete BEFORE DELETE ON app_setting FOR EACH ROW"
+                + " WHEN (OLD.value LIKE 'TEST-ldm-explode%') EXECUTE FUNCTION test_ldm_explode()");
     }
 
     // ---- fixture -------------------------------------------------------------
