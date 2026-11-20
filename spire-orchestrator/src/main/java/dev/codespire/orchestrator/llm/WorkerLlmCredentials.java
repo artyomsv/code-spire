@@ -43,9 +43,6 @@ public class WorkerLlmCredentials {
     @Inject
     RepositoryRegistry repositories;
 
-    @Inject
-    LlmDefaultModel defaultModel;
-
     /**
      * The encrypted default LLM credential bound to a workspace, or the reason it must not be spent.
      *
@@ -55,23 +52,24 @@ public class WorkerLlmCredentials {
      * review path checked; the conversation path did not, so an upgraded deployment refused new reviews
      * while an author replying in a live thread still made the bot spend.
      *
-     * <p>The model is the default review model ({@link LlmDefaultModel}), not a field of the provider. Its
-     * read throws on a database fault, so a hiccup is redelivered rather than refused {@code NO_DEFAULT_MODEL}.
+     * <p>The model is the default review model ({@link LlmDefaultModel}), not a field of the provider. Both are read
+     * in one statement, so a default changed meanwhile is seen whole or not at all, never one provider with the other
+     * default's model; a database fault throws, so a hiccup is redelivered rather than refused {@code NO_DEFAULT_MODEL}.
      * A model of another vendor than the provider still runs (a gateway setup); attention warns about it.
      *
      * <p>An unpriceable model is refused BEFORE packing, so no credential is encrypted for a call that
      * will not be made.
      */
     public DefaultLlm resolveDefault(String workspace) {
-        Optional<LlmProviderConfig> cfg = registry.resolveDefault();
-        if (cfg.isEmpty()) {
+        Optional<LlmProviderRegistry.ResolvedDefault> found = registry.resolveDefaultWithModel();
+        if (found.isEmpty()) {
             return DefaultLlm.noDefaultProvider();
         }
-        Optional<String> model = defaultModel.current();
-        if (model.isEmpty()) {
+        LlmProviderRegistry.ResolvedDefault pair = found.orElseThrow();
+        if (pair.model() == null) {
             return DefaultLlm.noDefaultModel();
         }
-        return priced(cfg.orElseThrow(), model.orElseThrow(), workspace);
+        return priced(pair.provider(), pair.model(), workspace);
     }
 
     /**

@@ -85,6 +85,7 @@ public class LlmProviderRegistry {
         String apiKey = require(in.apiKey(), "apiKey");
         boolean asked = Boolean.TRUE.equals(in.isDefault());
         try (Connection c = dataSource.getConnection()) {
+            LlmDefaultModel.lockDefaultPair(c);
             if (asked && in.defaultModel() == null && hasEnabledDefault(c)) {
                 throw new IllegalArgumentException("A default provider exists; send defaultModel with isDefault, so the"
                         + " default provider and its model change together.");
@@ -141,6 +142,7 @@ public class LlmProviderRegistry {
     @Transactional
     public Optional<LlmProviderView> update(UUID id, LlmProviderInput in) {
         try (Connection c = dataSource.getConnection()) {
+            LlmDefaultModel.lockDefaultPair(c);
             Optional<String> storedType = typeOf(c, id);
             if (storedType.isEmpty()) {
                 return Optional.empty();
@@ -215,6 +217,7 @@ public class LlmProviderRegistry {
     @Transactional
     public boolean delete(UUID id) {
         try (Connection c = dataSource.getConnection()) {
+            LlmDefaultModel.lockDefaultPair(c);
             boolean wasDefault = lockIsDefault(c, id);
             List<String> naming = repositoriesNaming(c, id);
             if (!naming.isEmpty()) {
@@ -290,6 +293,29 @@ public class LlmProviderRegistry {
     }
 
     // ---- resolution (internal — carries the decrypted key) -----------------
+
+    /** The enabled default provider, key decrypted, with the default review model (null when none is chosen). */
+    public record ResolvedDefault(LlmProviderConfig provider, String model) {
+    }
+
+    /**
+     * The default provider and the default review model in one statement, so a review never pairs one committed
+     * default's provider with another's model. A database fault throws, so the review is redelivered rather than
+     * refused for a hiccup.
+     */
+    public Optional<ResolvedDefault> resolveDefaultWithModel() {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT p.*, s.value AS default_model FROM llm_provider p"
+                     + " LEFT JOIN app_setting s ON s.key = ? WHERE p.is_default = TRUE AND p.enabled = TRUE")) {
+            ps.setString(1, LlmDefaultModel.KEY);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(new ResolvedDefault(decrypted(rs), rs.getString("default_model")))
+                        : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to resolve the default LLM provider and model", e);
+        }
+    }
 
     /** The global default, enabled provider with its key decrypted; empty when none is set. */
     public Optional<LlmProviderConfig> resolveDefault() {

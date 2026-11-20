@@ -11,6 +11,7 @@ import jakarta.transaction.Transactional;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Optional;
 import java.util.UUID;
@@ -28,6 +29,9 @@ import java.util.UUID;
 public class LlmDefaultModel {
 
     public static final String KEY = "llm.default-model";
+
+    /** The advisory lock key every writer of the default pair takes (an arbitrary constant, unique in this schema). */
+    static final long DEFAULT_PAIR_LOCK = 0x4C4C4D2D44454641L;
 
     static final String UNKNOWN_MODEL = "unknown_model";
     static final String MODEL_NOT_FOR_PROVIDER = "model_not_for_provider";
@@ -52,31 +56,60 @@ public class LlmDefaultModel {
     DataSource dataSource;
 
     /**
-     * The default review model, or empty when none is chosen.
-     *
-     * @throws AppSettingRepository.SettingReadFailed on a database fault, so the review is redelivered rather than
-     *         refused {@code NO_DEFAULT_MODEL} for a hiccup
+     * The enabled default provider's id and the default review model, read in one statement so the two come from one
+     * committed state; either may be null.
      */
-    public Optional<String> current() {
-        return settings.require(KEY);
+    public record DefaultPair(String provider, String model) {
+    }
+
+    public DefaultPair view() {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT (SELECT CAST(id AS TEXT) FROM llm_provider"
+                     + " WHERE is_default = TRUE AND enabled = TRUE), (SELECT value FROM app_setting WHERE key = ?)")) {
+            ps.setString(1, KEY);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return new DefaultPair(rs.getString(1), rs.getString(2));
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to read the default LLM provider and model", e);
+        }
     }
 
     /**
-     * Change the default model for the current default provider; {@code null} clears it.
+     * Change the default model for the current default provider; {@code null} clears it. Validated after the default
+     * pair's lock is held, so a concurrent change of the default provider cannot slip between the check and the write.
      *
      * @throws NoDefaultProvider when no enabled provider is the default: a model with no provider to spend it on
      * @throws ChoiceRefused when the model is unknown, of another vendor, or cannot be priced
      */
     @Transactional
     public void set(String model) {
-        LlmProviderView provider = registry.enabledDefault().orElseThrow(NoDefaultProvider::new);
-        if (model == null) {
-            settings.delete(KEY);
-        } else {
-            requireChoice(provider.type(), model);
-            settings.set(KEY, model);
+        try (Connection c = dataSource.getConnection()) {
+            lockDefaultPair(c);
+            LlmProviderView provider = registry.enabledDefault().orElseThrow(NoDefaultProvider::new);
+            if (model == null) {
+                settings.delete(c, KEY);
+            } else {
+                requireChoice(provider.type(), model);
+                write(c, model);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to set the default review model", e);
         }
         attention.refresh();
+    }
+
+    /**
+     * Every write of the default provider or the default model takes this transaction-scoped lock first: provider
+     * create, update and delete, the default change and the model-only edit. Each then validates what it reads after
+     * the lock is held, so two writers never combine one's provider with the other's model.
+     */
+    static void lockDefaultPair(Connection c) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT pg_advisory_xact_lock(?)")) {
+            ps.setLong(1, DEFAULT_PAIR_LOCK);
+            ps.executeQuery().close();
+        }
     }
 
     /**
@@ -87,12 +120,13 @@ public class LlmDefaultModel {
      */
     @Transactional
     public Optional<LlmProviderView> setDefaultProvider(UUID providerId, String model) {
-        Optional<LlmProviderView> provider = registry.get(providerId);
-        if (provider.isEmpty()) {
-            return Optional.empty();
-        }
-        requireChoice(provider.orElseThrow().type(), model);
         try (Connection c = dataSource.getConnection()) {
+            lockDefaultPair(c);
+            Optional<LlmProviderView> provider = registry.get(providerId);
+            if (provider.isEmpty()) {
+                return Optional.empty();
+            }
+            requireChoice(provider.orElseThrow().type(), model);
             registry.setDefault(c, providerId);
             write(c, model);
         } catch (SQLException e) {

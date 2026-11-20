@@ -1,8 +1,6 @@
 package dev.codespire.orchestrator.settings;
 
 import dev.codespire.orchestrator.llm.LlmDefaultModel;
-import dev.codespire.orchestrator.llm.LlmProviderRegistry;
-import dev.codespire.orchestrator.llm.LlmProviderView;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
@@ -30,9 +28,6 @@ public class LlmDefaultModelResource {
     @Inject
     LlmDefaultModel defaultModel;
 
-    @Inject
-    LlmProviderRegistry providers;
-
     /** The enabled default provider's id and the default model; either may be null. */
     public record LlmDefaultModelView(String provider, String model) {
     }
@@ -43,8 +38,9 @@ public class LlmDefaultModelResource {
 
     @GET
     public LlmDefaultModelView get() {
-        String provider = providers.enabledDefault().map(LlmProviderView::id).orElse(null);
-        return new LlmDefaultModelView(provider, defaultModel.current().orElse(null));
+        // One statement, so the provider and the model come from one committed state.
+        LlmDefaultModel.DefaultPair pair = defaultModel.view();
+        return new LlmDefaultModelView(pair.provider(), pair.model());
     }
 
     @PUT
