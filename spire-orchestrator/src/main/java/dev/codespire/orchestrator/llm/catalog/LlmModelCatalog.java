@@ -161,7 +161,7 @@ public class LlmModelCatalog {
 
     /** The bundled copy as a snapshot; empty when the image carries none or it does not read. */
     public CatalogSnapshot bundled() {
-        String text = bundledText == null ? BundledCatalog.read(bundledResource) : bundledText.get();
+        String text = bundledText();
         if (text == null) {
             LOG.error("No bundled LLM catalog in this image; catalog models are unpriced until a fetch succeeds");
             return CatalogSnapshot.EMPTY;
@@ -172,6 +172,16 @@ public class LlmModelCatalog {
             LOG.errorf("The bundled LLM catalog does not read (%s); catalog models are unpriced", e.getMessage());
             return CatalogSnapshot.EMPTY;
         }
+    }
+
+    /** The text of the copy built into the image, or null when it carries none. */
+    public String bundledText() {
+        return bundledText == null ? BundledCatalog.read(bundledResource) : bundledText.get();
+    }
+
+    /** The configured URL, as written. */
+    public String url() {
+        return url;
     }
 
     /** A document as a snapshot, after the lenient parse and the same rules CI applies. */

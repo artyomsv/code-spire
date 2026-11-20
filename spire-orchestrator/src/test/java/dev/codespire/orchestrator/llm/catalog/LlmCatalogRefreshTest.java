@@ -1,0 +1,195 @@
+package dev.codespire.orchestrator.llm.catalog;
+
+import org.junit.jupiter.api.Test;
+
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.List;
+
+import static dev.codespire.orchestrator.llm.catalog.CatalogTestDoubles.FakeManualModels;
+import static dev.codespire.orchestrator.llm.catalog.CatalogTestDoubles.FakeStates;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/** The refresh flow (spec §6.3) on hand-built collaborators and a stubbed fetcher. */
+class LlmCatalogRefreshTest {
+
+    private static final String REMOTE = "https://example.invalid/catalog.yaml";
+
+    private static String document(long output, String observedAt) {
+        return """
+                providers:
+                  - code: openai
+                    displayName: TEST openai
+                models:
+                  - modelId: TEST-stored
+                    provider: openai
+                    displayName: TEST stored
+                    lifecycle:
+                      status: ACTIVE
+                    api:
+                      outputTokenParam: MAX_TOKENS
+                      temperature: true
+                    pricing:
+                      input: 1
+                      output: %d
+                      sourceUrl: https://example.invalid/pricing
+                      observedAt: %s
+                """.formatted(output, observedAt);
+    }
+
+    private static final String STORED = document(2, "2026-11-19");
+    private static final String REPRICED = document(3, "2026-11-20");
+
+    /** Answers every fetch with one result and records each URL it was asked for. */
+    private static final class StubFetcher extends CatalogFetcher {
+        final List<URI> asked = new ArrayList<>();
+        final List<String> etags = new ArrayList<>();
+        private final FetchResult answer;
+
+        StubFetcher(FetchResult answer) {
+            super(null);
+            this.answer = answer;
+        }
+
+        @Override
+        public FetchResult fetch(URI url, String etag) {
+            asked.add(url);
+            etags.add(etag);
+            return answer;
+        }
+    }
+
+    private final FakeStates states = new FakeStates();
+
+    private LlmCatalogRefresh refresh(String url, CatalogFetcher fetcher) {
+        LlmCatalogRefresh refresh = new LlmCatalogRefresh();
+        refresh.catalog = CatalogTestDoubles.catalog(new FakeManualModels(), states, url);
+        refresh.states = states;
+        refresh.fetcher = fetcher;
+        refresh.startup = Runnable::run;
+        return refresh;
+    }
+
+    @Test
+    void anHttpUrlIsRefusedBeforeAnyFetch() {
+        StubFetcher fetcher = new StubFetcher(new CatalogFetcher.Fetched(STORED, null));
+
+        assertEquals(LlmCatalogRefresh.RefreshOutcome.FAILED,
+                refresh("http://example.invalid/catalog.yaml", fetcher).refreshNow());
+
+        assertEquals(List.of(), fetcher.asked);
+        assertEquals(List.of(LlmCatalogRefresh.URL_NOT_HTTPS), states.failures);
+    }
+
+    @Test
+    void intervalOffStillReadsOnceAtStartup() {
+        StubFetcher fetcher = new StubFetcher(new CatalogFetcher.NotModified());
+        states.holding(STORED);
+
+        refresh(REMOTE, fetcher).onStart(null);
+
+        assertEquals(List.of(URI.create(REMOTE)), fetcher.asked);
+    }
+
+    @Test
+    void urlNoneNeverWritesTheRow() {
+        StubFetcher fetcher = new StubFetcher(new CatalogFetcher.Fetched(STORED, null));
+        LlmCatalogRefresh refresh = refresh("none", fetcher);
+
+        refresh.onStart(null);
+
+        assertEquals(LlmCatalogRefresh.RefreshOutcome.DISABLED, refresh.refreshNow());
+        assertEquals(List.of(), fetcher.asked);
+        assertEquals(List.of(), states.stored);
+        assertEquals(List.of(), states.failures);
+    }
+
+    @Test
+    void anInvalidFileKeepsTheCurrentCatalog() {
+        states.holding(STORED);
+        LlmCatalogRefresh refresh = refresh(REMOTE, new StubFetcher(new CatalogFetcher.Fetched("models: [", null)));
+        String before = refresh.catalog.snapshot().sha256();
+
+        assertEquals(LlmCatalogRefresh.RefreshOutcome.INVALID, refresh.refreshNow());
+
+        assertEquals(before, refresh.catalog.snapshot().sha256());
+        assertEquals(List.of(), states.stored);
+        assertTrue(states.failures.getFirst().startsWith("invalid: "), states.failures.toString());
+    }
+
+    @Test
+    void aNewValidFileIsStoredAndSwapped() {
+        states.holding(STORED);
+        LlmCatalogRefresh refresh = refresh(REMOTE, new StubFetcher(new CatalogFetcher.Fetched(REPRICED, "\"TEST-2\"")));
+
+        assertEquals(LlmCatalogRefresh.RefreshOutcome.REPLACED, refresh.refreshNow());
+
+        LlmCatalogStateRepository.StoredDocument stored = states.stored.getLast();
+        assertEquals(REPRICED, stored.document());
+        assertEquals("remote", stored.source());
+        assertEquals(REMOTE, stored.url());
+        assertEquals("\"TEST-2\"", stored.etag());
+        assertEquals(CatalogSnapshot.sha256Of(REPRICED), refresh.catalog.snapshot().sha256());
+    }
+
+    @Test
+    void theSameShaOnlyRecordsTheCheck() {
+        states.holding(STORED);
+        LlmCatalogRefresh refresh = refresh(REMOTE, new StubFetcher(new CatalogFetcher.Fetched(STORED, "\"TEST-1\"")));
+
+        assertEquals(LlmCatalogRefresh.RefreshOutcome.UNCHANGED, refresh.refreshNow());
+
+        assertEquals(List.of(), states.stored);
+        assertEquals(List.of("\"TEST-1\""), states.unchanged);
+    }
+
+    @Test
+    void aNotModifiedAnswerSendsAndKeepsTheStoredEtag() {
+        states.state = new LlmCatalogState(STORED, CatalogSnapshot.sha256Of(STORED), "\"TEST-1\"", "remote", REMOTE,
+                null, null, null, null, null);
+        StubFetcher fetcher = new StubFetcher(new CatalogFetcher.NotModified());
+
+        assertEquals(LlmCatalogRefresh.RefreshOutcome.NOT_MODIFIED, refresh(REMOTE, fetcher).refreshNow());
+
+        assertEquals(List.of("\"TEST-1\""), fetcher.etags);
+        assertEquals(List.of("\"TEST-1\""), states.unchanged);
+    }
+
+    @Test
+    void anEtagFromAnotherUrlIsNotSent() {
+        states.state = new LlmCatalogState(STORED, CatalogSnapshot.sha256Of(STORED), "\"TEST-1\"", "remote",
+                "https://example.invalid/other.yaml", null, null, null, null, null);
+        StubFetcher fetcher = new StubFetcher(new CatalogFetcher.NotModified());
+
+        refresh(REMOTE, fetcher).refreshNow();
+
+        assertEquals(java.util.Arrays.asList((String) null), fetcher.etags);
+    }
+
+    @Test
+    void aNewDatabaseStoresTheBundledCopyFirst() {
+        LlmCatalogRefresh refresh = refresh(REMOTE, new StubFetcher(new CatalogFetcher.Failed("http_503")));
+
+        assertEquals(LlmCatalogRefresh.RefreshOutcome.FAILED, refresh.refreshNow());
+
+        assertEquals(1, states.stored.size());
+        assertEquals("bundled", states.stored.getFirst().source());
+        assertEquals(CatalogTestDoubles.testCatalogText(), states.stored.getFirst().document());
+        assertEquals(List.of("http_503"), states.failures);
+    }
+
+    @Test
+    void aReplacementRecordsTheChange() {
+        states.holding(STORED);
+        LlmCatalogRefresh refresh = refresh(REMOTE, new StubFetcher(new CatalogFetcher.Fetched(REPRICED, null)));
+
+        refresh.refreshNow();
+
+        String change = states.stored.getLast().lastChangeJson();
+        assertTrue(change.contains("\"rePriced\":[{\"modelId\":\"TEST-stored\""), change);
+        assertTrue(change.contains("\"before\":{\"INPUT\":1,\"OUTPUT\":2}"), change);
+        assertTrue(change.contains("\"after\":{\"INPUT\":1,\"OUTPUT\":3}"), change);
+        assertTrue(change.contains("\"oldSha\":\"" + CatalogSnapshot.sha256Of(STORED) + "\""), change);
+    }
+}

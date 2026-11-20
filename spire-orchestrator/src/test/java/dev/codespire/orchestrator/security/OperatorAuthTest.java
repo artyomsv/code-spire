@@ -46,6 +46,7 @@ class OperatorAuthTest {
             "/api/work-policy/profiles",
             "/api/llm-providers",
             "/api/llm-models",
+            "/api/llm-catalog",
             "/api/context-providers",
             "/api/prompts",
             "/api/settings/review-mode",
