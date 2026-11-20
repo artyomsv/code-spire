@@ -43,36 +43,63 @@ public class LlmCatalogStateRepository {
         }
     }
 
+    // last_checked_at and last_success_at describe the URL, so storing the bundled copy leaves them.
+    private static final String STORE = """
+            UPDATE llm_catalog_state SET document = ?, sha256 = ?, etag = ?, source = ?, url = ?,
+                   loaded_at = now(),
+                   last_checked_at = CASE WHEN ? THEN now() ELSE last_checked_at END,
+                   last_success_at = CASE WHEN ? THEN now() ELSE last_success_at END,
+                   last_error = CASE WHEN ? THEN NULL ELSE last_error END,
+                   last_change = CAST(? AS JSONB)
+             WHERE id = 1
+            """;
+
     /** Replaces the document and tells every instance, in one transaction. */
     @Transactional
     public void storeDocument(StoredDocument doc) {
         try (Connection c = dataSource.getConnection()) {
             lockRow(c);
-            // last_checked_at and last_success_at describe the URL, so storing the bundled copy leaves them.
-            try (PreparedStatement ps = c.prepareStatement("""
-                    UPDATE llm_catalog_state SET document = ?, sha256 = ?, etag = ?, source = ?, url = ?,
-                           loaded_at = now(),
-                           last_checked_at = CASE WHEN ? THEN now() ELSE last_checked_at END,
-                           last_success_at = CASE WHEN ? THEN now() ELSE last_success_at END,
-                           last_error = CASE WHEN ? THEN NULL ELSE last_error END,
-                           last_change = CAST(? AS JSONB)
-                     WHERE id = 1
-                    """)) {
-                boolean fromUrl = REMOTE.equals(doc.source());
-                ps.setString(1, doc.document());
-                ps.setString(2, doc.sha256());
-                ps.setString(3, keptEtag(doc.etag()));
-                ps.setString(4, doc.source());
-                ps.setString(5, doc.url());
-                ps.setBoolean(6, fromUrl);
-                ps.setBoolean(7, fromUrl);
-                ps.setBoolean(8, fromUrl);
-                ps.setString(9, doc.lastChangeJson());
-                ps.executeUpdate();
-            }
+            write(c, STORE, doc);
             notifyChanged(c, doc.sha256());
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to store the LLM catalog", e);
+        }
+    }
+
+    /**
+     * Stores the bundled copy only while the row holds no document, deciding under the row lock. Two instances
+     * starting on a new database may both have read an empty row; the later one must not overwrite a remote file the
+     * earlier one already accepted. Tells every instance only when it wrote.
+     *
+     * @return whether this call stored the document
+     */
+    @Transactional
+    public boolean storeIfEmpty(StoredDocument doc) {
+        try (Connection c = dataSource.getConnection()) {
+            lockRow(c);
+            boolean stored = write(c, STORE + " AND document IS NULL", doc) == 1;
+            if (stored) {
+                notifyChanged(c, doc.sha256());
+            }
+            return stored;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to store the bundled LLM catalog", e);
+        }
+    }
+
+    private static int write(Connection c, String sql, StoredDocument doc) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            boolean fromUrl = REMOTE.equals(doc.source());
+            ps.setString(1, doc.document());
+            ps.setString(2, doc.sha256());
+            ps.setString(3, keptEtag(doc.etag()));
+            ps.setString(4, doc.source());
+            ps.setString(5, doc.url());
+            ps.setBoolean(6, fromUrl);
+            ps.setBoolean(7, fromUrl);
+            ps.setBoolean(8, fromUrl);
+            ps.setString(9, doc.lastChangeJson());
+            return ps.executeUpdate();
         }
     }
 

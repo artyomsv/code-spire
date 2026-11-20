@@ -257,6 +257,51 @@ class LlmCatalogRefreshTest {
         assertEquals(List.of("http_503"), states.failures);
     }
 
+    /**
+     * Two instances on a new database: this one read the empty row, then the other stored the bundle and accepted a
+     * remote file. This one's bundled copy must not overwrite that file, even when its own fetch then fails.
+     */
+    @Test
+    void aStaleEmptyReadNeverOverwritesAnAcceptedRemoteFile() {
+        states.holding(REPRICED);
+        FakeStates staleOnce = new FakeStates() {
+            private boolean first = true;
+
+            @Override
+            public LlmCatalogState read() {
+                if (first) {
+                    first = false;
+                    return LlmCatalogState.EMPTY;
+                }
+                return states.read();
+            }
+
+            @Override
+            public boolean storeIfEmpty(StoredDocument doc) {
+                return states.storeIfEmpty(doc);
+            }
+
+            /** Delegated too, so an unconditional store of the bundle would land in the shared row and fail here. */
+            @Override
+            public void storeDocument(StoredDocument doc) {
+                states.storeDocument(doc);
+            }
+
+            @Override
+            public void recordFailure(String reason) {
+                states.recordFailure(reason);
+            }
+        };
+        LlmCatalogRefresh refresh = refresh(REMOTE, new StubFetcher(new CatalogFetcher.Failed("http_503")));
+        refresh.states = staleOnce;
+
+        assertEquals(LlmCatalogRefresh.RefreshOutcome.FAILED, refresh.refreshNow());
+
+        assertEquals(List.of(), states.stored, "the bundled copy is not stored over the remote file");
+        assertEquals(CatalogSnapshot.sha256Of(REPRICED), states.read().sha256());
+        assertEquals(List.of("http_503"), states.failures);
+    }
+
     @Test
     void aReplacementRecordsTheChange() {
         states.holding(STORED);

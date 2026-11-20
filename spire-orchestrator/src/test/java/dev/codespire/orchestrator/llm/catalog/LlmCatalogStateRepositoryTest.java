@@ -121,6 +121,23 @@ class LlmCatalogStateRepositoryTest {
         assertNull(state.lastError());
     }
 
+    /** The conditional write, decided under the row lock: an empty row takes the bundle, a stored file is kept. */
+    @Test
+    void theBundledCopyIsStoredOnlyOverAnEmptyRow() throws SQLException {
+        LlmCatalogStateRepository.StoredDocument bundle = new LlmCatalogStateRepository.StoredDocument(
+                "providers: []\nmodels: []\n# TEST-bundle\n", "TEST-bundle-" + "0".repeat(52), null, "bundled", null,
+                null);
+        repository.storeDocument(stored());
+
+        assertTrue(!repository.storeIfEmpty(bundle), "a stored document is never overwritten by the bundle");
+        assertEquals(SHA, repository.read().sha256());
+        assertEquals("remote", repository.read().source());
+
+        resetCatalogRow(dataSource);
+        assertTrue(repository.storeIfEmpty(bundle), "an empty row takes the bundle");
+        assertEquals("bundled", repository.read().source());
+    }
+
     @Test
     void storingTheBundledCopyLeavesTheUrlTimesAlone() {
         repository.storeDocument(new LlmCatalogStateRepository.StoredDocument(DOCUMENT, SHA, null, "bundled", null,

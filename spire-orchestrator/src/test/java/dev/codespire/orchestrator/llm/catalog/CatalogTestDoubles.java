@@ -110,6 +110,16 @@ public final class CatalogTestDoubles {
                     null, null, null, doc.lastChangeJson());
         }
 
+        /** As the real row does: only an empty row is written, decided on what the row holds now. */
+        @Override
+        public boolean storeIfEmpty(StoredDocument doc) {
+            if (state.document() != null) {
+                return false;
+            }
+            storeDocument(doc);
+            return true;
+        }
+
         @Override
         public void recordUnchanged(String etag) {
             unchanged.add(etag);

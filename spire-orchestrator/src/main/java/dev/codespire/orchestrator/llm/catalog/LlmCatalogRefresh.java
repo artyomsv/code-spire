@@ -140,6 +140,9 @@ public class LlmCatalogRefresh {
     /**
      * A new database: the bundled copy is written first, so every instance starts from the same row and a
      * remote file then replaces it (spec §6.5). Never reached with the URL {@code none}.
+     *
+     * <p>Conditional: the empty row was read before this, and another instance may have stored the bundle and then
+     * an accepted remote file since. Only an empty row is written, and the row is read back, so that file is kept.
      */
     private LlmCatalogState storeBundledCopy() {
         String text = catalog.bundledText();
@@ -147,7 +150,7 @@ public class LlmCatalogRefresh {
         if (text == null || bundled.sha256() == null) {
             return states.read();
         }
-        states.storeDocument(new LlmCatalogStateRepository.StoredDocument(text, bundled.sha256(), null, "bundled",
+        states.storeIfEmpty(new LlmCatalogStateRepository.StoredDocument(text, bundled.sha256(), null, "bundled",
                 null, null));
         return states.read();
     }
