@@ -92,6 +92,24 @@ class BuildDefaultsTest {
                 config.agentImage().get("codex"), dev.codespire.contract.event.HarnessImageResult.Status.OK, declared));
     }
 
+    /**
+     * The save asks the resolver, as the harness offer does: a manual model named like a catalog entry's alias
+     * shadows the entry, so the entry's own id must save (it is offered), not answer model_unknown.
+     */
+    @Test
+    void aCatalogEntryShadowedThroughItsAliasSaves() {
+        String alias = "TEST-cat-a-dated"; // an alias of TEST-cat-a in the %test catalog
+        String id = models.create(new LlmModelInput("anthropic", alias, "TEST alias", "METERED",
+                Map.of("INPUT", 100L, "OUTPUT", 200L), "max_tokens", true, null, Map.of(), true,
+                java.util.List.of("CACHED_INPUT", "CACHE_WRITE", "REASONING"))).id();
+        try {
+            assertEquals("TEST-cat-a", defaults.save(repository, input("main", "codex", "TEST-cat-a", 0), "TEST-operator").model());
+            assertEquals("model_unknown", refusal(input("main", "codex", "TEST-not-in-any-catalog", 1)));
+        } finally {
+            models.delete(UUID.fromString(id));
+        }
+    }
+
     @org.junit.jupiter.api.AfterEach
     void forgetTheCatalogue() throws java.sql.SQLException {
         try (var c = dataSource.getConnection(); var s = c.createStatement()) {

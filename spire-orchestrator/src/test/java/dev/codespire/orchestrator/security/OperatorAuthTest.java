@@ -46,6 +46,7 @@ class OperatorAuthTest {
             "/api/work-policy/profiles",
             "/api/llm-providers",
             "/api/llm-models",
+            "/api/llm-catalog",
             "/api/context-providers",
             "/api/prompts",
             "/api/settings/review-mode",
@@ -53,6 +54,7 @@ class OperatorAuthTest {
             "/api/settings/conversation",
             "/api/settings/conversation-level",
             "/api/settings/caps",
+            "/api/settings/llm-default-model",
     };
 
     @Test

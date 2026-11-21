@@ -29,7 +29,7 @@ describe('byExpenseDesc', () => {
     reasoningEffort: null,
     extraParams: {},
     enabled: true,
-    createdAt: '2026-07-07T00:00:00Z',
+    createdAt: '2026-07-07T00:00:00Z', source: 'MANUAL',
   });
 
   it('orders most-expensive-first by summed rates', () => {
@@ -71,7 +71,7 @@ describe('ratesSummary', () => {
     reasoningEffort: null,
     extraParams: {},
     enabled: true,
-    createdAt: '2026-07-07T00:00:00Z',
+    createdAt: '2026-07-07T00:00:00Z', source: 'MANUAL',
     ...over,
   });
 
@@ -130,7 +130,7 @@ describe('profileHint', () => {
     reasoningEffort: null,
     extraParams: {},
     enabled: true,
-    createdAt: '2026-07-07T00:00:00Z',
+    createdAt: '2026-07-07T00:00:00Z', source: 'MANUAL',
   });
 
   it('is empty for the classic chat dialect', () => {

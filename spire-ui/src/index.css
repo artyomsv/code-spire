@@ -1016,6 +1016,16 @@
      ratesSummary) and it needs an operator's attention, not a blank cell. */
   .rate-unset { color: var(--warn); font-weight: 600; }
   .prov-note { margin: 0; padding: 15px 18px 12px; font-size: 12.5px; line-height: 1.55; color: var(--text-3); }
+  /* The model catalog's line above the models table: where it came from, the last change, the last error. */
+  .catalog-head { padding: 12px 18px; font-size: 12.5px; line-height: 1.55; color: var(--text-2);
+    border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+  .catalog-head .btn-ghost { margin-left: 10px; }
+  .catalog-detail dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; font-size: 12.5px; }
+  .catalog-detail dt { color: var(--text-3); }
+  .catalog-detail dd { margin: 0; overflow-wrap: anywhere; }
+  .catalog-detail { margin-top: 14px; }
+  /* The model form's fields, disabled together for a catalog model: a fieldset with none of its own frame. */
+  .model-readonly { border: 0; padding: 0; margin: 0; min-width: 0; }
   /* A settings screen's own error line — General asks for this twice, and it rendered as ordinary
      body text until the style contract learned to read a class out of a template literal. */
   .prov-error { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--crit); }

@@ -101,6 +101,7 @@ class SubscriptionNotAllowedTest {
         };
         defaults.models = new LlmModelRegistry() {
             @Override public List<dev.codespire.orchestrator.llm.LlmModelView> list() { throw new AssertionError("a subscription is not priced"); }
+            @Override public boolean isKnownAndEnabled(String model) { throw new AssertionError("a subscription is not priced"); }
         };
         defaults.pricer = new LlmModelPricer() {
             @Override public List<TokenType> unpricedTypes(String model, String harness) { throw new AssertionError("a subscription is not priced"); }

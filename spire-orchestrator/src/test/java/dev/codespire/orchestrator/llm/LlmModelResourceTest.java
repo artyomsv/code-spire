@@ -37,13 +37,15 @@ class LlmModelResourceTest {
 
     @BeforeEach
     void clean() {
-        // Providers first: the catalog's delete guard refuses to remove a model an llm_provider row
-        // names, and every @QuarkusTest class in this module shares one application and one database.
+        // Providers first: the catalog's delete guard refuses to remove the default review model while
+        // a default provider exists, and deleting the default provider clears it. Every @QuarkusTest class in this
+        // module shares one application and one database.
         // A sibling class that leaves a provider behind — this class included, if a test fails between
         // creating a model and its provider — would otherwise make this method throw, and whether it
         // throws would depend on which class or test ran first: a green suite that depends on order.
         providers.list().forEach(p -> providers.delete(UUID.fromString(p.id())));
-        registry.list().forEach(m -> registry.delete(UUID.fromString(m.id())));
+        // Catalog rows have no id and are not deletable; only manual rows are this class's to clean.
+        registry.list().stream().filter(m -> m.id() != null).forEach(m -> registry.delete(UUID.fromString(m.id())));
     }
 
     private static Map<String, Object> gpt4o() {
@@ -57,7 +59,9 @@ class LlmModelResourceTest {
         given().contentType("application/json").body(gpt4o())
                 .when().post("/api/llm-models")
                 .then().statusCode(201).body("name", equalTo("gpt-4o"));
-        when().get("/api/llm-models").then().statusCode(200).body("[0].label", equalTo("GPT-4o"));
+        when().get("/api/llm-models").then().statusCode(200)
+                .body("find { it.name == 'gpt-4o' }.label", equalTo("GPT-4o"))
+                .body("find { it.name == 'gpt-4o' }.source", equalTo("MANUAL"));
     }
 
     @Test
@@ -242,7 +246,7 @@ class LlmModelResourceTest {
                 "METERED", Map.of("INPUT", 200_000L, "OUTPUT", 400_000L),
                 null, null, null, Map.of(), true, java.util.List.of()));
         providers.create(new LlmProviderInput("TEST provider", "openai", "http://example.invalid",
-                "sk-test", "TEST-CLEAN-COLLISION", 0.2, null, true, true));
+                "sk-test", 0.2, null, true, true, "TEST-CLEAN-COLLISION"));
 
         assertDoesNotThrow(this::clean);
     }
@@ -260,7 +264,7 @@ class LlmModelResourceTest {
         String modelId = registry.list().stream()
                 .filter(m -> m.name().equals("TEST-IN-USE")).findFirst().orElseThrow().id();
         providers.create(new LlmProviderInput("TEST provider", "openai", "http://example.invalid",
-                "sk-test", "TEST-IN-USE", 0.2, null, true, true));
+                "sk-test", 0.2, null, true, true, "TEST-IN-USE"));
 
         given().when().delete("/api/llm-models/" + modelId)
                 .then().statusCode(409).body(containsString("TEST-IN-USE"));
@@ -282,7 +286,7 @@ class LlmModelResourceTest {
         String modelId = registry.list().stream()
                 .filter(m -> m.name().equals("TEST-RENAME-CONFLICT")).findFirst().orElseThrow().id();
         providers.create(new LlmProviderInput("TEST-RENAME-CONFLICT-PROVIDER", "openai",
-                "http://example.invalid", "sk-test", "TEST-RENAME-CONFLICT", 0.2, null, true, true));
+                "http://example.invalid", "sk-test", 0.2, null, true, true, "TEST-RENAME-CONFLICT"));
 
         given().contentType(ContentType.JSON)
                 .body(Map.of("type", "openai", "name", "TEST-RENAME-CONFLICT-NEW",
@@ -291,6 +295,6 @@ class LlmModelResourceTest {
                 .when().put("/api/llm-models/" + modelId)
                 .then().statusCode(409)
                 .body(containsString("TEST-RENAME-CONFLICT"))
-                .body(containsString("Point them at another model first"));
+                .body(containsString("Choose another model there first"));
     }
 }

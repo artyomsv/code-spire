@@ -274,6 +274,22 @@ Shipping a chart template that mounts it would ship the exact thing that sentenc
 Kubernetes arm does not do. The run worker reaches Kubernetes when a Kubernetes `RunRuntime`
 exists — a producer change in `WorkerRuntimes`, planned for M5 — and not before.
 
+## The model catalog
+
+The orchestrator prices models from a public catalog file, `ai-catalog/v1/catalog.yaml`
+([its README](../ai-catalog/README.md)), read every 6 hours from this repository's `master` with no setup.
+Two optional variables change that, in `deploy/.env` for Compose or `orchestrator.extraEnv` for Helm:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SPIRE_LLM_CATALOG_URL` | the file on `master` through raw.githubusercontent.com | Another https copy (a fork, a tag, an internal server), or `none` to use only the copy built into the image. |
+| `SPIRE_LLM_CATALOG_REFRESH_INTERVAL` | `6h` | How often the URL is read; `off` reads it once at startup. |
+
+A file that fails validation, or a URL that does not answer, never replaces the catalog in use; Settings → LLM →
+Models shows the last error and the attention row `LLM_CATALOG_STALE` appears after three missed intervals. A
+manual model in Settings with the same name as a catalog model wins on that install. Claude Code offers every
+enabled Anthropic model the catalog and the manual models hold; its image carries no model list.
+
 ## Verifying a deployment
 
 ```bash

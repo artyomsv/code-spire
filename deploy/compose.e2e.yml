@@ -33,6 +33,8 @@ services:
   orchestrator:
     environment:
       SPIRE_SECURITY_ALLOW_INSECURE_PROVIDER_URLS: "true"
+      # Hermetic: the suite prices with the catalog built into the image and never reads GitHub.
+      SPIRE_LLM_CATALOG_URL: none
 
   gitlab:
     # Pinned by tag. Detecting GitLab's own drift is a goal of this suite, but an unpinned nightly

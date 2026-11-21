@@ -137,6 +137,8 @@ class WorkItemChangeCoverageTest {
         exempt.put("event_log", "covered: WorkItemStore.append upserts work_item in the same transaction as every work-item event");
         exempt.put("factory_run", "step_index is set once when a run is dispatched and never updated");
         exempt.put("operator_seen", "accepted staleness: only the display name beside a past decision");
+        exempt.put("llm_catalog_state", "not a work-item read: the model catalog is held in memory and swapped on"
+                + " llm_catalog_changed; no work-item screen shows the row");
         for (String table : List.of("autonomy_profile", "autonomy_profile_version", "work_label_mapping", "work_repository_policy",
                 "harness_catalogue", "harness_credential", "llm_model", "llm_model_rate", "llm_provider", "context_provider",
                 "provider_author", "repository_fix_actor", "repository_build_defaults", "work_activity_receipt", "work_land_observation",

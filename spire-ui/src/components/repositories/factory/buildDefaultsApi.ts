@@ -54,7 +54,10 @@ export interface HarnessModel {
  */
 export interface HarnessModels {
   status: 'OK' | 'UNKNOWN' | 'NO_CATALOGUE' | 'UNREADABLE' | 'IMAGE_UNAVAILABLE';
+  /** Run by the harness, and known and enabled in the model catalog or Settings → LLM. */
   offered: HarnessModel[];
+  /** The offered slugs an API key can pay for (every reported type priced). A seat may choose any. Absent from an older server. */
+  keyPriced?: string[];
 }
 
 export interface BuildOptions {

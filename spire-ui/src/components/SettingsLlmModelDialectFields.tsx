@@ -24,6 +24,8 @@ interface Props {
   onDialectChange: (patch: Partial<ApiDialect>) => void;
   extraParams: string;
   onExtraParamsChange: (value: string) => void;
+  /** A catalog model, shown read-only: it has no extra params, so the field and its example are left out. */
+  readOnly?: boolean;
 }
 
 /**
@@ -38,6 +40,7 @@ export default function SettingsLlmModelDialectFields({
   onDialectChange,
   extraParams,
   onExtraParamsChange,
+  readOnly = false,
 }: Props) {
   return (
     <>
@@ -88,7 +91,7 @@ export default function SettingsLlmModelDialectFields({
         <span>Model accepts a custom temperature (uncheck if the model rejects or deprecates it)</span>
       </label>
 
-      {type === 'openai' && (
+      {type === 'openai' && !readOnly && (
         <label className="field">
           <span>
             Extra params <span className="field-optional">advanced · JSON</span>

@@ -16,7 +16,7 @@ const saved: LlmModelView = {
   id: 'TEST-model-id', type: 'openai', name: 'TEST-model', label: 'TEST model', pricingMode: 'METERED',
   rates: { INPUT: 250_000, OUTPUT: 1_000_000, CACHED_INPUT: 30_000 }, notBilled: [],
   outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {},
-  enabled: true, createdAt: '2026-09-16T00:00:00Z',
+  enabled: true, createdAt: '2026-09-16T00:00:00Z', source: 'MANUAL',
 };
 
 beforeEach(() => {

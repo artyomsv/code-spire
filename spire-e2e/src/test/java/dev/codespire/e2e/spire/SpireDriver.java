@@ -97,13 +97,16 @@ public final class SpireDriver {
      * {@code techdebt/spire-orchestrator/3-3-rejection-messages-never-reach-the-client.md} — a
      * registry rejection that reaches the client as a 500 rather than a 409.)
      *
-     * <p>Ordered: the LLM provider names the model, and {@code LlmModelRegistry} refuses to delete a
-     * model a provider still references — correctly, since that would orphan it.
+     * <p>Ordered: {@code LlmModelRegistry} refuses to delete the default review model while a default
+     * provider exists — correctly, since that would orphan it. Deleting the default provider clears the
+     * default model; if another provider is the default and still names this model, it is cleared here
+     * before the model goes.
      */
     public void resetRegistries(String scmProviderName, String llmProviderName, String modelName,
                                 String contextProviderName, String webhookTarget) {
         deleteByField("/api/context-providers", "name", contextProviderName);
         deleteByField("/api/llm-providers", "name", llmProviderName);
+        clearDefaultLlmModelIfItIs(modelName);
         deleteByField("/api/llm-models", "name", modelName);
         deleteByField("/api/providers", "name", scmProviderName);
         deleteByField("/gw/webhook-repos", "target", webhookTarget);
@@ -143,16 +146,31 @@ public final class SpireDriver {
      * must already be stubbing {@code /v1/models} before this runs or the call answers 400 and the
      * whole setup phase dies here.
      */
-    public String registerLlmProvider(String name, String baseUrl, String model) {
+    public String registerLlmProvider(String name, String baseUrl) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("name", name);
         body.put("type", "openai");
         body.put("baseUrl", baseUrl);
         body.put("apiKey", "TEST-mock-key");
-        body.put("model", model);
         body.put("enabled", true);
-        body.put("isDefault", true);
         return post("/api/llm-providers", body).get("id").asText();
+    }
+
+    /**
+     * Makes the provider the default together with its review model, in one request, as the dashboard
+     * does. The model must be catalogued first: the request refuses one it cannot price.
+     */
+    public void setDefaultLlmModel(String providerId, String model) {
+        put("/api/llm-providers/" + providerId + "/default", Map.of("model", model));
+    }
+
+    private void clearDefaultLlmModelIfItIs(String model) {
+        JsonNode current = get("/api/settings/llm-default-model");
+        if (current.hasNonNull("provider") && model.equals(current.path("model").asText(null))) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("model", null);
+            put("/api/settings/llm-default-model", body);
+        }
     }
 
     /**

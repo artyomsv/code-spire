@@ -59,7 +59,7 @@ class LlmProviderCheckTest {
 
     private String createProvider() {
         LlmProviderView view = registry.create(new LlmProviderInput("TEST-llm-" + UUID.randomUUID(),
-                "openai", server.baseUrl(), "TEST-KEY", "TEST-MODEL", 0.0, null, true, false));
+                "openai", server.baseUrl(), "TEST-KEY", 0.0, null, true, false, null));
         return view.id();
     }
 
@@ -178,7 +178,7 @@ class LlmProviderCheckTest {
         // tests set up a provider before choosing what the WireMock stub returns.
         server.stubFor(get("/models").willReturn(aResponse().withStatus(200).withBody("{}")));
         LlmProviderInput in = new LlmProviderInput("TEST-llm-" + UUID.randomUUID(), "openai",
-                server.baseUrl(), "TEST-KEY", "TEST-MODEL", 0.0, null, true, false);
+                server.baseUrl(), "TEST-KEY", 0.0, null, true, false, null);
 
         Response response = resource.create(in);
         LlmProviderView created = (LlmProviderView) response.getEntity();
@@ -198,7 +198,7 @@ class LlmProviderCheckTest {
         LlmProviderView view = registry.get(UUID.fromString(id)).orElseThrow();
         // No apiKey -> keeps the stored one; only the name changes.
         resource.update(id, new LlmProviderInput(view.name() + "-renamed", view.type(), view.baseUrl(),
-                null, view.model(), view.temperature(), view.maxTokens(), view.enabled(), view.isDefault()));
+                null, view.temperature(), view.maxTokens(), view.enabled(), view.isDefault(), null));
 
         LlmProviderView reread = registry.get(UUID.fromString(id)).orElseThrow();
         assertFalse(reread.lastCheckOk(), "an update that never touched the key must not clear its rejection");
@@ -214,7 +214,7 @@ class LlmProviderCheckTest {
         server.stubFor(get("/models").willReturn(aResponse().withStatus(200).withBody("{}")));
         LlmProviderView view = registry.get(UUID.fromString(id)).orElseThrow();
         resource.update(id, new LlmProviderInput(view.name(), view.type(), view.baseUrl(),
-                "TEST-NEW-KEY", view.model(), view.temperature(), view.maxTokens(), view.enabled(), view.isDefault()));
+                "TEST-NEW-KEY", view.temperature(), view.maxTokens(), view.enabled(), view.isDefault(), null));
 
         LlmProviderView reread = registry.get(UUID.fromString(id)).orElseThrow();
         assertTrue(reread.lastCheckOk(), "a genuine re-validation must clear the prior rejection");

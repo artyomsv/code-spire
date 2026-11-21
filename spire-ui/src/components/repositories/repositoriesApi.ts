@@ -28,6 +28,8 @@ export interface Repository {
   blockApprovalAt: BlockApprovalAt;
   // The LLM provider this repository's reviews and replies use; null means the global default.
   reviewLlmProviderId: string | null;
+  // The model used with reviewLlmProviderId; null exactly when that is null.
+  reviewLlmModel: string | null;
   // The harness this repository's reviews run on (harness reviews, step 5); null means the API.
   reviewHarness: ReviewHarness | null;
 }
@@ -50,6 +52,7 @@ export interface RepositoryInput {
   reviewerMayApprove: boolean;
   blockApprovalAt: BlockApprovalAt;
   reviewLlmProviderId: string | null;
+  reviewLlmModel: string | null;
   reviewHarness: ReviewHarness | null;
 }
 export interface PendingMapping {

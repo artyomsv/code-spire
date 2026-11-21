@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
@@ -19,6 +20,9 @@ import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static io.restassured.RestAssured.given;
 import static io.restassured.RestAssured.when;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
@@ -63,7 +67,8 @@ class LlmProviderResourceTest {
     @BeforeEach
     void reset() {
         registry.list().forEach(v -> registry.delete(UUID.fromString(v.id())));
-        // A provider's model must be catalogued (LlmProviderModelGuardTest) — idempotent, since
+        clearDefaultModel();
+        // The default model must be catalogued and priced (LlmProviderModelGuardTest) — idempotent, since
         // this runs before every test in the class and the model name is unique.
         ensureCatalogued("openai", "TEST-MODEL");
         ensureCatalogued("anthropic", "claude-sonnet-4");
@@ -86,7 +91,6 @@ class LlmProviderResourceTest {
         m.put("name", "OpenAI");
         m.put("type", "openai");
         m.put("baseUrl", llm.baseUrl()); // validator appends /models -> hits the stub
-        m.put("model", "TEST-MODEL");
         if (apiKey != null) {
             m.put("apiKey", apiKey);
         }
@@ -94,7 +98,7 @@ class LlmProviderResourceTest {
     }
 
     @Test
-    void createsValidatesTheKeyAndFirstIsDefault() {
+    void createsValidatesTheKeyAndFirstIsDefault() throws Exception {
         given().contentType("application/json").body(body("sk-good"))
                 .when().post("/api/llm-providers")
                 .then().statusCode(201)
@@ -102,6 +106,7 @@ class LlmProviderResourceTest {
                 .body("isDefault", is(true))     // first provider auto-defaults
                 .body("apiKey", nullValue())     // key never returned
                 .body("id", notNullValue());
+        assertTrue(defaultModel().isEmpty(), "the first provider becomes the default with no model; the operator picks one");
     }
 
     @Test
@@ -123,7 +128,6 @@ class LlmProviderResourceTest {
     void createsAnAnthropicProviderValidatingItsKey() {
         var b = body("sk-ant");
         b.put("type", "anthropic");
-        b.put("model", "claude-sonnet-4");
         given().contentType("application/json").body(b)
                 .when().post("/api/llm-providers")
                 .then().statusCode(201).body("type", is("anthropic")).body("apiKey", nullValue());
@@ -133,7 +137,6 @@ class LlmProviderResourceTest {
     void createsAGeminiProviderValidatingItsKey() {
         var b = body("gk-1");
         b.put("type", "gemini");
-        b.put("model", "gemini-2.5-pro");
         given().contentType("application/json").body(b)
                 .when().post("/api/llm-providers")
                 .then().statusCode(201).body("type", is("gemini")).body("apiKey", nullValue());
@@ -156,7 +159,7 @@ class LlmProviderResourceTest {
     }
 
     @Test
-    void setDefaultSwitchesTheDefault() {
+    void setDefaultSwitchesTheDefault() throws Exception {
         String first = given().contentType("application/json").body(body("sk-1"))
                 .when().post("/api/llm-providers").then().statusCode(201)
                 .extract().path("id");
@@ -165,10 +168,54 @@ class LlmProviderResourceTest {
                 .extract().path("id");
 
         // first is the default; switch to second
-        given().when().put("/api/llm-providers/" + second + "/default")
+        given().contentType("application/json").body(Map.of("model", "TEST-MODEL"))
+                .when().put("/api/llm-providers/" + second + "/default")
                 .then().statusCode(200).body("isDefault", is(true));
+        assertEquals(Optional.of("TEST-MODEL"), defaultModel(), "the model is written with the default provider");
         when().get("/api/llm-providers/" + first)
                 .then().statusCode(200).body("isDefault", is(false));
+    }
+
+    @Test
+    void defaultWithoutAModelIs400() {
+        String id = given().contentType("application/json").body(body("sk-1"))
+                .when().post("/api/llm-providers").then().statusCode(201).extract().path("id");
+
+        given().contentType("application/json").body(Map.of())
+                .when().put("/api/llm-providers/" + id + "/default")
+                .then().statusCode(400).body(containsString("model is required"));
+    }
+
+    /** Replacing an enabled default through create needs the new default's model in the same request. */
+    @Test
+    void createWithIsDefaultWhileADefaultExistsNeedsAModel() throws Exception {
+        given().contentType("application/json").body(body("sk-1"))
+                .when().post("/api/llm-providers").then().statusCode(201);
+        Map<String, Object> withoutModel = body("sk-2");
+        withoutModel.put("isDefault", true);
+
+        given().contentType("application/json").body(withoutModel)
+                .when().post("/api/llm-providers").then().statusCode(400).body(containsString("defaultModel"));
+
+        Map<String, Object> withModel = body("sk-3");
+        withModel.put("isDefault", true);
+        withModel.put("defaultModel", "TEST-MODEL");
+        given().contentType("application/json").body(withModel)
+                .when().post("/api/llm-providers").then().statusCode(201).body("isDefault", is(true));
+        assertEquals(Optional.of("TEST-MODEL"), defaultModel());
+    }
+
+    /** A provider's vendor is fixed: the models chosen for it are of that vendor. */
+    @Test
+    void providerTypeCannotChangeIs400() {
+        String id = given().contentType("application/json").body(body("sk-1"))
+                .when().post("/api/llm-providers").then().statusCode(201).extract().path("id");
+        Map<String, Object> other = body(null);
+        other.put("type", "anthropic");
+
+        given().contentType("application/json").body(other)
+                .when().put("/api/llm-providers/" + id)
+                .then().statusCode(400).body(containsString("Provider type cannot change"));
     }
 
     @Test
@@ -198,7 +245,7 @@ class LlmProviderResourceTest {
                 .when().post("/api/llm-providers").then().statusCode(201).extract().path("id");
         UUID repository = repositories.create(new dev.codespire.orchestrator.repository.RepositoryInput(
                 "github", "https://github.example.invalid", NAMING_WORKSPACE, "TEST-repo", true, null, null)).id();
-        execute("UPDATE repository SET review_llm_provider_id=? WHERE id=?", UUID.fromString(id), repository);
+        execute("UPDATE repository SET review_llm_provider_id=?, review_llm_model='TEST-MODEL' WHERE id=?", UUID.fromString(id), repository);
 
         given().when().delete("/api/llm-providers/" + id)
                 .then().statusCode(409).body(org.hamcrest.Matchers.containsString(NAMING_WORKSPACE + "/TEST-repo"));
@@ -212,6 +259,24 @@ class LlmProviderResourceTest {
         execute("DELETE FROM repository_account WHERE repository_id IN (SELECT id FROM repository WHERE workspace=?)",
                 NAMING_WORKSPACE);
         execute("DELETE FROM repository WHERE workspace=?", NAMING_WORKSPACE);
+    }
+
+    private Optional<String> defaultModel() throws Exception {
+        try (java.sql.Connection c = dataSource.getConnection();
+             java.sql.PreparedStatement ps = c.prepareStatement("SELECT value FROM app_setting WHERE key=?")) {
+            ps.setString(1, LlmDefaultModel.KEY);
+            try (java.sql.ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(rs.getString(1)) : Optional.empty();
+            }
+        }
+    }
+
+    private void clearDefaultModel() {
+        try {
+            execute("DELETE FROM app_setting WHERE key=?", LlmDefaultModel.KEY);
+        } catch (Exception e) {
+            throw new IllegalStateException("could not clear the default model", e);
+        }
     }
 
     private void execute(String sql, Object... parameters) throws Exception {

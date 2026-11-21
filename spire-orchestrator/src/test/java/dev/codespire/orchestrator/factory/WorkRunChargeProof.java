@@ -38,6 +38,8 @@ public final class WorkRunChargeProof {
             migrations.migrate();
             ReviewProjection ledger=new ReviewProjection();set(ledger,"dataSource",source);
             set(ledger,"attention",new AttentionBroadcaster(){@Override public void refresh(){ /* TEST: no dashboard websocket */ }});
+            // Wired so a review broadcast's vendor badge has a resolver; the TEST- catalog, no manual rows.
+            set(ledger,"catalog",dev.codespire.orchestrator.llm.catalog.CatalogTestDoubles.testCatalog());
             RunCharges charges=new RunCharges();charges.ledger=ledger;
             charges.runs=new FactoryRunProjection(){
                 @Override public Optional<String> modelOf(String id){return Optional.of("TEST-metered-model");}

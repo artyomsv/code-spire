@@ -1,11 +1,8 @@
 package dev.codespire.orchestrator.repository;
 
-import dev.codespire.contract.llm.HarnessPolicy;
 import dev.codespire.contract.scm.ForgeOrigin;
 import dev.codespire.contract.work.PayWith;
 import dev.codespire.contract.work.ThinkingLevel;
-import dev.codespire.orchestrator.factory.FactoryConfig;
-import dev.codespire.orchestrator.llm.LlmProviderRegistry;
 import dev.codespire.orchestrator.provider.ProviderClients;
 import dev.codespire.orchestrator.provider.ProviderRegistry.AccountConflict;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -41,8 +38,7 @@ public class RepositoryRegistry {
             """;
     @Inject DataSource dataSource;
     @Inject RepositoryBindings bindings;
-    @Inject LlmProviderRegistry llmProviders;
-    @Inject FactoryConfig factoryConfig;
+    @Inject RepositoryReviewWith reviewWith;
 
     public List<RepositoryView> list() {
         try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(
@@ -78,8 +74,7 @@ public class RepositoryRegistry {
     @Transactional
     public RepositoryView create(RepositoryInput raw) {
         RepositoryInput input = normalize(raw);
-        requireReviewProvider(input);
-        requireReviewHarness(input);
+        reviewWith.require(input, RepositoryReviewWith.Stored.NONE);
         UUID id = UUID.randomUUID();
         try (Connection connection = dataSource.getConnection()) {
             insert(connection, id, input);
@@ -94,25 +89,27 @@ public class RepositoryRegistry {
     @Transactional
     public RepositoryView update(UUID id, long expectedRevision, RepositoryInput raw) {
         RepositoryInput input = normalize(raw);
-        requireReviewProvider(input);
-        requireReviewHarness(input);
+        // Read inside this transaction: an unchanged pair is the stored one, not a new choice.
+        reviewWith.require(input, new RepositoryReviewWith.Stored(reviewLlmChoice(id).orElse(ReviewLlmChoice.NONE),
+                reviewHarness(id).orElse(null)));
         try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement("""
-                UPDATE repository SET enabled=?, reviewer_may_approve=?, review_llm_provider_id=?, review_harness=?,
-                       review_harness_model=?, review_harness_effort=?, review_harness_pay_with=?, block_approval_at=COALESCE(?, block_approval_at),
-                       revision=revision+1
+                UPDATE repository SET enabled=?, reviewer_may_approve=?, review_llm_provider_id=?, review_llm_model=?,
+                       review_harness=?, review_harness_model=?, review_harness_effort=?, review_harness_pay_with=?,
+                       block_approval_at=COALESCE(?, block_approval_at), revision=revision+1
                 WHERE id=? AND revision=? AND scm_type=? AND forge_origin=? AND workspace=? AND slug=?
                 """)) {
             statement.setBoolean(1, input.enabled());
             statement.setBoolean(2, input.reviewerMayApprove());
             statement.setObject(3, input.reviewLlmProviderId(), Types.OTHER);
-            setReviewHarness(statement, 4, input.reviewHarness());
-            statement.setString(8, raw.blockApprovalAt() == null ? null : input.blockApprovalAt()); // null: keep the stored level
-            statement.setObject(9, id);
-            statement.setLong(10, expectedRevision);
-            statement.setString(11, input.scmType());
-            statement.setString(12, input.forgeOrigin());
-            statement.setString(13, input.workspace());
-            statement.setString(14, input.slug());
+            statement.setString(4, input.reviewLlmModel());
+            setReviewHarness(statement, 5, input.reviewHarness());
+            statement.setString(9, raw.blockApprovalAt() == null ? null : input.blockApprovalAt()); // null: keep the stored level
+            statement.setObject(10, id);
+            statement.setLong(11, expectedRevision);
+            statement.setString(12, input.scmType());
+            statement.setString(13, input.forgeOrigin());
+            statement.setString(14, input.workspace());
+            statement.setString(15, input.slug());
             if (statement.executeUpdate() != 1) throw new AccountConflict("Repository changed or its coordinates differ; reload before saving");
             bindings.replace(connection, id, input);
         } catch (SQLException failure) { throw referenceGone(failure); }
@@ -122,9 +119,9 @@ public class RepositoryRegistry {
     private void insert(Connection connection, UUID id, RepositoryInput input) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
                 "INSERT INTO repository (id,scm_type,forge_origin,workspace,slug,enabled,reviewer_may_approve,review_llm_provider_id,"
-                        + "review_harness,review_harness_model,review_harness_effort,review_harness_pay_with,"
+                        + "review_llm_model,review_harness,review_harness_model,review_harness_effort,review_harness_pay_with,"
                         + "block_approval_at)"
-                        + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                        + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             statement.setObject(1, id);
             statement.setString(2, input.scmType());
             statement.setString(3, input.forgeOrigin());
@@ -133,8 +130,9 @@ public class RepositoryRegistry {
             statement.setBoolean(6, input.enabled());
             statement.setBoolean(7, input.reviewerMayApprove());
             statement.setObject(8, input.reviewLlmProviderId(), Types.OTHER);
-            setReviewHarness(statement, 9, input.reviewHarness());
-            statement.setString(13, input.blockApprovalAt());
+            statement.setString(9, input.reviewLlmModel());
+            setReviewHarness(statement, 10, input.reviewHarness());
+            statement.setString(14, input.blockApprovalAt());
             statement.executeUpdate();
         }
     }
@@ -155,7 +153,8 @@ public class RepositoryRegistry {
         return new RepositoryInput(input.scmType(), ForgeOrigin.of(input.forgeOrigin()), workspace, slug,
                 input.enabled() == null || input.enabled(), input.reviewerAccountId(), input.factoryAccountId(),
                 input.reviewerMayApprove() == null || input.reviewerMayApprove(), input.reviewLlmProviderId(),
-                normalizeHarness(input.reviewHarness()), BlockApprovalAt.parse(input.blockApprovalAt()).name());
+                strip(input.reviewLlmModel()), normalizeHarness(input.reviewHarness()),
+                BlockApprovalAt.parse(input.blockApprovalAt()).name());
     }
 
     /** Stripped, the level and the payment in their stored forms; an unknown payment or a malformed level is refused. */
@@ -169,47 +168,29 @@ public class RepositoryRegistry {
         return value == null || value.isBlank() ? null : value.strip();
     }
 
-    /** Looked up before any write, so an id naming no provider is the caller's mistake (400), not a key violation. */
-    private void requireReviewProvider(RepositoryInput input) {
-        UUID provider = input.reviewLlmProviderId();
-        if (provider != null && llmProviders.get(provider).isEmpty()) {
-            throw new IllegalArgumentException("LLM provider " + provider + " does not exist; choose one listed in Settings → LLM");
-        }
+    /** The provider a repository's reviews use (harness reviews, decision 1); empty means the global default. */
+    public Optional<UUID> reviewLlmProviderId(UUID id) {
+        return reviewLlmChoice(id).map(ReviewLlmChoice::providerId);
+    }
+
+    /** A repository's own API choice: the provider and the model it reviews with, read together. */
+    public record ReviewLlmChoice(UUID providerId, String model) {
+        /** No stored choice: a new repository, or one on the global default. Never equal to a choice naming a provider. */
+        static final ReviewLlmChoice NONE = new ReviewLlmChoice(null, null);
     }
 
     /**
-     * One "Review with" choice, checked before any write so a mistake is the caller's (400), not a CHECK violation:
-     * a harness the deployment has an agent image for (the key a build setup is checked against, never the worker's
-     * HarnessRegistry), a model, and no API provider beside it (V109).
+     * The provider and model a repository's reviews use, in one read so the two never come from different saves;
+     * empty means the global default (no provider named, or no such row).
      */
-    private void requireReviewHarness(RepositoryInput input) {
-        ReviewHarness harness = input.reviewHarness();
-        if (harness == null) return;
-        if (input.reviewLlmProviderId() != null) {
-            throw new IllegalArgumentException("Review with: choose an API provider or a harness, not both");
-        }
-        // Before the image is looked up: the refusal is about the harness, whatever this deployment configures.
-        // NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
-        // through a Claude subscription or to hold claude.ai tokens:
-        // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
-        if (harness.subscription() && !HarnessPolicy.allowsSubscription(harness.harness())) {
-            throw new IllegalArgumentException("Review with: " + HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED + " — the "
-                    + harness.harness() + " harness pays with an API key only");
-        }
-        if (harness.harness() == null || !factoryConfig.configuredAgentImages().containsKey(harness.harness())) {
-            throw new IllegalArgumentException("Review with: unknown harness " + harness.harness()
-                    + "; choose one with an agent image (spire.factory.agent-image.<harness>)");
-        }
-        if (harness.model() == null) throw new IllegalArgumentException("Review with: a harness review needs a model");
-    }
-
-    /** The provider a repository's reviews use (harness reviews, decision 1); empty means the global default. */
-    public Optional<UUID> reviewLlmProviderId(UUID id) {
+    public Optional<ReviewLlmChoice> reviewLlmChoice(UUID id) {
         try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(
-                "SELECT review_llm_provider_id FROM repository WHERE id=?")) {
+                "SELECT review_llm_provider_id, review_llm_model FROM repository WHERE id=?")) {
             statement.setObject(1, id);
             try (ResultSet rows = statement.executeQuery()) {
-                return rows.next() ? Optional.ofNullable(rows.getObject(1, UUID.class)) : Optional.empty();
+                if (!rows.next()) return Optional.empty();
+                UUID provider = rows.getObject(1, UUID.class);
+                return provider == null ? Optional.empty() : Optional.of(new ReviewLlmChoice(provider, rows.getString(2)));
             }
         } catch (SQLException failure) { throw database(failure); }
     }
@@ -268,7 +249,7 @@ public class RepositoryRegistry {
         return new RepositoryView(rows.getObject("id", UUID.class), rows.getString("scm_type"), rows.getString("forge_origin"),
                 rows.getString("workspace"), rows.getString("slug"), rows.getBoolean("enabled"), rows.getLong("revision"),
                 account(rows, "reviewer"), account(rows, "factory"), rows.getBoolean("reviewer_may_approve"),
-                rows.getObject("review_llm_provider_id", UUID.class), harnessOf(rows),
+                rows.getObject("review_llm_provider_id", UUID.class), rows.getString("review_llm_model"), harnessOf(rows),
                 BlockApprovalAt.valueOf(rows.getString("block_approval_at")));
     }
 
@@ -290,6 +271,10 @@ public class RepositoryRegistry {
         String message = failure.getMessage();
         if ("23503".equals(failure.getSQLState()) && message != null && message.contains("review_llm_provider_id")) {
             return new IllegalArgumentException("The selected LLM provider no longer exists; reload before saving");
+        }
+        if ("23514".equals(failure.getSQLState())) {
+            return new IllegalArgumentException("Review with: choose an LLM provider and its model together, a harness, or"
+                    + " neither; the saved combination is not allowed");
         }
         return database(failure);
     }

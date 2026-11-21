@@ -2538,3 +2538,42 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   `ScmOAuthAppForm` and `OperatorLinksTable` moved out of their screens to keep the files small. docs/TLS.md now gives
   nginx proxy manager's advanced settings from that install: without the header buffers the sign-in callback
   answered 502 "upstream sent too big header".
+
+- **Model catalog from a public file (2026-11-20, branch `feat/ai-catalog`, ADR-051).** Chat models, their
+  capabilities and their prices now come from `ai-catalog/v1/catalog.yaml`, read from `SPIRE_LLM_CATALOG_URL`
+  (default: the file on `master`) every 6 h, kept in `llm_catalog_state` (V117) and shared across instances on
+  `llm_catalog_changed`. The new module `spire-llm-catalog` parses and validates it; CI runs it strictly, with
+  "never remove a model" and "a changed price changes `observedAt`" against master. One resolver, `LlmModelCatalog`,
+  answers every model question manual first, and a manual-table fault is never answered from the catalog. Settings →
+  LLM → Models shows both sources, with "Reload now", "Use catalog" and a read-only catalog detail. Claude Code's
+  offer is the resolver's enabled Anthropic models, so its image carries no model label and `models.json` is gone.
+  Two attention changes: the pricing rows say where a catalog model's price is fixed, and `LLM_CATALOG_STALE` fires
+  when the URL has not served a good file for three intervals. The first file holds 12 models, every price read from
+  the vendor pages on 2026-11-20 (ai-catalog/PRICES-REVIEW.md lists each one for the operator's check). Not yet run
+  live: see the docs/UNVERIFIED.md entry.
+
+- **An LLM provider is a connection; the model is chosen where it is used (2026-11-20, branch `feat/ai-catalog`,
+  ADR-018 amended).** A provider no longer has a model. The global default is the default provider plus the default
+  review model (app setting `llm.default-model`), changed together in one request; a repository names a provider and
+  its model together (`repository.review_llm_model`, V118) or neither. Settings → LLM has a "Default review model"
+  select of the default provider's vendor, "Set default" asks for the model, and Repository → Settings → "Review
+  with" shows a model select after the provider. A new choice must be a priced model of the provider's vendor; a
+  default provider with no model refuses reviews `NO_DEFAULT_MODEL` and raises `LLM_DEFAULT_MODEL_MISSING`; a vendor
+  mismatch or a switched-off model runs with a warning (`LLM_MODEL_NOT_FOR_PROVIDER`, `LLM_MODEL_SWITCHED_OFF`). The
+  model-in-use guard counts the default and repository choices, also through a catalog alias, and covers a type
+  change. A provider's type is fixed after create. `LlmCredential` on the wire is unchanged.
+  Upgrading: **stop every orchestrator instance** before deploying (an old instance selects and inserts
+  `llm_provider.model`, which V119 drops). V118 copies the default provider's model into `llm.default-model` and each
+  repository's provider model into `review_llm_model`; V119 drops the column. There is no rollback without a database
+  backup. An older dashboard that saves a repository with a provider and no model is refused 400. Not yet run live:
+  see the docs/UNVERIFIED.md entry.
+
+- **PR #442's first review (2026-11-20, branch `feat/ai-catalog`).** Thirteen findings, fixed on the branch: a review
+  read the default provider and the default model in two queries, so a default switched between them mixed them, now
+  one statement; writers of the default pair take one advisory lock; a second instance on a new database could store the
+  bundled catalog over an accepted remote file, now only an empty row is written; a fractional price (bound as a whole
+  one by Jackson) and a model with no display name are refused; "Use catalog" keeps the in-use guard when another
+  manual row answers to the entry's names; the harness picker trusts the server's alias-aware `keyPriced`; failed
+  catalog and default-model reads are shown with a retry; the new model controls use `SettingField`, and the settings
+  contract now counts the shared Select; a byte-cap test proves the read stops at the cap; and the new code moved out
+  of classes over the size limit. Each guard is paired with its test in the commit that added it.

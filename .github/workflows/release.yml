@@ -216,7 +216,8 @@ jobs:
             service: ''
             apkUpgrade: false
             gradleDist: ''
-            catalogueScript: deploy/agent/build-claude-code.sh
+            # No model label: Claude Code's offer comes from the model catalog (ai-catalog/README.md).
+            catalogueScript: ''
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -230,8 +231,8 @@ jobs:
       #
       # Before setup-buildx, on purpose: that action makes its docker-container builder the default,
       # which would not load the script's image into the local store, and the read would find none.
-      # The Claude Code script reads a file rather than the binary; it goes the same way so both
-      # agents' catalogues come from the scripts an operator runs.
+      # The Claude Code image carries no catalogue (its offer comes from the model catalog), so it
+      # skips this step.
       - name: Model catalogue
         id: catalogue
         if: matrix.catalogueScript != ''

@@ -83,13 +83,24 @@ interface RateFieldProps {
   onChange: (value: string) => void;
   notBilled: boolean;
   onNotBilled: (value: boolean) => void;
+  /** A catalog model: the field says what the catalog states, never an example price. */
+  readOnly: boolean;
+}
+
+/**
+ * What a rate field shows. Editable: the typed value, blank when not billed. Read-only: the price, or in words why
+ * there is none; an example placeholder there would read as the catalog's own price.
+ */
+function shownRate(value: string, notBilled: boolean, readOnly: boolean): string {
+  if (readOnly && value === '') return notBilled ? 'not billed' : 'not priced';
+  return notBilled ? '' : value;
 }
 
 /** One rate input, mapped over {@link RATE_TYPES} rather than hand-written per dimension — the label,
  *  the optional/mandatory marker and the placeholder all already come from shared, tested tables. The
  *  row shows only the type's name and a star when it is required; the input's own name still says the
  *  whole thing ("Input rate $ / 1M tokens, required"), which a screen reader and the tests both read. */
-function RateField({ type, value, onChange, notBilled, onNotBilled }: RateFieldProps) {
+function RateField({ type, value, onChange, notBilled, onNotBilled, readOnly }: RateFieldProps) {
   const id = useId();
   const mandatory = MANDATORY_RATE_TYPES.includes(type);
   return (
@@ -103,25 +114,31 @@ function RateField({ type, value, onChange, notBilled, onNotBilled }: RateFieldP
         className="mono price-input"
         aria-label={`${TOKEN_TYPE_LABEL[type]} rate $ / 1M tokens, ${mandatory ? 'required' : 'optional'}`}
         inputMode="decimal"
-        placeholder={RATE_PLACEHOLDER[type]}
-        value={notBilled ? '' : value}
-        disabled={notBilled}
+        placeholder={readOnly ? undefined : RATE_PLACEHOLDER[type]}
+        value={shownRate(value, notBilled, readOnly)}
+        disabled={notBilled || readOnly}
         onChange={(e) => onChange(e.target.value)}
       />
-      {/* An assertion, not a zero: the operator says this vendor charges nothing for this type. A run
-          that reports a type with neither a rate nor this box stops the item with an unknown cost. */}
-      {(
-        <label className="field-check">
-          <input
-            type="checkbox"
-            aria-label={`${TOKEN_TYPE_LABEL[type]}: the vendor does not bill this`}
-            checked={notBilled}
-            onChange={(e) => onNotBilled(e.target.checked)}
-          />
-          <span>The vendor does not bill this</span>
-        </label>
-      )}
+      <NotBilledBox type={type} checked={notBilled} onChange={onNotBilled} />
     </div>
+  );
+}
+
+/**
+ * An assertion, not a zero: the operator says this vendor charges nothing for this type. A run that reports a type
+ * with neither a rate nor this box stops the item with an unknown cost.
+ */
+function NotBilledBox({ type, checked, onChange }: { type: RateType; checked: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <label className="field-check">
+      <input
+        type="checkbox"
+        aria-label={`${TOKEN_TYPE_LABEL[type]}: the vendor does not bill this`}
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span>The vendor does not bill this</span>
+    </label>
   );
 }
 
@@ -130,24 +147,26 @@ interface ModelRateFieldsProps {
   onChange: (type: RateType, value: string) => void;
   notBilled: Record<RateType, boolean>;
   onNotBilled: (type: RateType, value: boolean) => void;
+  /** A catalog model, shown read-only. */
+  readOnly?: boolean;
 }
 
 /** The model form's rate row — shown only under METERED (the parent hides this entirely when the
  *  model is marked self-hosted, rather than rendering disabled inputs nobody can fill in anyway). */
-export default function ModelRateFields({ rates, onChange, notBilled, onNotBilled }: ModelRateFieldsProps) {
+export default function ModelRateFields({ rates, onChange, notBilled, onNotBilled, readOnly = false }: ModelRateFieldsProps) {
   return (
     <>
       <div className="price-list">
         {RATE_TYPES.map((type) => (
           <RateField key={type} type={type} value={rates[type]} onChange={(v) => onChange(type, v)}
-            notBilled={!!notBilled[type]} onNotBilled={(v) => onNotBilled(type, v)} />
+            notBilled={!!notBilled[type]} onNotBilled={(v) => onNotBilled(type, v)} readOnly={readOnly} />
         ))}
       </div>
-      <small className="field-hint">
+      {!readOnly && <small className="field-hint">
         Enter the provider's current published price. <span className="price-required">*</span> needs a
         rate or "not billed". A rate left blank means nobody has said what it costs, and a run that
         reports it stops with an unknown cost.
-      </small>
+      </small>}
     </>
   );
 }

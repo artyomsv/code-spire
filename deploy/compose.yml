@@ -146,6 +146,10 @@ services:
       # Claude Code is opt-in: unset passes `none`, which the orchestrator reads as "not configured" (an empty
       # value would fail its startup). Set it to the image ./deploy/agent/build-claude-code.sh builds.
       SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE: ${SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE:-none}
+      # The public model catalog (ai-catalog/README.md). Defaults repeated here because an empty value is not
+      # "unset" to Quarkus. `none` uses only the copy built into the image.
+      SPIRE_LLM_CATALOG_URL: ${SPIRE_LLM_CATALOG_URL:-https://raw.githubusercontent.com/artyomsv/code-spire/master/ai-catalog/v1/catalog.yaml}
+      SPIRE_LLM_CATALOG_REFRESH_INTERVAL: ${SPIRE_LLM_CATALOG_REFRESH_INTERVAL:-6h}
       SPIRE_FACTORY_FIX_HARNESS: ${SPIRE_FACTORY_FIX_HARNESS:-}
       SPIRE_FACTORY_FIX_MODEL: ${SPIRE_FACTORY_FIX_MODEL:-}
       SPIRE_FACTORY_WALL_CLOCK_SECONDS: ${SPIRE_FACTORY_WALL_CLOCK_SECONDS:-1800}

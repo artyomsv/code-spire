@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.readmodel;
 
+import dev.codespire.orchestrator.llm.catalog.LlmModelCatalog;
 import dev.codespire.contract.review.Finding;
 import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.LineRange;
@@ -70,6 +71,9 @@ class ReviewProjectionConversationFindingTest {
 
     @Inject
     AttentionBroadcaster attention;
+
+    @Inject
+    LlmModelCatalog catalog;
 
     @Inject
     ReviewThreadView threads;
@@ -484,6 +488,8 @@ class ReviewProjectionConversationFindingTest {
         withFakeSocket.mapper = mapper;
         withFakeSocket.encryption = encryption;
         withFakeSocket.attention = attention;
+        // Wired, not left null: broadcast() resolves the vendor badge through it.
+        withFakeSocket.catalog = catalog;
         withFakeSocket.connections = new OpenConnections() {
             @Override
             public java.util.stream.Stream<WebSocketConnection> stream() {

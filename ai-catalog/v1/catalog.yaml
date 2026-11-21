@@ -1,0 +1,370 @@
+# The public LLM model catalog, format v1. Read ai-catalog/README.md before changing it.
+# Every price is entered by hand from the vendor's own page, with pricing.sourceUrl and
+# pricing.observedAt. A model is never removed: set lifecycle.status to RETIRED.
+#
+# Known limits of these figures (ai-catalog/PRICES-REVIEW.md, docs/UNVERIFIED.md):
+# - one rate per type: OpenAI's long-context tier (>272K input) and Claude Haiku 5.5's (>100K) are
+#   not modelled, so such calls are priced at the short-context rates below;
+# - OpenAI's shortest cache write is 30 minutes; it is recorded as cacheWrite. Its 12-hour price has no field;
+# - `api`: sources in ai-catalog/PRICES-REVIEW.md, "Request settings". reasoningEffort is null: the vendor's default applies.
+providers:
+  - code: openai
+    displayName: OpenAI
+    pricingUrl: https://developers.openai.com/api/docs/pricing
+  - code: anthropic
+    displayName: Anthropic
+    pricingUrl: https://platform.claude.com/docs/en/about-claude/pricing
+  - code: gemini
+    displayName: Google Gemini
+    pricingUrl: null
+models:
+  - modelId: claude-fable-5-2
+    provider: anthropic
+    displayName: Claude Fable 5.2
+    aliases: []
+    lifecycle:
+      status: ACTIVE
+      deprecationDate: null
+      retirementDate: null
+      successor: null
+    contextWindow: 1000000
+    maxOutputTokens: 128000
+    capabilities:
+      tools: true
+      structuredOutput: true
+      imageInput: true
+      promptCache: true
+    api:
+      outputTokenParam: MAX_TOKENS
+      temperature: false
+      reasoningEffort: null
+    pricing:
+      input: 800000
+      output: 4000000
+      cacheRead: 20000
+      cacheWrite: 1000000
+      cacheWrite1h: 1600000
+      reasoning: 4000000
+      notBilled: []
+      sourceUrl: https://platform.claude.com/docs/en/about-claude/pricing
+      observedAt: 2026-11-20
+  - modelId: claude-opus-5-5
+    provider: anthropic
+    displayName: Claude Opus 5.5
+    aliases: []
+    lifecycle:
+      status: ACTIVE
+      deprecationDate: null
+      retirementDate: null
+      successor: null
+    contextWindow: 1000000
+    maxOutputTokens: 128000
+    capabilities:
+      tools: true
+      structuredOutput: true
+      imageInput: true
+      promptCache: true
+    api:
+      outputTokenParam: MAX_TOKENS
+      temperature: false
+      reasoningEffort: null
+    pricing:
+      input: 400000
+      output: 2000000
+      cacheRead: 20000
+      cacheWrite: 500000
+      cacheWrite1h: 800000
+      reasoning: 2000000
+      notBilled: []
+      sourceUrl: https://platform.claude.com/docs/en/about-claude/pricing
+      observedAt: 2026-11-20
+  - modelId: claude-sonnet-5-5
+    provider: anthropic
+    displayName: Claude Sonnet 5.5
+    aliases: []
+    lifecycle:
+      status: ACTIVE
+      deprecationDate: null
+      retirementDate: null
+      successor: null
+    contextWindow: 1000000
+    maxOutputTokens: 128000
+    capabilities:
+      tools: true
+      structuredOutput: true
+      imageInput: true
+      promptCache: true
+    api:
+      outputTokenParam: MAX_TOKENS
+      temperature: false
+      reasoningEffort: null
+    pricing:
+      input: 200000
+      output: 1000000
+      cacheRead: 10000
+      cacheWrite: 250000
+      cacheWrite1h: 400000
+      reasoning: 1000000
+      notBilled: []
+      sourceUrl: https://platform.claude.com/docs/en/about-claude/pricing
+      observedAt: 2026-11-20
+  - modelId: claude-haiku-5-5
+    provider: anthropic
+    displayName: Claude Haiku 5.5
+    aliases: []
+    lifecycle:
+      status: ACTIVE
+      deprecationDate: null
+      retirementDate: null
+      successor: null
+    contextWindow: 1000000
+    maxOutputTokens: 128000
+    capabilities:
+      tools: true
+      structuredOutput: true
+      imageInput: true
+      promptCache: true
+    api:
+      outputTokenParam: MAX_TOKENS
+      temperature: false
+      reasoningEffort: null
+    pricing:
+      input: 10000
+      output: 50000
+      cacheRead: 1000
+      cacheWrite: 12500
+      cacheWrite1h: 20000
+      reasoning: 50000
+      notBilled: []
+      sourceUrl: https://platform.claude.com/docs/en/about-claude/pricing
+      observedAt: 2026-11-20
+  - modelId: gpt-6-astra
+    provider: openai
+    displayName: GPT-6 Astra
+    aliases: []
+    lifecycle:
+      status: ACTIVE
+      deprecationDate: null
+      retirementDate: null
+      successor: null
+    contextWindow: 1050000
+    maxOutputTokens: 128000
+    capabilities:
+      tools: true
+      structuredOutput: true
+      imageInput: true
+      promptCache: true
+    api:
+      outputTokenParam: MAX_COMPLETION_TOKENS
+      temperature: true
+      reasoningEffort: null
+    pricing:
+      input: 1000000
+      output: 5000000
+      cacheRead: 100000
+      cacheWrite: 1250000
+      reasoning: 5000000
+      notBilled: []
+      sourceUrl: https://developers.openai.com/api/docs/pricing
+      observedAt: 2026-11-20
+  - modelId: gpt-6-sol
+    provider: openai
+    displayName: GPT-6 Sol
+    aliases: []
+    lifecycle:
+      status: DEPRECATED
+      deprecationDate: null
+      retirementDate: null
+      successor: null
+    contextWindow: 1050000
+    maxOutputTokens: 128000
+    capabilities:
+      tools: true
+      structuredOutput: true
+      imageInput: true
+      promptCache: true
+    api:
+      outputTokenParam: MAX_COMPLETION_TOKENS
+      temperature: true
+      reasoningEffort: null
+    pricing:
+      input: 200000
+      output: 1000000
+      cacheRead: 20000
+      cacheWrite: 250000
+      reasoning: 1000000
+      notBilled: []
+      sourceUrl: https://developers.openai.com/api/docs/pricing
+      observedAt: 2026-11-20
+  - modelId: gpt-6-luna
+    provider: openai
+    displayName: GPT-6 Luna
+    aliases: []
+    lifecycle:
+      status: ACTIVE
+      deprecationDate: null
+      retirementDate: null
+      successor: null
+    contextWindow: 1050000
+    maxOutputTokens: 128000
+    capabilities:
+      tools: true
+      structuredOutput: true
+      imageInput: true
+      promptCache: true
+    api:
+      outputTokenParam: MAX_COMPLETION_TOKENS
+      temperature: true
+      reasoningEffort: null
+    pricing:
+      input: 10000
+      output: 50000
+      cacheRead: 1000
+      cacheWrite: 12500
+      reasoning: 50000
+      notBilled: []
+      sourceUrl: https://developers.openai.com/api/docs/pricing
+      observedAt: 2026-11-20
+  - modelId: gpt-5.6-sol
+    provider: openai
+    displayName: GPT-5.6 Sol
+    aliases: [gpt-5.6]
+    lifecycle:
+      status: ACTIVE
+      deprecationDate: null
+      retirementDate: null
+      successor: null
+    contextWindow: 1050000
+    maxOutputTokens: 128000
+    capabilities:
+      tools: true
+      structuredOutput: true
+      imageInput: true
+      promptCache: true
+    api:
+      outputTokenParam: MAX_COMPLETION_TOKENS
+      temperature: true
+      reasoningEffort: null
+    pricing:
+      input: 400000
+      output: 2000000
+      cacheRead: 40000
+      cacheWrite: 500000
+      reasoning: 2000000
+      notBilled: []
+      sourceUrl: https://developers.openai.com/api/docs/pricing
+      observedAt: 2026-11-20
+  - modelId: gpt-5.6-terra
+    provider: openai
+    displayName: GPT-5.6 Terra
+    aliases: []
+    lifecycle:
+      status: ACTIVE
+      deprecationDate: null
+      retirementDate: null
+      successor: null
+    contextWindow: 1050000
+    maxOutputTokens: 128000
+    capabilities:
+      tools: true
+      structuredOutput: true
+      imageInput: true
+      promptCache: true
+    api:
+      outputTokenParam: MAX_COMPLETION_TOKENS
+      temperature: true
+      reasoningEffort: null
+    pricing:
+      input: 200000
+      output: 1200000
+      cacheRead: 20000
+      cacheWrite: 250000
+      reasoning: 1200000
+      notBilled: []
+      sourceUrl: https://developers.openai.com/api/docs/pricing
+      observedAt: 2026-11-20
+  - modelId: gpt-5.6-luna
+    provider: openai
+    displayName: GPT-5.6 Luna
+    aliases: []
+    lifecycle:
+      status: ACTIVE
+      deprecationDate: null
+      retirementDate: null
+      successor: null
+    contextWindow: 1050000
+    maxOutputTokens: 128000
+    capabilities:
+      tools: true
+      structuredOutput: true
+      imageInput: true
+      promptCache: true
+    api:
+      outputTokenParam: MAX_COMPLETION_TOKENS
+      temperature: true
+      reasoningEffort: null
+    pricing:
+      input: 20000
+      output: 120000
+      cacheRead: 2000
+      cacheWrite: 25000
+      reasoning: 120000
+      notBilled: []
+      sourceUrl: https://developers.openai.com/api/docs/pricing
+      observedAt: 2026-11-20
+  - modelId: gpt-5.5
+    provider: openai
+    displayName: GPT-5.5
+    aliases: [gpt-5.5-2026-04-23]
+    lifecycle:
+      status: ACTIVE
+      deprecationDate: null
+      retirementDate: null
+      successor: null
+    contextWindow: 1050000
+    maxOutputTokens: 128000
+    capabilities:
+      tools: true
+      structuredOutput: true
+      imageInput: true
+      promptCache: true
+    api:
+      outputTokenParam: MAX_COMPLETION_TOKENS
+      temperature: true
+      reasoningEffort: null
+    pricing:
+      input: 500000
+      output: 3000000
+      cacheRead: 50000
+      reasoning: 3000000
+      notBilled: []
+      sourceUrl: https://developers.openai.com/api/docs/pricing
+      observedAt: 2026-11-20
+  - modelId: gpt-5.4
+    provider: openai
+    displayName: GPT-5.4
+    aliases: [gpt-5.4-2026-03-05]
+    lifecycle:
+      status: ACTIVE
+      deprecationDate: null
+      retirementDate: null
+      successor: null
+    contextWindow: 1050000
+    maxOutputTokens: 128000
+    capabilities:
+      tools: true
+      structuredOutput: true
+      imageInput: true
+      promptCache: true
+    api:
+      outputTokenParam: MAX_COMPLETION_TOKENS
+      temperature: true
+      reasoningEffort: null
+    pricing:
+      input: 250000
+      output: 1500000
+      cacheRead: 25000
+      reasoning: 1500000
+      notBilled: []
+      sourceUrl: https://developers.openai.com/api/docs/pricing
+      observedAt: 2026-11-20

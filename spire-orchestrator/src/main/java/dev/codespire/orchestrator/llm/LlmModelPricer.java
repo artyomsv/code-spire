@@ -4,21 +4,17 @@ import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.TokenCount;
 import dev.codespire.contract.llm.HarnessTokenReport;
 import dev.codespire.contract.review.TokenType;
+import dev.codespire.orchestrator.llm.catalog.LlmModelCatalog;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
-import javax.sql.DataSource;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 /**
- * Prices a call's token partition against the catalog. Split out of {@link LlmModelRegistry} to keep
+ * Prices a call's token partition against the model it names, as {@link LlmModelCatalog} resolves it
+ * (a manual model first, then the public catalog). Split out of {@link LlmModelRegistry} to keep
  * that class focused on CRUD — pricing is a read-only lookup with its own failure semantics (a lookup
  * fault must resolve to {@link PricingMode#UNKNOWN}, never a coerced zero), not a write-path concern.
  */
@@ -28,10 +24,7 @@ public class LlmModelPricer {
     private static final Logger LOG = Logger.getLogger(LlmModelPricer.class);
 
     @Inject
-    DataSource dataSource;
-
-    @Inject
-    LlmModelRateRepository rateRepository;
+    LlmModelCatalog catalog;
 
     /**
      * Price one call's token partition into charge lines.
@@ -166,20 +159,13 @@ public class LlmModelPricer {
         if (model == null || model.isBlank()) {
             return Pricing.UNKNOWN;
         }
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement(
-                     "SELECT id, pricing_mode FROM llm_model WHERE name = ?")) {
-            ps.setString(1, model);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    return Pricing.UNKNOWN;
-                }
-                UUID id = rs.getObject("id", UUID.class);
-                PricingMode mode = PricingMode.valueOf(rs.getString("pricing_mode"));
-                return new Pricing(mode, rateRepository.ratesFor(c, id));
-            }
-        } catch (SQLException e) {
-            // Deliberately NOT a zero. A transient fault must not become permanent silent corruption.
+        try {
+            return catalog.resolve(model)
+                    .map(resolved -> new Pricing(resolved.pricingMode(), resolved.rates()))
+                    .orElse(Pricing.UNKNOWN);
+        } catch (LlmModelCatalog.CatalogueReadFailed e) {
+            // Deliberately NOT a zero, and never the catalog rate: a manual model may shadow it.
+            // A transient fault must not become permanent silent corruption.
             LOG.errorf(e, "Pricing lookup failed for model %s — recording the call as unpriced", model);
             return Pricing.UNKNOWN;
         }

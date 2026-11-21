@@ -889,7 +889,6 @@ export interface LlmProviderView {
   name: string;
   type: LlmType;
   baseUrl: string;
-  model: string;
   temperature: number;
   maxTokens: number | null;
   hasApiKey: boolean; // the key is never returned
@@ -906,11 +905,12 @@ export interface LlmProviderInput {
   type: LlmType;
   baseUrl: string;
   apiKey?: string; // omit/empty on edit = keep the stored key
-  model: string;
   temperature?: number;
   maxTokens?: number | null;
   enabled?: boolean;
-  isDefault?: boolean;
+  isDefault?: boolean; // create only
+  /** The default review model, written with isDefault on create; required when a default provider exists. */
+  defaultModel?: string;
 }
 
 export async function fetchLlmProviders(): Promise<LlmProviderView[]> {
@@ -939,9 +939,39 @@ export async function updateLlmProvider(id: string, input: LlmProviderInput): Pr
   return res.json();
 }
 
-export async function setDefaultLlmProvider(id: string): Promise<LlmProviderView> {
-  const res = await apiFetch(`/api/llm-providers/${encodeURIComponent(id)}/default`, { method: 'PUT' });
+/** Makes a provider the default together with its model, in one request: both change, or neither. */
+export async function setDefaultLlmProvider(id: string, model: string): Promise<LlmProviderView> {
+  const res = await apiFetch(`/api/llm-providers/${encodeURIComponent(id)}/default`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model }),
+  });
   if (!res.ok) return throwResponse(res, 'Failed to set default LLM provider');
+  return res.json();
+}
+
+/** The enabled default provider's id and the default review model; either may be null. */
+export interface LlmDefaultModelView {
+  provider: string | null;
+  model: string | null;
+}
+
+export const llmDefaultModelKey = ['llm-default-model'] as const;
+
+export async function fetchLlmDefaultModel(): Promise<LlmDefaultModelView> {
+  const res = await apiFetch('/api/settings/llm-default-model');
+  if (!res.ok) return throwResponse(res, 'Failed to load the default review model');
+  return res.json();
+}
+
+/** Changes only the model, for the current default provider; null clears it. */
+export async function putLlmDefaultModel(model: string | null): Promise<LlmDefaultModelView> {
+  const res = await apiFetch('/api/settings/llm-default-model', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model }),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to save the default review model');
   return res.json();
 }
 
@@ -1066,7 +1096,8 @@ export async function checkContextProvider(id: string): Promise<ContextProviderC
 export type OutputTokenParam = 'MAX_TOKENS' | 'MAX_COMPLETION_TOKENS' | 'NONE';
 
 export interface LlmModelView {
-  id: string;
+  /** Null for a catalog model: it has no row of its own and cannot be edited or deleted. */
+  id: string | null;
   type: LlmType;
   name: string; // wire model id, e.g. gpt-4o
   label: string;
@@ -1079,7 +1110,9 @@ export interface LlmModelView {
   reasoningEffort: string | null; // low | medium | high, or null
   extraParams: Record<string, unknown>; // free-form pass-through params
   enabled: boolean;
-  createdAt: string;
+  createdAt: string | null;
+  /** MANUAL: typed in Settings. CATALOG: from the public model catalog, read-only. */
+  source: 'MANUAL' | 'CATALOG';
 }
 
 export interface LlmModelInput {
@@ -1125,6 +1158,80 @@ export async function updateLlmModel(id: string, input: LlmModelInput): Promise<
 export async function deleteLlmModel(id: string): Promise<void> {
   const res = await apiFetch(`/api/llm-models/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) await throwResponse(res, 'Failed to delete LLM model');
+}
+
+/** One model of the public catalog, as the file states it (ai-catalog/README.md). Rates in millicents per 1M. */
+export interface CatalogModelView {
+  modelId: string;
+  provider: LlmType;
+  displayName: string;
+  aliases: string[];
+  lifecycle: {
+    status: 'ACTIVE' | 'DEPRECATED' | 'RETIRED';
+    deprecationDate: string | null;
+    retirementDate: string | null;
+    successor: string | null;
+  } | null;
+  contextWindow: number | null;
+  maxOutputTokens: number | null;
+  capabilities: { tools: boolean; structuredOutput: boolean; imageInput: boolean; promptCache: boolean } | null;
+  api: { outputTokenParam: 'MAX_TOKENS' | 'MAX_COMPLETION_TOKENS'; temperature: boolean; reasoningEffort: string | null } | null;
+  pricing: {
+    input: number | null;
+    output: number | null;
+    cacheRead: number | null;
+    cacheWrite: number | null;
+    cacheWrite1h: number | null;
+    reasoning: number | null;
+    notBilled: string[];
+    sourceUrl: string | null;
+    observedAt: string | null;
+  } | null;
+}
+
+/** A catalog entry in Settings; shadowed when a manual model has its id or one of its aliases. */
+export interface CatalogRowView {
+  model: CatalogModelView;
+  shadowed: boolean;
+}
+
+/** What the last accepted catalog file changed against the one before it. */
+export interface CatalogChangeView {
+  oldSha: string | null;
+  newSha: string | null;
+  added: string[];
+  retired: string[];
+  rePriced: { modelId: string; before: Record<string, unknown>; after: Record<string, unknown> }[];
+}
+
+/** The catalog in use and how the last read of its URL went. `url` is null when remote loading is off. */
+export interface LlmCatalogView {
+  url: string | null;
+  source: 'bundled' | 'remote' | null;
+  sha256: string | null;
+  loadedAt: string | null;
+  lastCheckedAt: string | null;
+  lastSuccessAt: string | null;
+  lastError: string | null;
+  lastChange: CatalogChangeView | null;
+  rows: CatalogRowView[];
+}
+
+export type CatalogRefreshOutcome = 'DISABLED' | 'NOT_MODIFIED' | 'UNCHANGED' | 'REPLACED' | 'INVALID' | 'FAILED';
+
+export const llmCatalogKey = ['llm-catalog'] as const;
+
+export async function fetchLlmCatalog(): Promise<LlmCatalogView> {
+  const res = await apiFetch('/api/llm-catalog');
+  if (!res.ok) return throwResponse(res, 'Failed to load the model catalog');
+  return res.json();
+}
+
+/** "Reload now": reads the catalog URL on this instance; every instance follows a new file. */
+export async function refreshLlmCatalog(): Promise<{ outcome: CatalogRefreshOutcome }> {
+  const res = await apiFetch('/api/llm-catalog/refresh', { method: 'POST' });
+  if (!res.ok) return throwResponse(res, 'Failed to reload the model catalog');
+  return res.json();
 }
 
 // ---- dead-letter queue (cs.dlq) ----

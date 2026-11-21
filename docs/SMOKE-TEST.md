@@ -308,11 +308,12 @@ topic. Minimal set: Postgres + Redpanda + **orchestrator + worker**.
    **Contents: Read** + **Pull requests: Read and write**. Register the repository separately with
    forge origin `https://api.github.com`, workspace = repo owner and its slug, then select that account.
    Leave "Bot account id" blank — it is resolved from the token on save (`IdentitySource`).
-2. In Settings → LLM (ADR-018): first **add a model** (e.g. name `gpt-4o`, input `$2.50` / output
-   `$10.00` per 1M tokens — from OpenAI's pricing page), then register an **LLM provider**: type
-   `openai`, base URL `https://api.openai.com/v1`, your API key, and pick the model from the dropdown.
-   The key is validated on save and stored encrypted; mark the provider the **default**. No
-   `SPIRE_LLM_*` env vars. The model's pricing is what shows the per-review **cost** on the dashboard.
+2. In Settings → LLM (ADR-018): register an **LLM provider** (a connection, with no model): type
+   `openai`, base URL `https://api.openai.com/v1`, your API key. The key is validated on save and
+   stored encrypted; the first provider becomes the **default provider**. Then pick the **Default
+   review model** from that vendor's models (a catalog model, or one you added under Models with its
+   rates). No `SPIRE_LLM_*` env vars. The model's pricing is what shows the per-review **cost** on the
+   dashboard; with no default model every review is refused `NO_DEFAULT_MODEL`.
 3. In `.env`, only one mode flag is needed:
    ```bash
    SPIRE_LLM_PROVIDER=registry  # stub|registry mode flag (NOT credentials); registry = use the UI
@@ -1140,56 +1141,56 @@ and costs nothing to call, set its pricing mode to UNMETERED instead of entering
 and an unentered rate must stay distinguishable."* The server does not need to explain the operator's
 two different mistakes separately; it only needs to refuse both and point at `UNMETERED`.
 
-K-4 and K-5 each need their **own** in-use model/provider pair, not K-1's and not each other's — K-4
-ends by making its pair no-longer-in-use (that is the point of the scenario), so a pair K-5 also
-depended on would already be gone by the time you reach it. Catalog a fresh throwaway model for each
-(e.g. `TEST-K4-MODEL`, `TEST-K5-MODEL`) with a provider naming it, before starting that scenario — do
-not reuse a pair from an earlier scenario in this mode.
+A model is in use where it is chosen: as the **default review model** (while an enabled default
+provider exists) or as a **repository's review model** (Repository → Settings → "Review with"). K-4 and
+K-5 each need their **own** in-use model, not K-1's and not each other's — K-4 ends by making its model
+no-longer-in-use (that is the point of the scenario), so a model K-5 also depended on would already be
+gone by the time you reach it. Catalog a fresh throwaway manual model for each (e.g. `TEST-K4-MODEL`,
+`TEST-K5-MODEL`) and choose it as a repository's review model, beside a provider of the same vendor,
+before starting that scenario — do not reuse a model from an earlier scenario in this mode.
 
-### K-4 — deleting a model a provider uses is refused
+### K-4 — deleting a model in use is refused
 
-With `TEST-K4-MODEL` catalogued and a provider naming it, attempt to delete the model
+With `TEST-K4-MODEL` catalogued and a repository reviewing with it, attempt to delete the model
 (Settings → LLM → Models → delete).
 
-**Expected:** **409**, *"Model 'X' is in use by N LLM provider(s). Point them at another model
-first."* The model remains in the catalog. Repoint the provider at a different model and retry —
-deletion should now succeed. This scenario is now finished; its pair is gone by design, and neither
-half of it should be reused by K-5 or anything after it.
+**Expected:** **409**, *"Model 'X' is in use by repository W/S. Choose another model there first."*
+The model remains in the catalog. Choose another model for that repository and retry — deletion
+should now succeed. This scenario is now finished; its model is gone by design, and it should not be
+reused by K-5 or anything after it.
 
-### K-5 — renaming a model a provider uses is refused
+### K-5 — renaming or retyping a model in use is refused
 
-With `TEST-K5-MODEL` catalogued and a **separate** provider naming it — untouched by K-4 — attempt
-to rename the model (edit its `name` field and save; leave every other field alone).
+With `TEST-K5-MODEL` catalogued and a **separate** repository reviewing with it — untouched by K-4 —
+attempt to rename the model (edit its `name` field and save; leave every other field alone). Then try
+changing only its type.
 
-**Expected:** **409**, *"Model 'X' is in use by N LLM provider(s). Point them at another model
-first, then rename it."* The rename does not take effect — check the model's name in the list, or
-the provider's `model` field, rather than trusting the toast alone. Renaming the model's label,
-rates or any other field with the *same* name should still succeed; only the name itself is
-guarded. Repoint or delete the provider afterward if you want to delete `TEST-K5-MODEL` too — it is
-still in use at the end of this scenario, deliberately, since the rename was refused rather than
-applied.
+**Expected:** **409** both times, *"Model 'X' is in use by repository W/S. Choose another model there
+first, then rename it."* (or *"…then change its type."*). The change does not take effect — check the
+model in the list, or the repository's review model, rather than trusting the toast alone. Changing
+the model's label, rates or any other field should still succeed. Choose another model for the
+repository afterward if you want to delete `TEST-K5-MODEL` too — it is still in use at the end of this
+scenario, deliberately, since the rename was refused rather than applied.
 
-### K-6 — a provider naming an uncatalogued model is refused
+### K-6 — choosing an uncatalogued or other-vendor model is refused
 
-Create or edit a provider (Settings → LLM → Providers) naming a model not in the catalog. The Model
-field is a dropdown built from the catalog **only when one exists for that provider type** — pick a
-provider type with zero catalogued models first (or use `POST /api/llm-providers` directly) to reach
-the free-text fallback, then type a name you have not catalogued.
+The model is chosen in two places, and both refuse what cannot be priced or is of another vendor. With
+`PUT /api/settings/llm-default-model` (or `PUT /api/llm-providers/{id}/default`) send a model not in
+the catalog; then send a catalogued model of another vendor than the default provider. Do the same on
+a repository with `PUT /api/repositories/{id}` naming a provider and such a `reviewLlmModel`.
 
-**Expected:** **400**, *"Model 'X' is not in the catalog with usable pricing. Add it under Settings ->
-LLM -> Models first, with a rate for input and output tokens — or mark it UNMETERED if it is
-self-hosted and costs nothing."* The provider is not saved. This is the same rule K-3/K-4 protect from
-the other direction — a provider can never reference a model the catalog cannot price. Once at least
-one model of that type is catalogued, the dropdown replaces the free-text field and this path is no
-longer reachable from the UI at all — *"the Settings dropdown is a courtesy; this is the control,"*
-in the words of `LlmProviderModelGuardTest`'s own javadoc, the test that exercises this exact path.
+**Expected:** **400** each time, naming the reason (`unknown_model`, `model_not_for_provider` or
+`model_not_priceable`) and the two types. Nothing is saved. The dashboard's selects list only that
+vendor's enabled models, so this path is reached only through the API — *"the Settings dropdown is a
+courtesy; this is the control,"* in the words of `LlmProviderModelGuardTest`'s own javadoc. A
+repository save naming a provider with no model (an older dashboard) is also **400**, never a silent
+clear.
 
 ### Cleanup
 
-Delete any model/provider pair added only for this pass. For a pair still in use (K-5's, and K-4's
-before you repointed it), repoint the provider at a different model — or delete the provider
-outright — before deleting the model itself; deleting an in-use model is refused by the same guard
-K-4 exercises.
+Delete any model added only for this pass. For a model still in use (K-5's), choose another model for
+its repository, or switch the repository back to the default, before deleting the model; deleting an
+in-use model is refused by the same guard K-4 exercises.
 
 ---
 

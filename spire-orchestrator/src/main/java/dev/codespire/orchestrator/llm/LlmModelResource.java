@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.llm;
 
+import dev.codespire.llmcatalog.Vendors;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
@@ -33,7 +34,7 @@ import java.util.UUID;
 public class LlmModelResource {
 
     // Must match the provider types in LlmProviderResource.
-    private static final Set<String> TYPES = Set.of("openai", "anthropic", "gemini");
+    private static final Set<String> TYPES = Vendors.TYPES;
 
     @Inject
     LlmModelRegistry registry;

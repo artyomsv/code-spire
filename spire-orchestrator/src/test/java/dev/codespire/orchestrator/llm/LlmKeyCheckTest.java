@@ -215,7 +215,6 @@ class LlmKeyCheckTest {
         provider.put("name", "TEST-" + type);
         provider.put("type", type);
         provider.put("baseUrl", baseUrl);
-        provider.put("model", "anthropic".equals(type) ? "claude-sonnet-4" : "TEST-MODEL");
         provider.put("apiKey", "TEST-key");
         return provider;
     }

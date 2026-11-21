@@ -210,6 +210,7 @@ val fastTestModules = listOf(
     "spire-diff",
     "spire-http",
     "spire-llm",
+    "spire-llm-catalog",
     "spire-scm-bitbucket",
     "spire-scm-github",
     "spire-scm-gitlab",

@@ -48,7 +48,7 @@ class AttentionQueriesTest {
     }
 
     /**
-     * The model name every {@code llm_provider} fixture here uses, deliberately NOT the repo-wide
+     * The default review model every fixture here chooses, deliberately NOT the repo-wide
      * {@code TEST-MODEL}. Whether the default provider's model is priceable now decides a row, and
      * priceability lives in {@code llm_model} — a table other suites also write. Sharing a name would
      * make this class's outcome depend on which suite ran first.
@@ -58,6 +58,7 @@ class AttentionQueriesTest {
     @BeforeEach
     void reset() {
         sql("DELETE FROM llm_provider");
+        sql("DELETE FROM app_setting WHERE key = 'llm.default-model'");
         // Providers before the catalog they reference, matching the in-use guard's own direction.
         // Reset rather than tolerated: an uncatalogued model is unpriceable BY DESIGN, so a stray
         // catalog row left by an earlier suite would silently decide MODEL_NOT_PRICEABLE here.
@@ -98,7 +99,7 @@ class AttentionQueriesTest {
     @Test
     void aFullyConfiguredSystemReportsNothing() {
         catalogueMeteredModelWithRates();
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         assertEquals(List.of(), queries.collect());
     }
@@ -113,7 +114,7 @@ class AttentionQueriesTest {
     @Test
     void aMeteredDefaultModelWithNoRatesIsReportedAsBlocking() {
         catalogueModel("METERED");
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
 
         AttentionView row = queries.collect().stream()
@@ -130,7 +131,7 @@ class AttentionQueriesTest {
     /** An uncatalogued model has no rates to find, so it is unpriceable for the same reason. */
     @Test
     void anUncataloguedDefaultModelIsReportedAsBlocking() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         assertTrue(codes().contains("MODEL_NOT_PRICEABLE"), codes().toString());
     }
@@ -142,7 +143,7 @@ class AttentionQueriesTest {
     @Test
     void anUnmeteredDefaultModelRaisesNoPricingRow() {
         catalogueModel("UNMETERED");
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         assertFalse(codes().contains("MODEL_NOT_PRICEABLE"), codes().toString());
     }
@@ -154,10 +155,8 @@ class AttentionQueriesTest {
     @Test
     void aNonDefaultProvidersUnpriceableModelIsNotReported() {
         catalogueMeteredModelWithRates();
-        insertLlmProvider("TEST-llm-default", true, true);
-        sql("INSERT INTO llm_provider (id, name, type, base_url, api_key, model, temperature, enabled, "
-                + "is_default) VALUES ('" + UUID.randomUUID() + "', 'TEST-llm-other', 'openai', "
-                + "'https://llm.example.invalid', 'TEST-KEY', 'TEST-UNCATALOGUED-MODEL', 0.0, TRUE, FALSE)");
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm-default"));
+        insertLlmProvider(TestLlmProvider.enabledNotDefault("TEST-llm-other"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         assertFalse(codes().contains("MODEL_NOT_PRICEABLE"), codes().toString());
     }
@@ -165,7 +164,7 @@ class AttentionQueriesTest {
     /** An enabled provider exists but nothing is marked default, so brokering cannot pick one. */
     @Test
     void enabledLlmProvidersWithNoDefaultReportTheMissingDefault() {
-        insertLlmProvider("TEST-llm", true, false);
+        insertLlmProvider(TestLlmProvider.enabledNotDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         Set<String> found = codes();
         assertTrue(found.contains("LLM_DEFAULT_MISSING"), found.toString());
@@ -175,8 +174,8 @@ class AttentionQueriesTest {
     /** Disabling the default is as blocking as never setting one -- the resolver requires both. */
     @Test
     void aDisabledDefaultLlmProviderStillReportsTheMissingDefault() {
-        insertLlmProvider("TEST-llm-off", false, true);
-        insertLlmProvider("TEST-llm-on", true, false);
+        insertLlmProvider(TestLlmProvider.disabledDefault("TEST-llm-off"));
+        insertLlmProvider(TestLlmProvider.enabledNotDefault("TEST-llm-on"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         assertTrue(codes().contains("LLM_DEFAULT_MISSING"), codes().toString());
     }
@@ -184,7 +183,7 @@ class AttentionQueriesTest {
     /** The bot cannot recognise its own comments without an identity, so conversation breaks. */
     @Test
     void anScmProviderWithNoBotIdentityIsReportedByName() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-nameless", "", null);
         AttentionView row = queries.collect().stream()
                 .filter(v -> "BOT_IDENTITY_UNRESOLVED".equals(v.code()))
@@ -198,7 +197,7 @@ class AttentionQueriesTest {
     /** Either identity field alone is enough -- only a provider with neither is unresolved. */
     @Test
     void anScmProviderWithOnlyAUsernameIsNotReported() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "", "test-bot");
         assertFalse(codes().contains("BOT_IDENTITY_UNRESOLVED"), codes().toString());
     }
@@ -206,7 +205,7 @@ class AttentionQueriesTest {
     /** Dropped work must be visible; the row carries the count so one row covers any number. */
     @Test
     void pendingDeadLetterEntriesAreReportedWithTheirCount() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertDlqEntry("pending");
         insertDlqEntry("pending");
@@ -243,7 +242,7 @@ class AttentionQueriesTest {
      */
     @Test
     void eachStuckReviewIsReportedAsItsOwnNavigableRow() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertReview("TEST-r1", "reviewing", "OPEN", "2 hours");
         insertReview("TEST-r2", "reviewing", "OPEN", "2 hours");
@@ -269,7 +268,7 @@ class AttentionQueriesTest {
      */
     @Test
     void beyondTheCapTheRemainderIsSummarisedRatherThanDropped() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         for (int i = 1; i <= 7; i++) {
             insertReview("TEST-r" + i, "reviewing", "OPEN", "2 hours");
@@ -295,7 +294,7 @@ class AttentionQueriesTest {
      */
     @Test
     void theCapKeepsTheNewestStuckReviewsAsTheirOwnRows() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         for (int i = 1; i <= 7; i++) {
             insertReview("TEST-r" + i, "reviewing", "OPEN", (60 + i) + " minutes");
@@ -317,7 +316,7 @@ class AttentionQueriesTest {
      */
     @Test
     void anAcknowledgedReviewStopsRaisingItsRow() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertReview("TEST-r1", "failed", "OPEN", "1 hour");
         assertTrue(codes().contains("REVIEW_FAILED"), codes().toString());
@@ -333,7 +332,7 @@ class AttentionQueriesTest {
      */
     @Test
     void aLaterFailureRaisesTheRowAgainAfterAnAcknowledgement() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertReview("TEST-r1", "failed", "OPEN", "1 hour");
         acknowledge("TEST-r1");
@@ -348,7 +347,7 @@ class AttentionQueriesTest {
     /** A review that is merely young is not stuck. */
     @Test
     void aRecentInProgressReviewIsNotReportedAsStuck() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertReview("TEST-r1", "reviewing", "OPEN", "1 minute");
         assertFalse(codes().contains("REVIEW_STUCK"), codes().toString());
@@ -357,7 +356,7 @@ class AttentionQueriesTest {
     /** Cancel-on-close should have ended it; alerting about a merged PR is how a panel becomes noise. */
     @Test
     void aStuckReviewOnAClosedPrIsNotReported() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertReview("TEST-r1", "reviewing", "MERGED", "2 hours");
         assertFalse(codes().contains("REVIEW_STUCK"), codes().toString());
@@ -375,7 +374,7 @@ class AttentionQueriesTest {
      */
     @Test
     void anOldCompletedReviewIsNotReportedAsStuck() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertReview("TEST-r1", "completed", "OPEN", "30 days");
         assertFalse(codes().contains("REVIEW_STUCK"), codes().toString());
@@ -387,7 +386,7 @@ class AttentionQueriesTest {
      */
     @Test
     void aSupersededReviewIsNotReportedAsStuck() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertReview("TEST-r1", "superseded", "OPEN", "2 hours");
         assertFalse(codes().contains("REVIEW_STUCK"), codes().toString());
@@ -396,7 +395,7 @@ class AttentionQueriesTest {
     /** A cancelled review is terminal too. */
     @Test
     void aCancelledReviewIsNotReportedAsStuck() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertReview("TEST-r1", "cancelled", "OPEN", "2 hours");
         assertFalse(codes().contains("REVIEW_STUCK"), codes().toString());
@@ -405,7 +404,7 @@ class AttentionQueriesTest {
     /** A failure is actionable: open it for the reason, re-run it, or acknowledge it. */
     @Test
     void aFailedReviewIsReportedWithItsOwnRow() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertReview("TEST-r1", "failed", "OPEN", "1 hour");
 
@@ -425,7 +424,7 @@ class AttentionQueriesTest {
      */
     @Test
     void anOldUnacknowledgedFailureIsStillReported() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertReview("TEST-r1", "failed", "OPEN", "30 days");
         assertTrue(codes().contains("REVIEW_FAILED"), codes().toString());
@@ -434,7 +433,7 @@ class AttentionQueriesTest {
     /** A credential the provider refused is the case that started this feature. */
     @Test
     void aRejectedScmCredentialIsReportedByProviderName() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         sql("UPDATE scm_provider SET last_check_at = now(), last_check_ok = FALSE, "
                 + "last_check_error = 'Authentication rejected (HTTP 401)' WHERE name = 'TEST-scm'");
@@ -449,7 +448,7 @@ class AttentionQueriesTest {
     /** A rejected LLM key routes the operator to the LLM page, not the SCM page. */
     @Test
     void aRejectedLlmCredentialLinksToTheLlmSettingsPage() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         sql("UPDATE llm_provider SET last_check_at = now(), last_check_ok = FALSE, "
                 + "last_check_error = 'The LLM provider rejected the API key' WHERE name = 'TEST-llm'");
@@ -465,7 +464,7 @@ class AttentionQueriesTest {
      */
     @Test
     void anUncheckedCredentialIsNotReported() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         assertFalse(codes().contains("CREDENTIAL_REJECTED"), codes().toString());
     }
@@ -473,7 +472,7 @@ class AttentionQueriesTest {
     /** A passing check clears the row; there is no separate clear action. */
     @Test
     void aPassingCheckClearsTheRejection() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         sql("UPDATE scm_provider SET last_check_ok = FALSE WHERE name = 'TEST-scm'");
         assertTrue(codes().contains("CREDENTIAL_REJECTED"));
@@ -484,7 +483,7 @@ class AttentionQueriesTest {
     /** A disabled provider cannot break a review, so its dead credential is not actionable. */
     @Test
     void aDisabledProvidersRejectedCredentialIsNotReported() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         sql("UPDATE scm_provider SET enabled = FALSE, last_check_ok = FALSE WHERE name = 'TEST-scm'");
         assertFalse(codes().contains("CREDENTIAL_REJECTED"), codes().toString());
@@ -496,7 +495,7 @@ class AttentionQueriesTest {
      */
     @Test
     void aRejectedContextCredentialLinksToTheContextSettingsPage() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertContextProvider("TEST-context");
         sql("UPDATE context_provider SET last_check_ok = FALSE WHERE name = 'TEST-context'");
@@ -509,11 +508,9 @@ class AttentionQueriesTest {
 
     // ---- fixtures: obviously-synthetic values only --------------------------
 
-    private void insertLlmProvider(String name, boolean enabled, boolean isDefault) {
-        sql("INSERT INTO llm_provider (id, name, type, base_url, api_key, model, temperature, enabled, is_default) "
-                + "VALUES ('" + UUID.randomUUID() + "', '" + name + "', 'openai', "
-                + "'https://llm.example.invalid', 'TEST-KEY', '" + MODEL + "', 0.0, "
-                + enabled + ", " + isDefault + ")");
+    /** Writes the row; a default provider gets {@link #MODEL} as the default review model. */
+    private void insertLlmProvider(TestLlmProvider provider) {
+        provider.statements(MODEL).forEach(this::sql);
     }
 
     /** Catalogue {@link #MODEL} in the given pricing mode, with no rates. */
@@ -541,7 +538,7 @@ class AttentionQueriesTest {
         // identity reviews nothing, so counting it as "source control is configured" would hide the
         // one BLOCKING row that says no review can run — a condition true right now with no row.
         catalogueModel("UNMETERED");
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProviderWithRole("TEST-factory", "FACTORY");
 
         assertTrue(queries.collect().stream().anyMatch(v -> "SCM_PROVIDER_MISSING".equals(v.code())),
@@ -553,7 +550,7 @@ class AttentionQueriesTest {
         // BOT_IDENTITY_UNRESOLVED is about recognising the bot's own comments in a conversation.
         // A factory account holds no conversation, so its blank identity is nobody's problem here.
         catalogueModel("UNMETERED");
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-reviewer", "acct-1", "test-bot");
         insertScmProviderWithRole("TEST-factory", "FACTORY");
 
@@ -597,7 +594,7 @@ class AttentionQueriesTest {
      */
     @Test
     void aDegradedReviewRaisesItsRow() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertDegradedReview("TEST-r1");
         assertTrue(codes().contains("REVIEW_DEGRADED"), codes().toString());
@@ -605,7 +602,7 @@ class AttentionQueriesTest {
 
     @Test
     void aCleanCompletedReviewRaisesNoDegradedRow() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertReview("TEST-r1", "completed", "OPEN", "1 hour");
         assertFalse(codes().contains("REVIEW_DEGRADED"), codes().toString());
@@ -618,7 +615,7 @@ class AttentionQueriesTest {
      */
     @Test
     void aLaterGoodRunClearsTheDegradedRow() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertDegradedReview("TEST-r1");
         assertTrue(codes().contains("REVIEW_DEGRADED"), codes().toString());
@@ -630,7 +627,7 @@ class AttentionQueriesTest {
 
     @Test
     void anArchivedDegradedReviewStopsRaisingItsRow() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertDegradedReview("TEST-r1");
         sql("UPDATE review_status SET archived_at = now() WHERE review_id = 'TEST-r1'");
@@ -639,7 +636,7 @@ class AttentionQueriesTest {
 
     @Test
     void anAcknowledgedDegradedReviewStopsRaisingItsRow() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertDegradedReview("TEST-r1");
         acknowledge("TEST-r1");
@@ -649,7 +646,7 @@ class AttentionQueriesTest {
     /** Completed, so it is neither stalled nor failed — only the new row should speak for it. */
     @Test
     void aDegradedReviewIsNotAlsoReportedAsStuckOrFailed() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertDegradedReview("TEST-r1");
         assertFalse(codes().contains("REVIEW_STUCK"), codes().toString());
@@ -663,7 +660,7 @@ class AttentionQueriesTest {
      */
     @Test
     void aDegradedReviewBeingReviewedAgainDoesNotRaiseTheRow() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertDegradedReview("TEST-r1");
         sql("UPDATE review_status SET status = 'reviewing', updated_at = now() WHERE review_id = 'TEST-r1'");
@@ -674,7 +671,7 @@ class AttentionQueriesTest {
      *  degraded row's "re-run it" advice would be stale beside it. */
     @Test
     void aDegradedReviewThatLaterFailedIsReportedOnlyAsFailed() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertDegradedReview("TEST-r1");
         sql("UPDATE review_status SET status = 'failed', updated_at = now() WHERE review_id = 'TEST-r1'");
@@ -686,7 +683,7 @@ class AttentionQueriesTest {
      *  would be false, and the remedy it suggests is the wrong one. */
     @Test
     void aRefusedReviewIsNotReportedAsHavingBeenCharged() {
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertDegradedReview("TEST-r1");
         sql("UPDATE review_status SET status = 'refused', updated_at = now() WHERE review_id = 'TEST-r1'");

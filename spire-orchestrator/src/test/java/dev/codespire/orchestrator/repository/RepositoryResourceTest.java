@@ -2,12 +2,6 @@ package dev.codespire.orchestrator.repository;
 
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.security.TestSecurity;
-import dev.codespire.orchestrator.llm.LlmModelInput;
-import dev.codespire.orchestrator.llm.LlmModelRegistry;
-import dev.codespire.orchestrator.llm.LlmProviderInput;
-import dev.codespire.orchestrator.llm.LlmProviderRegistry;
-import jakarta.inject.Inject;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import java.util.UUID;
 import static io.restassured.RestAssured.given;
@@ -16,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @QuarkusTest
 @TestSecurity(user = "TEST-admin", roles = {"spire-viewer", "spire-admin"})
-class RepositoryResourceTest extends RepositoryFixture {
+class RepositoryResourceTest extends RepositoryReviewWithFixture {
     @Test void repositoryOwnsWorkspaceAndRoleBindings() {
         UUID reviewer = account("REVIEWER"), factory = account("FACTORY");
         String id = given().contentType("application/json").body(repository(reviewer, factory)).post("/api/repositories")
@@ -122,6 +116,7 @@ class RepositoryResourceTest extends RepositoryFixture {
                 .body("reviewLlmProviderId", nullValue());
     }
 
+
     @Test void aReviewLlmProviderThatDoesNotExistIsBadRequest() {
         UUID missing = UUID.randomUUID();
         given().contentType("application/json").body(repositoryReviewingWith(missing)).post("/api/repositories")
@@ -211,10 +206,6 @@ class RepositoryResourceTest extends RepositoryFixture {
         assertEquals(seat, repositories.normalize(repositoryReviewingOn(seat)).reviewHarness());
     }
 
-    RepositoryInput repositoryReviewingOn(ReviewHarness harness) {
-        return new RepositoryInput("gitlab", origin, workspace, "TEST-repo", true, null, null, null, null, harness);
-    }
-
     String harnessColumns(UUID id) throws Exception {
         try (java.sql.Connection c = dataSource.getConnection(); java.sql.PreparedStatement ps = c.prepareStatement("""
                 SELECT review_harness, review_harness_model, review_harness_effort, review_harness_pay_with
@@ -241,27 +232,4 @@ class RepositoryResourceTest extends RepositoryFixture {
         given().contentType("application/json").body(repository(null, null)).post("/api/repositories").then().statusCode(403);
     }
 
-    @Inject LlmProviderRegistry llmProviders;
-    @Inject LlmModelRegistry llmModels;
-    final java.util.Set<UUID> createdLlmProviders = new java.util.HashSet<>();
-
-    UUID llmProvider(String name) {
-        String model = "TEST-repository-model-" + UUID.randomUUID();
-        llmModels.create(new LlmModelInput("openai", model, model, "UNMETERED", java.util.Map.of(),
-                null, null, null, null, true, java.util.List.of()));
-        UUID id = UUID.fromString(llmProviders.create(new LlmProviderInput("TEST-" + name, "openai",
-                "https://llm.example.invalid", "TEST-key", model, null, null, true, false)).id());
-        createdLlmProviders.add(id);
-        return id;
-    }
-
-    RepositoryInput repositoryReviewingWith(UUID provider) {
-        return new RepositoryInput("gitlab", origin, workspace, "TEST-repo", true, null, null, null, provider);
-    }
-
-    /** Runs before the fixture removes the repository, so the provider is unnamed first; a named one cannot go. */
-    @AfterEach void removeLlmProviders() throws Exception {
-        execute("UPDATE repository SET review_llm_provider_id=NULL WHERE workspace=?", workspace);
-        for (UUID id : createdLlmProviders) execute("DELETE FROM llm_provider WHERE id=?", id);
-    }
 }

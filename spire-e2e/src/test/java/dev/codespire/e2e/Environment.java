@@ -99,10 +99,11 @@ public final class Environment {
                 workspace + "/" + slug);
 
         spire.registerScmProvider(SCM_PROVIDER, "http://gitlab/api/v4", workspace, BOT_TOKEN);
-        // Catalogued BEFORE the provider names it: ADR-023's guard refuses a provider whose model is
-        // not priceable, so the reverse order fails at registration.
+        // A provider is a connection; the review model is chosen beside it. Catalogued BEFORE it is chosen:
+        // ADR-023's guard refuses a default model it cannot price, so the reverse order fails there.
         spire.catalogueUnmeteredModel(MODEL, "E2E mock model");
-        spire.registerLlmProvider(LLM_PROVIDER, "http://llm-mock:8080/v1", MODEL);
+        String llmProvider = spire.registerLlmProvider(LLM_PROVIDER, "http://llm-mock:8080/v1");
+        spire.setDefaultLlmModel(llmProvider, MODEL);
 
         // Code context reads source files with its OWN credential, from the context-provider registry.
         // Without it the context stage still runs and still emits ContextAssembled, but assembles

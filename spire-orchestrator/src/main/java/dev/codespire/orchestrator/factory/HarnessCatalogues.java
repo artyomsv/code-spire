@@ -5,6 +5,10 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.command.HarnessImageCommand;
 import dev.codespire.contract.event.HarnessImageResult;
+import dev.codespire.contract.llm.HarnessPolicy;
+import dev.codespire.orchestrator.llm.LlmModelPricer;
+import dev.codespire.orchestrator.llm.catalog.LlmModelCatalog;
+import dev.codespire.orchestrator.llm.catalog.ResolvedModel;
 import dev.codespire.orchestrator.pipeline.KafkaSends;
 import io.quarkus.runtime.StartupEvent;
 import io.quarkus.scheduler.Scheduled;
@@ -21,6 +25,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +49,10 @@ public class HarnessCatalogues {
     @Inject DataSource dataSource;
     @Inject ObjectMapper mapper;
     @Inject FactoryConfig config;
+    /** The offer of a harness that takes its models from the catalog (HarnessPolicy.offersFromCatalog). */
+    @Inject LlmModelCatalog models;
+    /** Whether an API key can pay for an offered model: every type the harness reports is priced. */
+    @Inject LlmModelPricer pricer;
 
     @Inject @Channel("harness-image-commands-out")
     Emitter<HarnessImageCommand> commands;
@@ -140,6 +149,36 @@ public class HarnessCatalogues {
         }
     }
 
+    /** One model a build setup may choose, and whether an API key can pay for it (a seat always can). */
+    public record Offer(HarnessImageResult.Model model, boolean keyPriced) { }
+
+    /**
+     * The models to offer from a read catalogue: the ones the harness runs (its image's list, or the model
+     * catalog for a harness that has none) that the resolver knows and has enabled. {@code keyPriced} says
+     * whether every token type the harness reports is priced, which an API-key setup needs and a seat does not.
+     *
+     * <p>Offering is narrower than admitting on purpose: {@link #admit} still answers for every model the image
+     * runs, so a saved setup whose model left the offer is refused with its own reason, never changed.
+     */
+    public List<Offer> offers(Catalogue catalogue) {
+        if (catalogue.status() != HarnessImageResult.Status.OK) return List.of();
+        List<Offer> offers = new ArrayList<>();
+        for (HarnessImageResult.Model model : catalogue.offered()) {
+            if (knownAndEnabled(model.slug())) {
+                offers.add(new Offer(model, pricer.unpricedTypes(model.slug(), catalogue.harness()).isEmpty()));
+            }
+        }
+        return List.copyOf(offers);
+    }
+
+    private boolean knownAndEnabled(String slug) {
+        try {
+            return models.resolve(slug).map(ResolvedModel::enabled).orElse(false);
+        } catch (LlmModelCatalog.CatalogueReadFailed unreadable) {
+            throw new IllegalStateException("The model catalogue could not be read", unreadable);
+        }
+    }
+
     /**
      * Why this harness cannot run the model at this level, or empty when it can — or when nobody can
      * know, which lets a model through and refuses a level (design §6A.4a).
@@ -196,6 +235,46 @@ public class HarnessCatalogues {
      * asked yet" and "the image declares nothing" send an operator to different places.
      */
     public Optional<Catalogue> get(String harness) {
+        Optional<Catalogue> stored = stored(harness);
+        if (!HarnessPolicy.offersFromCatalog(harness)) return stored;
+        String configured = config.configuredAgentImages().get(harness);
+        if (configured == null) return Optional.empty();
+        Pin pin = stored.map(known -> new Pin(known.image(), known.observedAt(), known.pinnedImage()))
+                .orElseGet(() -> new Pin(configured, Instant.EPOCH, null));
+        return Optional.of(catalogOffer(harness, pin));
+    }
+
+    /** The image, when it was read and its pin: what the run worker last read, else the configured image. */
+    private record Pin(String image, Instant observedAt, String pinnedImage) {
+    }
+
+    /**
+     * A harness whose CLI cannot list its models offers every enabled model of the vendor whose key pays it
+     * (manual models first, then the catalog), in the resolver's order, with no thinking levels. The image
+     * and its pin still come from what the run worker last read, when it has read anything.
+     */
+    private Catalogue catalogOffer(String harness, Pin pin) {
+        List<ResolvedModel> known;
+        try {
+            known = models.effective();
+        } catch (LlmModelCatalog.CatalogueReadFailed unreadable) {
+            // The same failure a lost harness_catalogue read is: callers already refuse on it.
+            throw new IllegalStateException("The model catalogue for " + harness + " could not be read", unreadable);
+        }
+        // A harness with no key kind pays with no vendor's key, so it is offered nothing.
+        String vendor = HarnessPolicy.keyKind(harness).orElse(null);
+        List<HarnessImageResult.Model> offer = new ArrayList<>();
+        for (ResolvedModel model : known) {
+            if (model.enabled() && model.type().equals(vendor)) {
+                offer.add(new HarnessImageResult.Model(model.name(), model.label(), null, List.of(), true, offer.size()));
+            }
+        }
+        return new Catalogue(harness, pin.image(), HarnessImageResult.Status.OK, List.copyOf(offer), pin.observedAt(),
+                pin.pinnedImage());
+    }
+
+    /** What the run worker last read from this harness's configured image, or empty. */
+    private Optional<Catalogue> stored(String harness) {
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
                 "SELECT harness, image, status, models::text, observed_at, pinned_image FROM harness_catalogue WHERE harness=?")) {
             ps.setString(1, harness);

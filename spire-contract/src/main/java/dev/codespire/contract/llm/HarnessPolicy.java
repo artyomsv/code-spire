@@ -31,6 +31,13 @@ public final class HarnessPolicy {
     /** Claude Code reviews only; building with it is not offered yet. */
     private static final Set<String> NO_BUILDS = Set.of("claude_code");
 
+    /**
+     * The harnesses whose model offer comes from the model catalog (manual models first) rather than from a
+     * label on their image: every enabled model of the vendor whose key pays them. Claude Code's CLI has no
+     * command that lists its models, and it runs any Anthropic API model by name.
+     */
+    private static final Set<String> CATALOG_OFFERED = Set.of("claude_code");
+
     /** The refusal every door gives a subscription for a harness that may not use one. */
     public static final String SUBSCRIPTION_NOT_ALLOWED = "subscription_not_allowed";
 
@@ -47,6 +54,11 @@ public final class HarnessPolicy {
     /** Whether a subscription seat may pay this harness. True for an unlisted name. */
     public static boolean allowsSubscription(String harness) {
         return harness == null || !NO_SUBSCRIPTION.contains(normalised(harness));
+    }
+
+    /** Whether this harness's model offer comes from the model catalog. False for an unlisted name. */
+    public static boolean offersFromCatalog(String harness) {
+        return harness != null && CATALOG_OFFERED.contains(normalised(harness));
     }
 
     /** Whether this harness may run a build. True for an unlisted name. */
