@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.repository;
 
 import dev.codespire.contract.llm.HarnessPolicy;
 import dev.codespire.orchestrator.factory.FactoryConfig;
+import dev.codespire.orchestrator.factory.HarnessCatalogues;
 import dev.codespire.orchestrator.llm.LlmDefaultModel;
 import dev.codespire.orchestrator.llm.LlmProviderRegistry;
 import dev.codespire.orchestrator.llm.LlmProviderView;
@@ -20,12 +21,34 @@ public class RepositoryReviewWith {
     @Inject LlmProviderRegistry llmProviders;
     @Inject LlmDefaultModel llmChoice;
     @Inject FactoryConfig factoryConfig;
+    @Inject HarnessCatalogues catalogues;
 
-    /** Every rule of the choice; {@code stored} is the pair saved now, or {@link ReviewLlmChoice#NONE}. */
-    void require(RepositoryInput input, ReviewLlmChoice stored) {
+    /** What the repository holds now: its API pair (or {@link ReviewLlmChoice#NONE}) and its harness (or null). */
+    record Stored(ReviewLlmChoice choice, ReviewHarness harness) {
+        /** A new repository: nothing is stored, so every choice is new. */
+        static final Stored NONE = new Stored(ReviewLlmChoice.NONE, null);
+    }
+
+    /** Every rule of the choice, the offer last so a structural mistake is named first. */
+    void require(RepositoryInput input, Stored stored) {
         requireReviewProvider(input);
         requireReviewHarness(input);
-        requireReviewModel(input, stored);
+        requireReviewModel(input, stored.choice());
+        requireHarnessOffer(input.reviewHarness(), stored.harness());
+    }
+
+    /**
+     * A NEW harness choice names a model the harness runs, and a thinking level that model offers: the check a build
+     * setup's save makes ({@link HarnessCatalogues#refusal}), so a choice that saves is one a review run can admit. A
+     * harness choice saved before is sent back unchanged by every save of another setting and must keep saving, as
+     * the API pair does; the run's own admission still refuses it.
+     */
+    private void requireHarnessOffer(ReviewHarness harness, ReviewHarness stored) {
+        if (harness == null || harness.equals(stored)) return;
+        catalogues.refusal(harness.harness(), harness.model(), harness.effort()).ifPresent(reason -> {
+            throw new IllegalArgumentException("Review with: " + reason + " — choose a model and thinking level the "
+                    + harness.harness() + " harness offers");
+        });
     }
 
     /** Looked up before any write, so an id naming no provider is the caller's mistake (400), not a key violation. */

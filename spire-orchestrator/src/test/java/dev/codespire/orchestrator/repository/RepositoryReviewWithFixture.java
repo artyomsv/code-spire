@@ -4,14 +4,20 @@ import dev.codespire.orchestrator.llm.LlmModelInput;
 import dev.codespire.orchestrator.llm.LlmModelRegistry;
 import dev.codespire.orchestrator.llm.LlmProviderInput;
 import dev.codespire.orchestrator.llm.LlmProviderRegistry;
+import dev.codespire.orchestrator.factory.FactoryConfig;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import java.util.UUID;
 
 /** The repository fixture plus TEST- LLM providers, each with a priced model of its own, for "Review with" tests. */
 abstract class RepositoryReviewWithFixture extends RepositoryFixture {
     @Inject LlmProviderRegistry llmProviders;
     @Inject LlmModelRegistry llmModels;
+    @Inject FactoryConfig factoryConfig;
+
+    /** The harness the review-harness tests choose, by the name the deployment configures it under. */
+    static final String CODEX = "codex";
     final java.util.Set<UUID> createdLlmProviders = new java.util.HashSet<>();
 
     final java.util.Map<UUID, String> modelOf = new java.util.HashMap<>();
@@ -50,5 +56,27 @@ abstract class RepositoryReviewWithFixture extends RepositoryFixture {
         llmModels.create(new LlmModelInput("anthropic", model, model, "UNMETERED", java.util.Map.of(),
                 null, null, null, null, true, java.util.List.of()));
         return model;
+    }
+
+    /**
+     * What the codex image runs, as its run worker would report it: TEST-model at low, medium and high, and
+     * TEST-other-model with no levels. A harness choice is checked against this list when it is saved.
+     */
+    @BeforeEach void codexOffersTestModels() throws Exception {
+        execute("""
+                INSERT INTO harness_catalogue (harness, image, status, models, observed_at, pinned_image, asked_at)
+                VALUES (?, ?, 'OK', CAST(? AS jsonb), now(), NULL, now())
+                ON CONFLICT (harness) DO UPDATE SET image = excluded.image, status = excluded.status,
+                       models = excluded.models, pinned_image = excluded.pinned_image""",
+                CODEX, factoryConfig.configuredAgentImages().get(CODEX), CODEX_MODELS);
+    }
+
+    private static final String CODEX_MODELS = "[{\"slug\":\"TEST-model\",\"displayName\":\"TEST-model\","
+            + "\"defaultEffort\":\"medium\",\"efforts\":[\"low\",\"medium\",\"high\"],\"visible\":true,\"priority\":1},"
+            + "{\"slug\":\"TEST-other-model\",\"displayName\":\"TEST-other-model\",\"defaultEffort\":null,"
+            + "\"efforts\":[],\"visible\":true,\"priority\":2}]";
+
+    @AfterEach void removeCodexOffer() throws Exception {
+        execute("DELETE FROM harness_catalogue WHERE harness=?", CODEX);
     }
 }

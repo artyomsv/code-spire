@@ -74,7 +74,7 @@ public class RepositoryRegistry {
     @Transactional
     public RepositoryView create(RepositoryInput raw) {
         RepositoryInput input = normalize(raw);
-        reviewWith.require(input, ReviewLlmChoice.NONE);
+        reviewWith.require(input, RepositoryReviewWith.Stored.NONE);
         UUID id = UUID.randomUUID();
         try (Connection connection = dataSource.getConnection()) {
             insert(connection, id, input);
@@ -90,7 +90,8 @@ public class RepositoryRegistry {
     public RepositoryView update(UUID id, long expectedRevision, RepositoryInput raw) {
         RepositoryInput input = normalize(raw);
         // Read inside this transaction: an unchanged pair is the stored one, not a new choice.
-        reviewWith.require(input, reviewLlmChoice(id).orElse(ReviewLlmChoice.NONE));
+        reviewWith.require(input, new RepositoryReviewWith.Stored(reviewLlmChoice(id).orElse(ReviewLlmChoice.NONE),
+                reviewHarness(id).orElse(null)));
         try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement("""
                 UPDATE repository SET enabled=?, reviewer_may_approve=?, review_llm_provider_id=?, review_llm_model=?,
                        review_harness=?, review_harness_model=?, review_harness_effort=?, review_harness_pay_with=?,

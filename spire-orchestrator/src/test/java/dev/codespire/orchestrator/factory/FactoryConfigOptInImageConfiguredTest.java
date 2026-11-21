@@ -1,7 +1,10 @@
 package dev.codespire.orchestrator.factory;
 
+import dev.codespire.contract.work.PayWith;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
+import dev.codespire.orchestrator.repository.RepositoryInput;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
+import dev.codespire.orchestrator.repository.ReviewHarness;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
@@ -61,12 +64,18 @@ class FactoryConfigOptInImageConfiguredTest {
                 FactoryConfigOptInImageTest.buildDefaultsRefusal(defaults, FactoryConfigOptInImageTest.CLAUDE));
     }
 
-    /** Past every check: the update then finds no such repository, which is the write, not a refusal. */
+    /**
+     * Past every check: the update then finds no such repository, which is the write, not a refusal. The model is one
+     * Claude Code offers (an enabled anthropic model of the TEST catalog), since a new harness choice is checked
+     * against the harness's offer.
+     */
     @Test
     void reviewWithAcceptsIt() {
+        RepositoryInput claudeOnCatalogModel = new RepositoryInput("github", "https://github.com", "TEST-ws",
+                "TEST-opt-in-" + UUID.randomUUID(), true, null, null, true, null,
+                new ReviewHarness(FactoryConfigOptInImageTest.CLAUDE, "TEST-cat-a", null, PayWith.API_KEY));
         RuntimeException outcome = assertThrows(RuntimeException.class,
-                () -> repositories.update(UUID.randomUUID(), 1,
-                        FactoryConfigOptInImageTest.reviewingWith(FactoryConfigOptInImageTest.CLAUDE)));
+                () -> repositories.update(UUID.randomUUID(), 1, claudeOnCatalogModel));
 
         assertInstanceOf(ProviderRegistry.AccountConflict.class, outcome, outcome.getMessage());
     }
