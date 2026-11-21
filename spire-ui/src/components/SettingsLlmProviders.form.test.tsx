@@ -14,6 +14,7 @@ import { catalogView } from '../test/catalogFixtures';
 beforeEach(() => {
   vi.spyOn(api, 'fetchLlmCatalog').mockResolvedValue(catalogView());
   vi.spyOn(api, 'fetchLlmDefaultModel').mockResolvedValue({ provider: null, model: null });
+  vi.spyOn(api, 'fetchHarnessCredentials').mockResolvedValue([]);
 });
 
 const renderPage = (wrapper = queryWrapper()) =>

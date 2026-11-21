@@ -86,3 +86,47 @@ describe('SettingsLlmProviders — models by provider', () => {
     expect(within(dialog).getByRole('combobox', { name: 'Type' })).toHaveTextContent('anthropic');
   });
 });
+
+describe('SettingsLlmProviders — a vendor used only through harness keys', () => {
+  const harnessKey = (type: string): api.HarnessCredentialView => ({
+    id: `TEST-key-${type}`, label: 'TEST-key', type, baseUrl: 'https://example.invalid', enabled: true,
+    rateLimitedUntil: null, rejectedAt: null, lastUsedAt: null,
+  });
+
+  beforeEach(() => {
+    vi.mocked(api.fetchLlmProviders).mockResolvedValue([PROVIDERS[0]]);
+    vi.mocked(api.fetchLlmModels).mockResolvedValue([
+      manualModel({ id: 'TEST-m4', name: 'TEST-anth', label: 'TEST anthropic manual', type: 'anthropic' }),
+    ]);
+  });
+
+  it('gets its own tab, where its manual model keeps Edit and Delete', async () => {
+    vi.spyOn(api, 'fetchHarnessCredentials').mockResolvedValue([harnessKey('anthropic')]);
+    renderLlmSettings();
+
+    fireEvent.click(within(await tabList()).getByRole('tab', { name: 'anthropic (harness keys)' }));
+
+    const row = (await screen.findByText('TEST-anth')).closest('tr') as HTMLElement;
+    await waitFor(() => expect(within(row).getByRole('button', { name: 'Edit' })).toBeEnabled());
+    expect(within(row).getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /add model/i }));
+    const dialog = await screen.findByRole('dialog', { name: 'Add model' });
+    expect(within(dialog).getByRole('combobox', { name: 'Type' })).toHaveTextContent('anthropic');
+  });
+
+  it('a vendor with neither an API provider nor a harness key stays hidden', async () => {
+    vi.spyOn(api, 'fetchHarnessCredentials').mockResolvedValue([]);
+    renderLlmSettings();
+
+    const tabs = within(await tabList()).getAllByRole('tab');
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['TEST-openai-a']);
+  });
+
+  it('a failed read of the harness keys still shows the API-provider tabs', async () => {
+    vi.spyOn(api, 'fetchHarnessCredentials').mockRejectedValue(new Error('TEST-keys down'));
+    renderLlmSettings();
+
+    const tabs = within(await tabList()).getAllByRole('tab');
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['TEST-openai-a']);
+  });
+});

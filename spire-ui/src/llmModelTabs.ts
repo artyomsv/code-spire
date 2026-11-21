@@ -1,9 +1,11 @@
-import type { LlmProviderView, LlmType } from './api';
+import type { HarnessCredentialView, LlmProviderView, LlmType } from './api';
 
-/** One tab of Settings → LLM → Models: a vendor type that has a registered provider. */
+const VENDORS: readonly string[] = ['openai', 'anthropic', 'gemini'];
+
+/** One tab of Settings → LLM → Models: a vendor type that has a registered API provider or harness key. */
 export interface ModelTab {
   type: LlmType;
-  /** The providers of that type, by name, joined with " / ". */
+  /** The API providers of that type, by name, joined with " / "; "<type> (harness keys)" when it has only those. */
   label: string;
 }
 
@@ -16,17 +18,22 @@ export interface TabbedRow {
 }
 
 /**
- * One tab per vendor type among the registered providers (a model belongs to a type, not to a provider row). The
- * default provider's type comes first, then the rest by label.
+ * One tab per vendor type among the registered API providers and harness keys (a model belongs to a type, not to a
+ * provider row): a vendor used only through a harness key, such as an Anthropic key for Claude Code, keeps its models
+ * reachable. The default provider's type comes first, then the rest by label.
  */
-export function modelTabs(providers: LlmProviderView[]): ModelTab[] {
+export function modelTabs(providers: LlmProviderView[], credentials: HarnessCredentialView[] = []): ModelTab[] {
   const names = new Map<LlmType, string[]>();
   for (const provider of providers) names.set(provider.type, [...(names.get(provider.type) ?? []), provider.name]);
+  const tabs: ModelTab[] = [...names.entries()].map(([type, list]) => ({ type, label: list.join(' / ') }));
+  for (const type of new Set(credentials.map((credential) => credential.type))) {
+    if (VENDORS.includes(type) && !names.has(type as LlmType)) {
+      tabs.push({ type: type as LlmType, label: `${type} (harness keys)` });
+    }
+  }
   const defaultType = providers.find((p) => p.isDefault)?.type;
-  return [...names.entries()]
-    .map(([type, list]) => ({ type, label: list.join(' / ') }))
-    .sort((a, b) => Number(b.type === defaultType) - Number(a.type === defaultType)
-      || a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+  return tabs.sort((a, b) => Number(b.type === defaultType) - Number(a.type === defaultType)
+    || a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
 }
 
 /** The tab a wanted type names, or the first tab when it names none (missing, or its providers are gone). */

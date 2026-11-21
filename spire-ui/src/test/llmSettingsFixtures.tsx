@@ -19,6 +19,7 @@ export const renderLlmSettings = (wrapper = queryWrapper()) =>
 export function stubLlmSettingsReads() {
   vi.spyOn(api, 'fetchLlmCatalog').mockResolvedValue(catalogView());
   vi.spyOn(api, 'fetchLlmDefaultModel').mockResolvedValue({ provider: null, model: null });
+  vi.spyOn(api, 'fetchHarnessCredentials').mockResolvedValue([]);
 }
 
 export const llmProvider = (over: Partial<api.LlmProviderView> = {}): api.LlmProviderView => ({

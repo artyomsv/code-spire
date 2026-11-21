@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { chosenTab, modelTabs, rowsOfTab } from './llmModelTabs';
+import type { HarnessCredentialView } from './api';
 import { llmProvider } from './test/llmSettingsFixtures';
 
 const PROVIDERS = [
@@ -52,5 +53,27 @@ describe('rowsOfTab', () => {
 
     expect(rowsOfTab(rows, 'anthropic').map((r) => `${r.name}:${r.manual ? 'manual' : 'catalog'}`)).toEqual([
       'TEST-opus-4-8:manual', 'TEST-opus-5-5:manual', 'TEST-opus-5-5:catalog']);
+  });
+});
+
+const harnessKey = (type: string): HarnessCredentialView => ({
+  id: `TEST-key-${type}`, label: 'TEST-key', type, baseUrl: 'https://example.invalid', enabled: true,
+  rateLimitedUntil: null, rejectedAt: null, lastUsedAt: null,
+});
+
+describe('modelTabs with harness keys', () => {
+  const OPENAI = [llmProvider({ id: 'TEST-p1', name: 'TEST-openai', type: 'openai', isDefault: true })];
+
+  it('adds a tab for a vendor used only through harness keys', () => {
+    expect(modelTabs(OPENAI, [harnessKey('anthropic')])).toEqual([
+      { type: 'openai', label: 'TEST-openai' },
+      { type: 'anthropic', label: 'anthropic (harness keys)' },
+    ]);
+  });
+
+  it('adds no second tab for a vendor that has an API provider, and none for an unknown kind', () => {
+    expect(modelTabs(OPENAI, [harnessKey('openai'), harnessKey('TEST-unknown')])).toEqual([
+      { type: 'openai', label: 'TEST-openai' },
+    ]);
   });
 });
