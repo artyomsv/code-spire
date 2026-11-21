@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.llm;
 
 import dev.codespire.encryption.EncryptionService;
+import dev.codespire.orchestrator.settings.AppSettingRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
@@ -10,7 +11,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -35,8 +35,9 @@ public class LlmProviderRegistry {
     @Inject
     dev.codespire.orchestrator.attention.AttentionBroadcaster attention;
 
+    /** The default model lives beside the default provider; a default change writes both on one connection. */
     @Inject
-    LlmModelRegistry models;
+    AppSettingRepository appSettings;
 
     // ---- reads (API) -------------------------------------------------------
 
@@ -46,7 +47,7 @@ public class LlmProviderRegistry {
              PreparedStatement ps = c.prepareStatement("SELECT * FROM llm_provider ORDER BY created_at");
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
-                out.add(toView(rs));
+                out.add(LlmProviderRows.toView(rs));
             }
             return out;
         } catch (SQLException e) {
@@ -59,7 +60,7 @@ public class LlmProviderRegistry {
              PreparedStatement ps = c.prepareStatement("SELECT * FROM llm_provider WHERE id = ?")) {
             ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(toView(rs)) : Optional.empty();
+                return rs.next() ? Optional.of(LlmProviderRows.toView(rs)) : Optional.empty();
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to load LLM provider " + id, e);
@@ -68,63 +69,80 @@ public class LlmProviderRegistry {
 
     // ---- writes (API) ------------------------------------------------------
 
+    /**
+     * Register a provider: a connection, with no model. The first provider becomes the default provider, and the
+     * operator then picks its model. A provider created with {@code isDefault} replaces the default in the same
+     * transaction: with {@code defaultModel} the model is written beside it (the caller has checked the choice),
+     * without one the old default's model is cleared, so no review spends a model chosen for another provider.
+     *
+     * @throws IllegalArgumentException when {@code isDefault} would replace an enabled default and no
+     *         {@code defaultModel} is given
+     */
     @Transactional
     public LlmProviderView create(LlmProviderInput in) {
-        requirePriceableModel(in.model());
         UUID id = UUID.randomUUID();
         String apiKey = require(in.apiKey(), "apiKey");
+        boolean asked = Boolean.TRUE.equals(in.isDefault());
         try (Connection c = dataSource.getConnection()) {
+            LlmDefaultModel.lockDefaultPair(c);
+            if (asked && in.defaultModel() == null && LlmProviderRows.hasEnabledDefault(c)) {
+                throw new IllegalArgumentException("A default provider exists; send defaultModel with isDefault, so the"
+                        + " default provider and its model change together.");
+            }
             // First provider is auto-defaulted; else honor the flag. Only one default.
-            boolean makeDefault = Boolean.TRUE.equals(in.isDefault()) || isEmpty(c);
+            boolean makeDefault = asked || LlmProviderRows.isEmpty(c);
             if (makeDefault) {
-                clearDefault(c);
+                LlmProviderRows.clearDefault(c);
+                replaceDefaultModel(c, asked ? in.defaultModel() : null);
             }
-            try (PreparedStatement ps = c.prepareStatement("""
-                    INSERT INTO llm_provider (id, name, type, base_url, api_key, model, temperature,
-                            max_tokens, enabled, is_default)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """)) {
-                ps.setObject(1, id);
-                ps.setString(2, in.name());
-                ps.setString(3, in.type());
-                ps.setString(4, in.baseUrl());
-                ps.setString(5, encryption.encryptString(apiKey, aad(id)));
-                ps.setString(6, in.model());
-                ps.setDouble(7, temperatureOf(in));
-                setIntOrNull(ps, 8, in.maxTokens());
-                ps.setBoolean(9, in.enabled() == null || in.enabled());
-                ps.setBoolean(10, makeDefault);
-                ps.executeUpdate();
-            }
+            LlmProviderRows.insert(c, new LlmProviderRows.NewRow(id, in,
+                    encryption.encryptString(apiKey, LlmProviderRows.aad(id)), makeDefault));
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to create LLM provider", e);
         }
+        attention.refresh();
         return get(id).orElseThrow();
     }
 
-    /** Update everything except the default flag (managed via {@link #setDefault}). */
+    private void replaceDefaultModel(Connection c, String model) throws SQLException {
+        if (model == null) {
+            appSettings.delete(c, LlmDefaultModel.KEY);
+        } else {
+            LlmDefaultModel.write(c, model);
+        }
+    }
+
+    /**
+     * Update everything except the type and the default flag (the default changes through
+     * {@link LlmDefaultModel#setDefaultProvider}, with its model).
+     *
+     * @throws IllegalArgumentException when the type would change: the models chosen for this provider are of its
+     *         vendor, so another vendor is another provider
+     */
     @Transactional
     public Optional<LlmProviderView> update(UUID id, LlmProviderInput in) {
-        requirePriceableModel(in.model());
         try (Connection c = dataSource.getConnection()) {
-            if (!exists(c, id)) {
+            LlmDefaultModel.lockDefaultPair(c);
+            Optional<String> storedType = LlmProviderRows.typeOf(c, id);
+            if (storedType.isEmpty()) {
                 return Optional.empty();
             }
+            if (!storedType.orElseThrow().equals(in.type())) {
+                throw new IllegalArgumentException("Provider type cannot change; create a new provider for another vendor.");
+            }
             boolean rotateKey = in.apiKey() != null && !in.apiKey().isBlank();
-            String sql = "UPDATE llm_provider SET name=?, type=?, base_url=?, model=?, temperature=?, "
+            String sql = "UPDATE llm_provider SET name=?, base_url=?, temperature=?, "
                     + "max_tokens=?, enabled=?, updated_at=now()"
                     + (rotateKey ? ", api_key=?" : "") + " WHERE id=?";
             try (PreparedStatement ps = c.prepareStatement(sql)) {
                 ps.setString(1, in.name());
-                ps.setString(2, in.type());
-                ps.setString(3, in.baseUrl());
-                ps.setString(4, in.model());
-                ps.setDouble(5, temperatureOf(in));
-                setIntOrNull(ps, 6, in.maxTokens());
-                ps.setBoolean(7, in.enabled() == null || in.enabled());
-                int idx = 8;
+                ps.setString(2, in.baseUrl());
+                ps.setDouble(3, LlmProviderRows.temperatureOf(in));
+                LlmProviderRows.setIntOrNull(ps, 4, in.maxTokens());
+                ps.setBoolean(5, in.enabled() == null || in.enabled());
+                int idx = 6;
                 if (rotateKey) {
-                    ps.setString(idx++, encryption.encryptString(in.apiKey(), aad(id)));
+                    ps.setString(idx++, encryption.encryptString(in.apiKey(), LlmProviderRows.aad(id)));
                 }
                 ps.setObject(idx, id);
                 ps.executeUpdate();
@@ -132,26 +150,35 @@ public class LlmProviderRegistry {
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to update LLM provider " + id, e);
         }
+        attention.refresh();
         return get(id);
     }
 
-    @Transactional
-    public Optional<LlmProviderView> setDefault(UUID id) {
-        try (Connection c = dataSource.getConnection()) {
-            if (!exists(c, id)) {
-                return Optional.empty();
-            }
-            clearDefault(c);
-            try (PreparedStatement ps = c.prepareStatement(
-                    "UPDATE llm_provider SET is_default = TRUE, updated_at = now() WHERE id = ?")) {
-                ps.setObject(1, id);
-                ps.executeUpdate();
+    /**
+     * Mark a provider the default on the caller's connection, inside the caller's transaction, which also writes the
+     * default model ({@link LlmDefaultModel#setDefaultProvider}). Never on its own: a default provider without its
+     * model would spend the previous default's model, of whatever vendor.
+     */
+    void setDefault(Connection c, UUID id) throws SQLException {
+        LlmProviderRows.clearDefault(c);
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE llm_provider SET is_default = TRUE, updated_at = now() WHERE id = ?")) {
+            ps.setObject(1, id);
+            ps.executeUpdate();
+        }
+    }
+
+    /** The enabled default provider, without its key; empty when none. "A default provider exists" reads this. */
+    public Optional<LlmProviderView> enabledDefault() {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT * FROM llm_provider WHERE is_default = TRUE AND enabled = TRUE")) {
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(LlmProviderRows.toView(rs)) : Optional.empty();
             }
         } catch (SQLException e) {
-            throw new IllegalStateException("Failed to set default LLM provider " + id, e);
+            throw new IllegalStateException("Failed to read the default LLM provider", e);
         }
-        attention.refresh();
-        return get(id);
     }
 
     /**
@@ -162,23 +189,30 @@ public class LlmProviderRegistry {
      * two are ordered: a save committed before the lock is seen by the check and refused here, and a
      * later one waits and then finds the provider gone (a 400 there), never a key violation here.
      *
+     * <p>Deleting the default provider clears the default model in the same transaction: the model was chosen for
+     * this provider's vendor, and while it stays set the model-in-use guard would keep it from being deleted.
+     *
      * @throws ProviderInUse when a repository names this provider; nothing is deleted
      */
     @Transactional
     public boolean delete(UUID id) {
         try (Connection c = dataSource.getConnection()) {
-            try (PreparedStatement lock = c.prepareStatement("SELECT 1 FROM llm_provider WHERE id = ? FOR UPDATE")) {
-                lock.setObject(1, id);
-                lock.executeQuery().close();
-            }
-            List<String> naming = repositoriesNaming(c, id);
+            LlmDefaultModel.lockDefaultPair(c);
+            boolean wasDefault = LlmProviderRows.lockIsDefault(c, id);
+            List<String> naming = LlmProviderRows.repositoriesNaming(c, id);
             if (!naming.isEmpty()) {
                 throw new ProviderInUse(naming);
             }
+            boolean deleted;
             try (PreparedStatement ps = c.prepareStatement("DELETE FROM llm_provider WHERE id = ?")) {
                 ps.setObject(1, id);
-                return ps.executeUpdate() > 0;
+                deleted = ps.executeUpdate() > 0;
             }
+            if (wasDefault) {
+                appSettings.delete(c, LlmDefaultModel.KEY);
+            }
+            attention.refresh();
+            return deleted;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to delete LLM provider " + id, e);
         }
@@ -189,20 +223,6 @@ public class LlmProviderRegistry {
         public ProviderInUse(List<String> repositories) {
             super("This LLM provider is used by repositories: " + String.join(", ", repositories)
                     + ". Choose another provider in their settings first, or switch this one off.");
-        }
-    }
-
-    private static List<String> repositoriesNaming(Connection c, UUID id) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT workspace || '/' || slug FROM repository"
-                + " WHERE review_llm_provider_id = ? ORDER BY workspace, slug")) {
-            ps.setObject(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                List<String> out = new ArrayList<>();
-                while (rs.next()) {
-                    out.add(rs.getString(1));
-                }
-                return out;
-            }
         }
     }
 
@@ -230,13 +250,38 @@ public class LlmProviderRegistry {
 
     // ---- resolution (internal — carries the decrypted key) -----------------
 
+    /** The enabled default provider, key decrypted, with the default review model (null when none is chosen). */
+    public record ResolvedDefault(LlmProviderConfig provider, String model) {
+    }
+
+    /**
+     * The default provider and the default review model in one statement, so a review never pairs one committed
+     * default's provider with another's model. A database fault throws, so the review is redelivered rather than
+     * refused for a hiccup.
+     */
+    public Optional<ResolvedDefault> resolveDefaultWithModel() {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT p.*, s.value AS default_model FROM llm_provider p"
+                     + " LEFT JOIN app_setting s ON s.key = ? WHERE p.is_default = TRUE AND p.enabled = TRUE")) {
+            ps.setString(1, LlmDefaultModel.KEY);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                return Optional.of(new ResolvedDefault(LlmProviderRows.decrypted(rs, encryption), rs.getString("default_model")));
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to resolve the default LLM provider and model", e);
+        }
+    }
+
     /** The global default, enabled provider with its key decrypted; empty when none is set. */
     public Optional<LlmProviderConfig> resolveDefault() {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
                      "SELECT * FROM llm_provider WHERE is_default = TRUE AND enabled = TRUE")) {
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(decrypted(rs)) : Optional.empty();
+                return rs.next() ? Optional.of(LlmProviderRows.decrypted(rs, encryption)) : Optional.empty();
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to resolve the default LLM provider", e);
@@ -249,7 +294,7 @@ public class LlmProviderRegistry {
              PreparedStatement ps = c.prepareStatement("SELECT * FROM llm_provider WHERE id = ?")) {
             ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(decrypted(rs)) : Optional.empty();
+                return rs.next() ? Optional.of(LlmProviderRows.decrypted(rs, encryption)) : Optional.empty();
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to resolve LLM provider " + id, e);
@@ -257,89 +302,6 @@ public class LlmProviderRegistry {
     }
 
     // ---- helpers -----------------------------------------------------------
-
-    /**
-     * A provider may only name a model the catalog can price. Enforced HERE rather than only at the REST
-     * edge because this is the invariant's real boundary: a caller that bypasses the resource — a seeder,
-     * an import, a test — would otherwise create a provider whose every call lands in the ledger unpriced.
-     * The saga keeps its own pre-spend check regardless: pricing is post-hoc, so that is the last point at
-     * which an unpriceable review can still be refused rather than merely reported.
-     */
-    private void requirePriceableModel(String model) {
-        if (!models.isPriceable(model)) {
-            throw new IllegalArgumentException("Model '" + model + "' is not in the catalog with usable"
-                    + " pricing. Add it under Settings -> LLM -> Models first, with a rate for input and"
-                    + " output tokens — or mark it UNMETERED if it is self-hosted and costs nothing.");
-        }
-    }
-
-    private LlmProviderConfig decrypted(ResultSet rs) throws SQLException {
-        UUID id = rs.getObject("id", UUID.class);
-        return new LlmProviderConfig(id, rs.getString("name"), rs.getString("type"),
-                rs.getString("base_url"),
-                encryption.decryptString(rs.getString("api_key"), aad(id)),
-                rs.getString("model"), rs.getDouble("temperature"), intOrNull(rs, "max_tokens"),
-                rs.getBoolean("enabled"), rs.getBoolean("is_default"));
-    }
-
-    private LlmProviderView toView(ResultSet rs) throws SQLException {
-        String key = rs.getString("api_key");
-        return new LlmProviderView(
-                rs.getObject("id", UUID.class).toString(),
-                rs.getString("name"), rs.getString("type"), rs.getString("base_url"),
-                rs.getString("model"), rs.getDouble("temperature"), intOrNull(rs, "max_tokens"),
-                key != null && !key.isBlank(),
-                rs.getBoolean("enabled"), rs.getBoolean("is_default"),
-                rs.getTimestamp("created_at").toInstant(),
-                rs.getTimestamp("last_check_at") == null
-                        ? null : rs.getTimestamp("last_check_at").toInstant(),
-                rs.getObject("last_check_ok", Boolean.class),
-                rs.getString("last_check_error"));
-    }
-
-    private void clearDefault(Connection c) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement(
-                "UPDATE llm_provider SET is_default = FALSE, updated_at = now() WHERE is_default = TRUE")) {
-            ps.executeUpdate();
-        }
-    }
-
-    private boolean exists(Connection c, UUID id) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM llm_provider WHERE id = ?")) {
-            ps.setObject(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
-            }
-        }
-    }
-
-    private boolean isEmpty(Connection c) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM llm_provider LIMIT 1");
-             ResultSet rs = ps.executeQuery()) {
-            return !rs.next();
-        }
-    }
-
-    private static double temperatureOf(LlmProviderInput in) {
-        return in.temperature() == null ? 0.2 : in.temperature();
-    }
-
-    private static void setIntOrNull(PreparedStatement ps, int idx, Integer value) throws SQLException {
-        if (value == null) {
-            ps.setNull(idx, Types.INTEGER);
-        } else {
-            ps.setInt(idx, value);
-        }
-    }
-
-    private static Integer intOrNull(ResultSet rs, String col) throws SQLException {
-        int v = rs.getInt(col);
-        return rs.wasNull() ? null : v;
-    }
-
-    private static String aad(UUID id) {
-        return "llm-provider:" + id;
-    }
 
     private static String require(String value, String field) {
         if (value == null || value.isBlank()) {

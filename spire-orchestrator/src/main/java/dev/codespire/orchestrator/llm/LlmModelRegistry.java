@@ -6,6 +6,9 @@ import dev.codespire.contract.llm.ModelParamProfile;
 import dev.codespire.contract.llm.ModelParamProfile.OutputTokenParam;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.TokenType;
+import dev.codespire.orchestrator.llm.catalog.LlmModelCatalog;
+import dev.codespire.orchestrator.llm.catalog.ModelSource;
+import dev.codespire.orchestrator.llm.catalog.ResolvedModel;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
@@ -17,6 +20,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -46,6 +50,13 @@ public class LlmModelRegistry {
     @Inject
     LlmModelPricer pricer;
 
+    @Inject
+    LlmModelCatalog catalog;
+
+    /**
+     * The effective list: every manual model, plus every catalog model no manual model shadows, one row
+     * per name, by type then name. Pickers and the build-setup guard read this and never see a name twice.
+     */
     public List<LlmModelView> list() {
         List<LlmModelView> out = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
@@ -54,10 +65,12 @@ public class LlmModelRegistry {
             while (rs.next()) {
                 out.add(toView(c, rs));
             }
-            return out;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to list LLM models", e);
         }
+        out.addAll(CatalogModelViews.unshadowed(catalog.snapshot(), out));
+        out.sort(Comparator.comparing(LlmModelView::type).thenComparing(LlmModelView::name));
+        return out;
     }
 
     public Optional<LlmModelView> get(UUID id) {
@@ -108,11 +121,11 @@ public class LlmModelRegistry {
         PricingMode mode = validated.mode();
         Map<TokenType, ModelRate> rates = validated.rates();
         try (Connection c = dataSource.getConnection()) {
-            String existingName = nameOf(c, id);
-            if (existingName == null) {
+            ModelUses.ManualRow existing = ModelUses.manualRow(c, id);
+            if (existing == null) {
                 return Optional.empty();
             }
-            requireRenameIsSafe(c, existingName, in.name());
+            requireChangeIsSafe(c, existing, in);
             try (PreparedStatement ps = c.prepareStatement("""
                     UPDATE llm_model SET type=?, name=?, label=?, pricing_mode=?, output_token_param=?,
                             supports_temperature=?, reasoning_effort=?, extra_params=?, enabled=?,
@@ -140,17 +153,21 @@ public class LlmModelRegistry {
     @Transactional
     public boolean delete(UUID id) {
         try (Connection c = dataSource.getConnection()) {
-            String name = nameOf(c, id);
-            if (name == null) {
+            ModelUses.ManualRow existing = ModelUses.manualRow(c, id);
+            if (existing == null) {
                 return false;
             }
-            // Without this, the save-time guard that a provider's model must be catalogued is
-            // defeated after the fact: deleting the entry leaves the provider pointing at nothing
-            // and every call it makes unpriceable.
-            int users = countProvidersUsing(c, name);
-            if (users > 0) {
-                throw new ModelInUseException("Model '" + name + "' is in use by " + users
-                        + " LLM provider(s). Point them at another model first.");
+            // Without this, deleting a chosen model leaves the default or a repository pointing at nothing, and every
+            // review on it unpriceable. "Use catalog": a manual model that shadows an enabled, priced catalog entry of
+            // the same vendor may go while in use, because its name still resolves (to that entry) after the delete.
+            // Not serialised against a concurrent setting or repository save: the review path (the pricing refusal)
+            // and the attention rows are the backstop for that race (spec section 6).
+            // Another manual row answering to one of the entry's names would win instead of the catalog entry.
+            boolean catalogTakesOver = CatalogModelViews.stillResolvesAfterDelete(catalog.snapshot(), existing.name(),
+                    existing.type()) && !ModelUses.anotherManualAnswers(c,
+                    ModelUses.namesAnsweredTo(catalog.snapshot(), existing.name()), id);
+            if (!catalogTakesOver) {
+                requireUnused(c, existing.name(), ". Choose another model there first.");
             }
             try (PreparedStatement ps = c.prepareStatement("DELETE FROM llm_model WHERE id = ?")) {
                 ps.setObject(1, id);
@@ -176,20 +193,30 @@ public class LlmModelRegistry {
      */
     public boolean isDisabled(String model) {
         if (model == null || model.isBlank()) return false;
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement("SELECT enabled FROM llm_model WHERE name = ?")) {
-            ps.setString(1, model);
-            try (ResultSet rs = ps.executeQuery()) {
-                // A model the catalogue does not have is NOT "disabled": it has no rates either, and the
-                // pricing guard already refuses it with the types it cannot price. Answering true here
-                // would replace that precise refusal with a switched-off message for a typo.
-                return rs.next() && !rs.getBoolean("enabled");
-            }
-        } catch (SQLException failure) {
+        try {
+            // A model nobody has is NOT "disabled": it has no rates either, and the pricing guard already
+            // refuses it with the types it cannot price. Answering true here would replace that precise
+            // refusal with a switched-off message for a typo. A RETIRED catalog model is disabled.
+            return catalog.resolve(model).map(resolved -> !resolved.enabled()).orElse(false);
+        } catch (LlmModelCatalog.CatalogueReadFailed failure) {
             // NOT false. Answering "not switched off" on a failed read is failing open: pricing ignores
             // the enabled column on purpose, so a fully priced model an operator had switched off would
             // start a run on any database hiccup. The caller refuses with a reason that says what happened.
             LOG.warnf(failure, "Could not read whether model %s is enabled", model);
+            throw new CatalogueUnavailable();
+        }
+    }
+
+    /**
+     * Whether this name resolves (manual first, then the catalog, by model id or alias) to an enabled model.
+     * A read fault is {@link CatalogueUnavailable}, never an answer.
+     */
+    public boolean isKnownAndEnabled(String model) {
+        if (model == null || model.isBlank()) return false;
+        try {
+            return catalog.resolve(model).map(ResolvedModel::enabled).orElse(false);
+        } catch (LlmModelCatalog.CatalogueReadFailed failure) {
+            LOG.warnf(failure, "Could not read whether model %s is known", model);
             throw new CatalogueUnavailable();
         }
     }
@@ -213,22 +240,9 @@ public class LlmModelRegistry {
         if (name == null || name.isBlank()) {
             return Optional.empty();
         }
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement(
-                     "SELECT output_token_param, supports_temperature, reasoning_effort, extra_params "
-                             + "FROM llm_model WHERE name = ?")) {
-            ps.setString(1, name);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    return Optional.empty();
-                }
-                return Optional.of(new ModelParamProfile(
-                        parseTokenParam(rs.getString("output_token_param")),
-                        rs.getBoolean("supports_temperature"),
-                        rs.getString("reasoning_effort"),
-                        readExtra(rs.getString("extra_params"))));
-            }
-        } catch (SQLException e) {
+        try {
+            return catalog.resolve(name).map(ResolvedModel::profile);
+        } catch (LlmModelCatalog.CatalogueReadFailed e) {
             LOG.warnf(e, "profile lookup failed for model %s", name);
             return Optional.empty();
         }
@@ -237,38 +251,23 @@ public class LlmModelRegistry {
     // ---- helpers -----------------------------------------------------------
 
     /**
-     * {@code llm_provider.model} is a bare string reference, not a foreign key, so renaming a
-     * catalogued model out from under a referencing provider would orphan it exactly as deleting the
-     * model would — {@link #delete} already guards that; a rename needs the same guard. Only the
-     * name is load-bearing here: every other field stays freely editable while the model is in use.
+     * A chosen model is referenced by name ({@link ModelUses}), so renaming it orphans the choice exactly as deleting it
+     * would, and changing its type makes the choice a model of another vendor than its provider. Every other field
+     * stays freely editable while the model is in use. Not serialised against a concurrent setting or repository save;
+     * the review path and the attention rows are the backstop (spec section 6).
      */
-    private void requireRenameIsSafe(Connection c, String existingName, String newName) throws SQLException {
-        if (existingName.equals(newName)) {
-            return;
-        }
-        int users = countProvidersUsing(c, existingName);
-        if (users > 0) {
-            throw new ModelInUseException("Model '" + existingName + "' is in use by " + users
-                    + " LLM provider(s). Point them at another model first, then rename it.");
+    private void requireChangeIsSafe(Connection c, ModelUses.ManualRow existing, LlmModelInput in) throws SQLException {
+        if (!existing.name().equals(in.name())) {
+            requireUnused(c, existing.name(), ". Choose another model there first, then rename it.");
+        } else if (!existing.type().equals(in.type())) {
+            requireUnused(c, existing.name(), ". Choose another model there first, then change its type.");
         }
     }
 
-    private String nameOf(Connection c, UUID id) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT name FROM llm_model WHERE id = ?")) {
-            ps.setObject(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? rs.getString("name") : null;
-            }
-        }
-    }
-
-    private int countProvidersUsing(Connection c, String name) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement(
-                "SELECT count(*) FROM llm_provider WHERE model = ?")) {
-            ps.setString(1, name);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? rs.getInt(1) : 0;
-            }
+    private void requireUnused(Connection c, String name, String fix) throws SQLException {
+        List<String> uses = ModelUses.of(c, catalog.snapshot(), name);
+        if (!uses.isEmpty()) {
+            throw new ModelInUseException("Model '" + name + "' is in use by " + String.join(", ", uses) + fix);
         }
     }
 
@@ -287,7 +286,8 @@ public class LlmModelRegistry {
                 rs.getBoolean("supports_temperature"),
                 rs.getString("reasoning_effort"),
                 readExtra(rs.getString("extra_params")),
-                rs.getBoolean("enabled"), rs.getTimestamp("created_at").toInstant(), List.copyOf(notBilled));
+                rs.getBoolean("enabled"), rs.getTimestamp("created_at").toInstant(), List.copyOf(notBilled),
+                ModelSource.MANUAL.name());
     }
 
     /** Normalize an operator-supplied token-param name to a valid enum name (default MAX_TOKENS). */
@@ -295,7 +295,8 @@ public class LlmModelRegistry {
         return parseTokenParam(raw).name();
     }
 
-    private static OutputTokenParam parseTokenParam(String raw) {
+    /** A stored token-param name as the enum; MAX_TOKENS when blank or unknown. */
+    public static OutputTokenParam parseTokenParam(String raw) {
         if (raw == null || raw.isBlank()) {
             return OutputTokenParam.MAX_TOKENS;
         }

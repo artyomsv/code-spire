@@ -54,7 +54,7 @@ describe('PromptSamplePicker', () => {
     const preview = vi.spyOn(api, 'previewPrompt').mockResolvedValue(annotatedPreview());
     renderWithQuery(<PromptSamplePicker kind="review" system="s" body="b" />);
 
-    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
 
     await waitFor(() => expect(preview).toHaveBeenCalledWith('review', 's', 'b', undefined, api.GLOBAL_SCOPE));
   });
@@ -74,7 +74,7 @@ describe('PromptSamplePicker', () => {
     const option = await screen.findByRole('option', { name: 'TEST-WS/TEST-REPO#7' });
     fireEvent.click(option);
 
-    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
 
     await waitFor(() => expect(preview).toHaveBeenCalledWith(
       'review', 's', 'b', 'review::TEST-WS/TEST-REPO#7', api.GLOBAL_SCOPE,
@@ -92,7 +92,7 @@ describe('PromptSamplePicker', () => {
     const preview = vi.spyOn(api, 'previewPrompt').mockResolvedValue(annotatedPreview());
     renderWithQuery(<PromptSamplePicker kind="review" system="s" body="b" scope="acme/widgets" />);
 
-    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
 
     await waitFor(() => expect(preview).toHaveBeenCalledWith('review', 's', 'b', undefined, 'acme/widgets'));
   });
@@ -105,7 +105,7 @@ describe('PromptSamplePicker', () => {
     });
     renderWithQuery(<PromptSamplePicker kind="review" system="s" body="b" />);
 
-    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
 
     expect(await screen.findByText(/diff fetch failed \(404\)/)).toBeInTheDocument();
   });
@@ -117,7 +117,7 @@ describe('PromptSamplePicker', () => {
     const preview = vi.spyOn(api, 'previewPrompt').mockResolvedValue(annotatedPreview());
     renderWithQuery(<PromptSamplePicker kind="review" system="s" body="b" />);
 
-    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
 
     await waitFor(() => expect(preview).toHaveBeenCalledWith('review', 's', 'b', undefined, api.GLOBAL_SCOPE));
   });

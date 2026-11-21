@@ -1,28 +1,20 @@
 #!/usr/bin/env bash
 #
-# Builds the reference Claude Code agent image WITH its model list baked in.
+# Builds the reference Claude Code agent image.
 #
 #   ./deploy/agent/build-claude-code.sh [tag]   # default tag: spire-agent-claude-code:latest
 #
-# One pass, unlike build-codex.sh: Claude Code has no command that prints its model list without a
-# credential, so the list is deploy/agent/claude-code/models.json (the ModelCatalogueLabel short form,
-# written from Anthropic's model list) and exists before the build that carries it.
+# The image carries no model list (no dev.codespire.agent.models label). Claude Code's CLI has no command
+# that prints its models, and it runs any Anthropic API model by name, so the orchestrator offers it the
+# enabled Anthropic models of the model catalog (ai-catalog/v1/catalog.yaml) and of Settings → LLM → Models.
+# A new Claude model is therefore a catalog change, not an image rebuild.
 set -euo pipefail
 
 TAG="${1:-spire-agent-claude-code:latest}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKERFILE="$HERE/claude-code/Dockerfile"
-MODELS_FILE="$HERE/claude-code/models.json"
 
-# One line with no host tool but base64: `-w0` is GNU only, so the wrapped output is joined instead, which GNU,
-# macOS and BSD base64 all produce. The host needs only docker, as before.
-AGENT_MODELS="$(base64 < "$MODELS_FILE" | tr -d '\n')"
-if [ -z "$AGENT_MODELS" ]; then
-  echo "FAILED: $MODELS_FILE is empty; the image would carry no model list." >&2
-  exit 1
-fi
+echo "==> building $TAG"
+docker build -f "$DOCKERFILE" -t "$TAG" "$HERE"
 
-echo "==> building $TAG with the model list from $MODELS_FILE"
-docker build -f "$DOCKERFILE" --build-arg AGENT_MODELS="$AGENT_MODELS" -t "$TAG" "$HERE"
-
-echo "==> done. $TAG carries dev.codespire.agent.models (${#AGENT_MODELS} bytes)"
+echo "==> done. $TAG (its model offer comes from the model catalog)"

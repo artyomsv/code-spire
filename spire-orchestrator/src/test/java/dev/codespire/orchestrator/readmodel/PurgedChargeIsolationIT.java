@@ -89,8 +89,8 @@ class PurgedChargeIsolationIT {
 
     /**
      * The half that makes the assertions above mean something: before the purge, every one of those six
-     * sites reports the ledger. {@code llmType} in particular is read through a subquery NESTED inside a
-     * query over {@code llm_model}, which is the single easiest site to leave unfiltered.
+     * sites reports the ledger. {@code llmType} in particular is resolved from the newest charge's model
+     * name, so it follows that subquery's filter.
      */
     private void assertEverySiteReportsThePurgedReviewsLedger(String id, long pr) {
         ReviewProjection.CostSummary cost = projection.costOf(id);

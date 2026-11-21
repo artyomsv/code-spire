@@ -53,7 +53,7 @@ mutation proofs when changing the source traversal or extracting components. Com
 preserve quoted paths such as `/runs/*`, so a wildcard cannot hide later routes from either guard.
 
 `settingsTables.contract.test.ts` also holds three conventions: every settings file with form controls
-must use `SettingField`, except `FIELD_COMPONENTS` that are themselves one control; a settings screen must not render its own `<form>`; and create and edit
+must use `SettingField` (a native control or the shared `Select` counts), except `FIELD_COMPONENTS` that are themselves one control; a settings screen must not render its own `<form>`; and create and edit
 open in `SidePanel`, anchored to an edge, never a centred `modal-overlay`. That last rule asserts
 the panel component and its stylesheet as well as the screens — reading the screens alone let a
 mutation that gave `SidePanel` the centred overlay class pass every test, because the class lives

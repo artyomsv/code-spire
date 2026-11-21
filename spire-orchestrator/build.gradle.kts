@@ -29,6 +29,7 @@ dependencies {
     implementation(project(":spire-worksource-gitlab"))
     implementation(project(":spire-diff")) // prompt sample preview: render a real review's diff like the worker does
     implementation(project(":spire-llm")) // prompt sample preview: PromptRenderer (real clipping/fencing)
+    implementation(project(":spire-llm-catalog")) // the public model catalog: parse, validate, resolve
     implementation(project(":spire-encryption")) // AES-GCM encryption at rest (ADR-009 / ADR-015)
     implementation(project(":spire-scm-bitbucket")) // read-only: fetch PR metadata for manual register
     implementation(project(":spire-scm-github")) // read-only: fetch PR metadata for manual register
@@ -67,6 +68,14 @@ tasks.test {
     // Recovery tests kill and restart the actual packaged scanner on isolated Dev Services.
     dependsOn("quarkusBuild")
     systemProperty("spire.test.packaged-app", layout.buildDirectory.file("quarkus-app/quarkus-run.jar").get().asFile.absolutePath)
+}
+
+// The bundled model catalog: the copy the app uses before its first fetch, on a new database, and
+// alone when spire.llm.catalog.url is `none`. Read from the classpath as llm-catalog/catalog.yaml.
+tasks.processResources {
+    from(rootProject.file("ai-catalog/v1/catalog.yaml")) {
+        into("llm-catalog")
+    }
 }
 
 // quarkusDev runs with the module dir as CWD, but the single dev-env .env lives

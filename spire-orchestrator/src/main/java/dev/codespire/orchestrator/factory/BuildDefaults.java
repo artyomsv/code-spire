@@ -79,6 +79,14 @@ public class BuildDefaults {
     }
 
     /** A refusal that names its rule, so the screen can say what to change rather than "400". */
+    private boolean knownAndEnabled(String model) {
+        try {
+            return models.isKnownAndEnabled(model);
+        } catch (LlmModelRegistry.CatalogueUnavailable unreadable) {
+            throw new Refused("catalogue_unavailable");
+        }
+    }
+
     public static final class Refused extends RuntimeException {
         private final String reason;
         Refused(String reason) { super(reason); this.reason = reason; }
@@ -139,8 +147,9 @@ public class BuildDefaults {
             // Exactly what the dispatch refuses, asked here: the model must be offered, and it must price
             // every token type this harness can report. A model disabled AFTER this save is refused at
             // dispatch too (WorkRunAssembly), so the two no longer disagree in either direction.
-            if (models.list().stream().noneMatch(known -> known.enabled() && known.name().equals(model)))
-                throw new Refused("model_unknown");
+            // Asked of the resolver, as the harness offer is, so an alias or a manual model shadowing a catalog
+            // entry saves exactly when it is offered. A model table that cannot be read refuses, never passes.
+            if (!knownAndEnabled(model)) throw new Refused("model_unknown");
             var unpriced = pricer.unpricedTypes(model, harness);
             if (!unpriced.isEmpty()) throw new Refused("model_pricing_incomplete:"
                     + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(",")));

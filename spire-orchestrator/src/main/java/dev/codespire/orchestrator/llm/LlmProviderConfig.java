@@ -13,7 +13,6 @@ public record LlmProviderConfig(
         String type,
         String baseUrl,
         String apiKey,
-        String model,
         double temperature,
         Integer maxTokens,
         boolean enabled,

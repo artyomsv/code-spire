@@ -116,6 +116,9 @@ function payloadFor(url: string): unknown {
   // route then looks like one that never mounted -- so an absent fixture reads as a routing fault.
   if (/\/api\/analytics\/(overview|me)$/.test(url)) return emptyLens;
   if (/\/api\/memory\/preferences$/.test(url)) return emptyMemory;
+  // The LLM settings screen reads two OBJECTS: the catalog state and the default review model.
+  if (url === '/api/llm-catalog') return emptyCatalog;
+  if (url === '/api/settings/llm-default-model') return { provider: null, model: null };
   return [];
 }
 
@@ -137,6 +140,19 @@ const emptyLens = {
 };
 
 const emptyMemory = { preferences: [], thresholds: { minEvidence: 10, minDismissedPercent: 70 } };
+
+/** No catalog loaded yet: the state of a new database with remote loading off. */
+const emptyCatalog = {
+  url: null,
+  source: null,
+  sha256: null,
+  loadedAt: null,
+  lastCheckedAt: null,
+  lastSuccessAt: null,
+  lastError: null,
+  lastChange: null,
+  rows: [],
+};
 
 const jsonResponse = (payload: unknown) => ({
   ok: true,

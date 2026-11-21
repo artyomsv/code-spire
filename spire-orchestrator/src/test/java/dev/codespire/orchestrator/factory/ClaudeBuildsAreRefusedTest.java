@@ -11,7 +11,6 @@ import dev.codespire.orchestrator.caps.CapRefusal;
 import dev.codespire.orchestrator.caps.SpendGate;
 import dev.codespire.orchestrator.llm.LlmModelPricer;
 import dev.codespire.orchestrator.llm.LlmModelRegistry;
-import dev.codespire.orchestrator.llm.LlmModelView;
 import dev.codespire.orchestrator.readmodel.FindingProjection;
 import dev.codespire.orchestrator.work.WorkPreparationResource;
 import dev.codespire.orchestrator.work.WorkTestDoors;
@@ -82,9 +81,9 @@ class ClaudeBuildsAreRefusedTest {
             }
         };
         defaults.models = new LlmModelRegistry() {
-            @Override public List<LlmModelView> list() {
+            @Override public boolean isKnownAndEnabled(String model) {
                 reached.add("models");
-                return List.of();
+                return false;
             }
         };
         defaults.pricer = new LlmModelPricer() {

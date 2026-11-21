@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { createLlmModel, updateLlmModel, type LlmModelInput, type LlmModelView, type LlmType } from '../api';
+import { createLlmModel, updateLlmModel, type CatalogModelView, type LlmModelInput, type LlmModelView, type LlmType } from '../api';
+import CatalogModelDetails from './CatalogModelDetails';
 import type { RateType } from '../llmPricing';
 import Select from './Select';
 import SettingsLlmModelDialectFields, { type ApiDialect } from './SettingsLlmModelDialectFields';
@@ -27,14 +28,21 @@ interface ModelIdentity {
 
 interface SettingsLlmModelFormProps {
   initial: LlmModelView | null;
+  /** Every name the model catalog answers to; a manual model with one of them overrides that catalog entry. */
+  catalogNames?: Set<string>;
+  /** A catalog model, shown read-only: {@code initial} is its form shape (catalogAsModel), this its own details. */
+  catalog?: CatalogModelView;
+  /** A new model's type: the vendor tab the list shows. */
+  defaultType?: LlmType;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }
 
-export default function SettingsLlmModelForm({ initial, onClose, onSaved }: SettingsLlmModelFormProps) {
+export default function SettingsLlmModelForm({ initial, catalogNames, catalog, defaultType, onClose, onSaved }: SettingsLlmModelFormProps) {
   const editing = initial !== null;
+  const title = catalog ? catalog.displayName || 'Catalog model' : editing ? 'Edit model' : 'Add model';
   const [identity, setIdentity] = useState<ModelIdentity>({
-    type: initial?.type ?? 'openai',
+    type: initial?.type ?? defaultType ?? 'openai',
     name: initial?.name ?? '',
     label: initial?.label ?? '',
   });
@@ -116,7 +124,7 @@ export default function SettingsLlmModelForm({ initial, onClose, onSaved }: Sett
       enabled: initial?.enabled ?? true,
     };
     try {
-      if (editing && initial) {
+      if (editing && initial?.id) {
         await updateLlmModel(initial.id, input);
       } else {
         await createLlmModel(input);
@@ -131,9 +139,11 @@ export default function SettingsLlmModelForm({ initial, onClose, onSaved }: Sett
 
   return (
     <div className="modal-overlay">
-      <div className="modal tall model-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-        <h3>{editing ? 'Edit model' : 'Add model'}</h3>
+      <div className="modal tall model-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title}>
+        <h3>{title}</h3>
+        {catalog && <p className="prov-sub" role="note">This model comes from the model catalog and changes only through a catalog update.</p>}
         <form className="modal-body" onSubmit={submit}>
+          <fieldset className="model-readonly" disabled={catalog !== undefined}>
           <div className="model-panes">
             <div className="model-pane">
               <div className="field-row-2">
@@ -156,6 +166,9 @@ export default function SettingsLlmModelForm({ initial, onClose, onSaved }: Sett
                   />
                 </label>
               </div>
+              {catalogNames?.has(identity.name.trim()) && (
+                <small className="field-hint" role="note">This overrides the catalog model with the same name.</small>
+              )}
 
               <label className="field">
                 <span>
@@ -189,16 +202,18 @@ export default function SettingsLlmModelForm({ initial, onClose, onSaved }: Sett
                 : <small className="field-hint">Self-hosted: this model has no per-token price.</small>}
             </section>
           </div>
+          </fieldset>
+          {catalog && <CatalogModelDetails model={catalog} />}
 
           {error && <div className="modal-msg modal-error">{error}</div>}
 
           <div className="modal-actions">
             <button type="button" className="btn-ghost" onClick={onClose}>
-              Cancel
+              {catalog ? 'Close' : 'Cancel'}
             </button>
-            <button type="submit" className="btn" disabled={busy}>
+            {!catalog && <button type="submit" className="btn" disabled={busy}>
               {busy ? 'Saving…' : editing ? 'Save changes' : 'Add model'}
-            </button>
+            </button>}
           </div>
         </form>
       </div>

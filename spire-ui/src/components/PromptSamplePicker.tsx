@@ -6,6 +6,7 @@ import { readLiveReviews, REVIEWS_KEY } from '../useLiveReviews';
 
 const NO_REVIEWS: ReviewSummary[] = [];
 import Select from './Select';
+import SettingField from './SettingField';
 import Tooltip from './Tooltip';
 
 const NO_SAMPLE = '';
@@ -60,8 +61,8 @@ export default function PromptSamplePicker({ kind, system, body, disabled, scope
   return (
     <div className="prompt-sample-picker">
       <div className="prov-actions" style={{ marginTop: 4 }}>
-        <label className="field">
-          <span>Sample</span>
+        <SettingField label="Sample" scope="prompt preview"
+          hint="A recent review to fill the prompt's variables with, or none to show the variable slots.">
           <Select
             ariaLabel="Sample review"
             value={reviewId}
@@ -69,7 +70,7 @@ export default function PromptSamplePicker({ kind, system, body, disabled, scope
             onChange={setReviewId}
             disabled={disabled || busy}
           />
-        </label>
+        </SettingField>
         <Tooltip label="Preview">
           <button
             type="button"

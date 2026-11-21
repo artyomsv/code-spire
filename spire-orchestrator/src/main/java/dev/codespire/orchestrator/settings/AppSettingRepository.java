@@ -42,6 +42,24 @@ public class AppSettingRepository {
         }
     }
 
+    /** Remove a key, so its reader falls back to "unset". Removing an absent key is not an error. */
+    @Transactional
+    public void delete(String key) {
+        try (Connection c = dataSource.getConnection()) {
+            delete(c, key);
+        } catch (SQLException e) {
+            throw new IllegalStateException("app_setting delete failed for '" + key + "'", e);
+        }
+    }
+
+    /** Remove a key on the caller's connection, inside the caller's transaction. */
+    public void delete(Connection c, String key) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("DELETE FROM app_setting WHERE key = ?")) {
+            ps.setString(1, key);
+            ps.executeUpdate();
+        }
+    }
+
     @Transactional
     public void set(String key, String value) {
         try (Connection c = dataSource.getConnection();

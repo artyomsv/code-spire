@@ -18,7 +18,7 @@ const model = (rates: Partial<Record<RateType, number>>, notBilled: RateType[] =
                pricingMode: 'METERED' | 'UNMETERED' = 'METERED'): LlmModelView => ({
   id: 'TEST-model-id', type: 'openai', name: 'TEST-model', label: 'TEST model', pricingMode, rates, notBilled,
   outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {},
-  enabled: true, createdAt: '2026-09-16T00:00:00Z',
+  enabled: true, createdAt: '2026-09-16T00:00:00Z', source: 'MANUAL',
 });
 
 describe('the not-billed assertion', () => {

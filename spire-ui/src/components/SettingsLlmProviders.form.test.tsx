@@ -8,6 +8,13 @@ import { invalidateLive } from '../liveCache';
 import { queryWrapper } from '../test/queryWrapper';
 import SettingsLlmProviders from './SettingsLlmProviders';
 import * as api from '../api';
+import { catalogView } from '../test/catalogFixtures';
+
+// Every test reads the catalog; one with no rows unless a test says otherwise.
+beforeEach(() => {
+  vi.spyOn(api, 'fetchLlmCatalog').mockResolvedValue(catalogView());
+  vi.spyOn(api, 'fetchLlmDefaultModel').mockResolvedValue({ provider: null, model: null });
+});
 
 const renderPage = (wrapper = queryWrapper()) =>
   render(
@@ -19,7 +26,7 @@ const renderPage = (wrapper = queryWrapper()) =>
 
 const provider = (over: Partial<api.LlmProviderView> = {}): api.LlmProviderView => ({
   id: 'TEST-provider-1', name: 'TEST-provider', type: 'openai', baseUrl: 'https://llm.example.test/v1',
-  model: 'TEST-MODEL', temperature: 0.2, maxTokens: null, hasApiKey: true, enabled: true, isDefault: true,
+  temperature: 0.2, maxTokens: null, hasApiKey: true, enabled: true, isDefault: true,
   createdAt: '1970-01-01T00:00:00Z', lastCheckAt: null, lastCheckOk: null, lastCheckError: null, ...over,
 });
 
@@ -216,6 +223,9 @@ describe('SettingsLlmProviders — model form', () => {
   });
 
   it('shows a model marked self-hosted in the catalog table as "Self-hosted", never as a price', async () => {
+    // Models are listed under their vendor's provider tab, so this one needs an openai provider.
+    vi.mocked(api.fetchLlmProviders).mockResolvedValue([provider()]);
+    vi.spyOn(api, 'checkLlmProvider').mockResolvedValue({ ok: true, detail: null });
     vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([
       {
         id: 'model-1',
@@ -230,7 +240,7 @@ describe('SettingsLlmProviders — model form', () => {
         reasoningEffort: null,
         extraParams: {},
         enabled: true,
-        createdAt: '2026-08-06T00:00:00Z',
+        createdAt: '2026-08-06T00:00:00Z', source: 'MANUAL',
       },
     ]);
     renderPage();

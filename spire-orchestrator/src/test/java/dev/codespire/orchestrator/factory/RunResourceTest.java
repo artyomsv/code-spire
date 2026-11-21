@@ -117,7 +117,7 @@ class RunResourceTest {
         sql("INSERT INTO llm_model (id, type, name, label, pricing_mode) VALUES ('" + UUID.randomUUID()
                 + "', 'openai', '" + MODEL + "', '" + MODEL + "', 'UNMETERED')");
         return UUID.fromString(llmProviders.create(new LlmProviderInput("TEST-run-llm", "openai", "https://api.openai.com",
-                "TEST-harness-key", MODEL, null, null, true, true)).id());
+                "TEST-harness-key", null, null, true, true, MODEL)).id());
     }
 
     /**

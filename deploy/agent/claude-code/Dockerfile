@@ -49,12 +49,9 @@ COPY --chmod=755 spire-agent-entrypoint.sh /usr/local/bin/spire-agent-entrypoint
 LABEL dev.codespire.agent.toolchain=node
 LABEL dev.codespire.agent.harness=claude_code
 
-# The models THIS image's harness can run, as base64 of deploy/agent/claude-code/models.json. Unlike
-# Codex, Claude Code has no command that prints its model list without a credential, so the list is a
-# file in this repository, written from Anthropic's model list and checked against it when the CLI
-# version changes. deploy/agent/build-claude-code.sh passes it; a plain docker build leaves it empty.
-ARG AGENT_MODELS=""
-LABEL dev.codespire.agent.models=$AGENT_MODELS
+# No dev.codespire.agent.models label, on purpose: the label is declared by the image contract, never
+# required. Claude Code has no command that prints its models, so the orchestrator offers it the enabled
+# Anthropic models of the model catalog (ai-catalog/v1/catalog.yaml) instead of a list baked in here.
 
 USER 1001:1001
 # CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC turns off the CLI's own update checks, telemetry and error

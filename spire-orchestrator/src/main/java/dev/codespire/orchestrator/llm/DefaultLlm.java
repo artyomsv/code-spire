@@ -21,6 +21,11 @@ public record DefaultLlm(String packed, String model, String providerName, Refus
         /** No enabled provider is marked as the global default. */
         NO_DEFAULT_PROVIDER,
         /**
+         * A default provider exists and no default review model is chosen (the model lives beside the provider, not
+         * on it). Refused like a missing provider: there is nothing to spend on until the operator picks one.
+         */
+        NO_DEFAULT_MODEL,
+        /**
          * The default provider names a model the ledger cannot price. Reachable without passing the
          * registry guard: V30 leaves every legacy zero-priced model rateless, so an upgraded
          * deployment is in this state before an operator touches anything.
@@ -50,6 +55,10 @@ public record DefaultLlm(String packed, String model, String providerName, Refus
         return new DefaultLlm(null, "", null, Refusal.NO_DEFAULT_PROVIDER);
     }
 
+    public static DefaultLlm noDefaultModel() {
+        return new DefaultLlm(null, "", null, Refusal.NO_DEFAULT_MODEL);
+    }
+
     public static DefaultLlm notPriceable(String model) {
         return new DefaultLlm(null, model, null, Refusal.MODEL_NOT_PRICEABLE);
     }
@@ -72,6 +81,7 @@ public record DefaultLlm(String packed, String model, String providerName, Refus
         }
         return switch (refusal) {
             case NO_DEFAULT_PROVIDER -> "no default LLM provider configured";
+            case NO_DEFAULT_MODEL -> "No default review model is selected. Choose one in Settings → LLM.";
             case MODEL_NOT_PRICEABLE -> "model '" + model + "' has no usable pricing";
             case REPOSITORY_PROVIDER_OFF -> "repository LLM provider '" + providerName + "' is switched off";
         };
@@ -85,6 +95,7 @@ public record DefaultLlm(String packed, String model, String providerName, Refus
         return switch (refusal) {
             case NO_DEFAULT_PROVIDER ->
                     "No default LLM provider configured — register one in Settings → LLM.";
+            case NO_DEFAULT_MODEL -> "No default review model is selected. Choose one in Settings → LLM.";
             case MODEL_NOT_PRICEABLE -> "Model '" + model + "' has no usable pricing — set input and"
                     + " output rates in Settings → LLM → Models, or mark it UNMETERED if it is"
                     + " self-hosted.";

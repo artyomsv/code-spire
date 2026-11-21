@@ -140,12 +140,25 @@ repository's reviews and replies use, null meaning the global default. Deleting 
 repository names is refused (409); a switched-off one refuses the repository's reviews rather than
 falling back to the default.
 
+The review model is chosen where it is used, not on the provider (2026-11-20,
+docs/superpowers/specs/2026-11-20-llm-provider-without-model-design.md). `llm_provider` is a connection
+(name, type, base URL, encrypted key, temperature, max tokens, enabled, default); V119 drops its `model`
+column. The global default model is the app setting `llm.default-model` (`app_setting`, V7), written
+together with the default provider in one transaction and cleared when the default provider is deleted;
+it counts only while a default provider is enabled. V118 adds nullable `repository.review_llm_model`:
+the model a repository's reviews use with `review_llm_provider_id`. V118 copied the default provider's
+model into the setting and each repository's provider model into its column. A model name in either
+place is a bare string, not a foreign key; deleting, renaming or retyping a manual model is refused
+while either names it.
+
 V109 adds the harness half of that choice (harness reviews, step 5): nullable `review_harness`,
 `review_harness_model`, `review_harness_effort` and `review_harness_pay_with` (`API_KEY` or
 `SUBSCRIPTION`). The CHECK `repository_review_harness_whole` keeps them whole or absent: all four null
 (review on the API), or a non-blank harness, model and payment with the effort optional, and then
 `review_llm_provider_id` must be null, so a repository reviews with an API provider or a harness,
-never both. Saving the repository with no harness clears all four. The harness is checked against the
+never both. Saving the repository with no harness clears all four. V119 extends the CHECK to the API model: on the
+API, `review_llm_provider_id` and `review_llm_model` are both null (the global default) or both set with a
+non-blank model; beside a harness both are null. The harness is checked against the
 deployment's agent images (`spire.factory.agent-image.<harness>`) before the write, which the schema
 cannot see. V109 also adds nullable `review_status.harness_refusal`: why a review's harness start was
 refused, in words, for its attention row; null means none.

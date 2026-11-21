@@ -13,7 +13,7 @@ const item = { id: 'TEST-prepared-item', revision: 7, workflowStatus: 'awaiting_
 const reference = (key: string): api.ArtifactReference => ({ title: `TEST-artifact-${key}`, artifact: { sha256: key.repeat(64).slice(0, 64),
   location: { ref: { type: 'GITHUB', origin: 'https://TEST.example', projectId: 'TEST-project', issueId: `TEST-${key}` }, issueKey: key, link: `https://TEST.example/issues/${key}` } } });
 const model = (name: string, rates: LlmModelView['rates'] = { INPUT: 100, OUTPUT: 200 }): LlmModelView => ({ id: `TEST-model-${name}`, type: 'openai', name, label: name,
-  pricingMode: 'METERED', rates, outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-15T00:00:00Z', notBilled: [] });
+  pricingMode: 'METERED', rates, outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-15T00:00:00Z', source: 'MANUAL', notBilled: [] });
 function show(changed = vi.fn(), roles = ['spire-admin'], value = item, wrapper = queryWrapper()) {
   vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-operator', roles });
   // A test that cares about the offered choices mocks them first; this is only the default pair.

@@ -423,7 +423,7 @@ describe('build setup', () => {
     vi.mocked(api.fetchLlmModels).mockResolvedValue([{ id: 'TEST-partial-id', type: 'openai', name: 'TEST-partial',
       label: 'TEST partial', pricingMode: 'METERED', rates: { INPUT: 100, OUTPUT: 200 }, notBilled: [],
       outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true,
-      createdAt: '2026-09-16T00:00:00Z' }]);
+      createdAt: '2026-09-16T00:00:00Z', source: 'MANUAL' }]);
     renderFactory();
     await open();
     fireEvent.change(await screen.findByLabelText('Harness', field), { target: { value: 'codex' } });
@@ -444,7 +444,7 @@ describe('build setup', () => {
     vi.mocked(api.fetchLlmModels).mockResolvedValue([{ id: 'TEST-partial-id', type: 'openai', name: 'TEST-partial',
       label: 'TEST partial', pricingMode: 'METERED', rates: { INPUT: 100, OUTPUT: 200 }, notBilled: [],
       outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true,
-      createdAt: '2026-09-16T00:00:00Z' }]);
+      createdAt: '2026-09-16T00:00:00Z', source: 'MANUAL' }]);
     renderFactory();
     await open();
     fireEvent.change(await screen.findByLabelText('Base branch', field), { target: { value: 'main' } });

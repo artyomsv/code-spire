@@ -11,7 +11,7 @@ function priced(name: string, notBilled: string[] = []): LlmModelView {
   return {
     id: `TEST-${name}`, type: 'openai', name, label: name, pricingMode: 'METERED',
     rates: { INPUT: 1, OUTPUT: 1 }, outputTokenParam: 'MAX_TOKENS', supportsTemperature: true,
-    reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '1970-01-01T00:00:00Z', notBilled,
+    reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '1970-01-01T00:00:00Z', source: 'MANUAL', notBilled,
   } as unknown as LlmModelView;
 }
 
@@ -106,4 +106,40 @@ it('hides the thinking level when a model declares none', () => {
 
   expect(screen.queryByRole('combobox', { name: 'Thinking level' })).not.toBeInTheDocument();
   expect(screen.queryByText(/Model default/)).not.toBeInTheDocument();
+});
+
+// The server's own answer (keyPriced): an API key is offered only the models it can pay for; a seat any offered one.
+const PRICED_BY_SERVER: HarnessModels = { ...KNOWN, keyPriced: ['TEST-fast'] };
+
+it('does not offer an unpriced model for API-key payment', () => {
+  const choices = modelChoices('codex', PRICED_BY_SERVER, [priced('TEST-fast'), priced('TEST-deep')], REPORTED, 'API_KEY');
+
+  expect(choices.map(choice => choice.value)).toEqual(['TEST-fast']);
+});
+
+it('offers the same unpriced model for seat payment', () => {
+  const choices = modelChoices('codex', PRICED_BY_SERVER, [priced('TEST-fast')], REPORTED, 'SUBSCRIPTION');
+
+  expect(choices.map(choice => choice.value)).toEqual(['TEST-fast', 'TEST-deep']);
+  expect(choices.every(choice => choice.blocked === null)).toBe(true);
+});
+
+it('offers nothing for a key when the server prices none', () => {
+  const none: HarnessModels = { ...KNOWN, keyPriced: [] };
+
+  expect(modelChoices('codex', none, [priced('TEST-fast')], REPORTED, 'API_KEY')).toEqual([]);
+});
+
+// The server's keyPriced resolves catalog aliases; the local list knows only the canonical name. An offered alias the
+// server prices is runnable even though no local row carries its name.
+it('trusts the server for an offered alias it prices', () => {
+  const aliased: HarnessModels = {
+    status: 'OK',
+    offered: [{ slug: 'TEST-fast-alias', displayName: 'TEST-fast-alias', defaultEffort: 'low', efforts: ['low'], visible: true, priority: 1 }],
+    keyPriced: ['TEST-fast-alias'],
+  };
+
+  const choices = modelChoices('codex', aliased, [priced('TEST-fast')], REPORTED, 'API_KEY');
+
+  expect(choices).toEqual([{ value: 'TEST-fast-alias', label: 'TEST-fast-alias', blocked: null }]);
 });

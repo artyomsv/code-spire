@@ -112,6 +112,50 @@ class AttentionBuildDefaultsTest {
         assertEquals(List.of(), rowsFor("TEST-attention/TEST-repo-" + suffix));
     }
 
+    /** A catalog model's row says where its price is fixed: the catalog, or a manual model of the same name. */
+    @Test
+    void aCatalogModelMissingAPriceSaysUpdateTheCatalog() throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        UUID repository = repository(suffix);
+        saveSetup(repository, "codex", "TEST-cat-a"); // the TEST- catalog gives it no REASONING rate
+
+        List<AttentionView> rows = rowsFor("TEST-attention/TEST-repo-" + suffix);
+        assertEquals(1, rows.size(), "one row for this repository");
+        assertEquals("Model TEST-cat-a comes from the catalog and has no price for REASONING. Update the catalog,"
+                + " or add a manual model with this name.", rows.getFirst().message());
+    }
+
+    /** A manual model keeps the Settings text: its rates are fixed where they were typed. */
+    @Test
+    void aManualModelKeepsTheSettingsText() throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        UUID repository = repository(suffix);
+        String model = "TEST-attention-manual-" + suffix;
+        models.create(new LlmModelInput("openai", model, "TEST manual model", "METERED",
+                Map.of("INPUT", 200_000L, "OUTPUT", 400_000L), null, null, null, Map.of(), true, List.of()));
+        saveSetup(repository, "codex", model);
+
+        String message = rowsFor("TEST-attention/TEST-repo-" + suffix).getFirst().message();
+        assertTrue(message.contains("in Settings → LLM → Models"), message);
+        assertTrue(!message.contains("comes from the catalog"), message);
+    }
+
+    /** A seat pays per seat, not per token, so a seat-paid setup needs no rates and raises nothing. */
+    @Test
+    void seatPaidSetupsStaySkipped() throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        UUID repository = repository(suffix);
+        saveSetup(repository, "codex", "TEST-attention-unpriced-" + suffix);
+        assertEquals(1, rowsFor("TEST-attention/TEST-repo-" + suffix).size(), "an API-key setup is reported");
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
+                "UPDATE repository_build_defaults SET pay_with = 'SUBSCRIPTION' WHERE repository_id = ?")) {
+            ps.setObject(1, repository);
+            ps.executeUpdate();
+        }
+
+        assertEquals(List.of(), rowsFor("TEST-attention/TEST-repo-" + suffix));
+    }
+
     /** A repository switched off is not one whose next build is waiting on a rate. */
     @Test
     void aDisabledRepositoryIsNotNagged() throws Exception {
