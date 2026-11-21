@@ -122,11 +122,23 @@ describe('SettingsLlmProviders — a vendor used only through harness keys', () 
     expect(tabs.map((tab) => tab.textContent)).toEqual(['TEST-openai-a']);
   });
 
-  it('a failed read of the harness keys still shows the API-provider tabs', async () => {
-    vi.spyOn(api, 'fetchHarnessCredentials').mockRejectedValue(new Error('TEST-keys down'));
+  it('a failed read of the harness keys still shows the API-provider tabs, says so, and retries', async () => {
+    const keys = vi.spyOn(api, 'fetchHarnessCredentials').mockRejectedValue(new Error('TEST-keys down'));
     renderLlmSettings();
 
     const tabs = within(await tabList()).getAllByRole('tab');
     expect(tabs.map((tab) => tab.textContent)).toEqual(['TEST-openai-a']);
+    const notice = await screen.findByText(/Harness keys could not be loaded/);
+    expect(notice).toHaveTextContent('TEST-keys down');
+    expect(notice).toHaveTextContent('models of vendors used only through them are hidden');
+
+    keys.mockResolvedValue([harnessKey('anthropic')]);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading the harness keys' }));
+
+    fireEvent.click(await within(await tabList()).findByRole('tab', { name: 'anthropic (harness keys)' }));
+    const row = (await screen.findByText('TEST-anth')).closest('tr') as HTMLElement;
+    await waitFor(() => expect(within(row).getByRole('button', { name: 'Edit' })).toBeEnabled());
+    expect(within(row).getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    expect(screen.queryByText(/Harness keys could not be loaded/)).not.toBeInTheDocument();
   });
 });

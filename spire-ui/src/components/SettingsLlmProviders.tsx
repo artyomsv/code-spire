@@ -9,6 +9,7 @@ import {
   fetchLlmModels,
   fetchLlmProviders,
   llmCatalogKey,
+  harnessCredentialsKey,
   llmDefaultModelKey,
   llmProvidersKey,
   type CatalogModelView,
@@ -152,6 +153,7 @@ export default function SettingsLlmProviders() {
     invalidateLive(client, preparationKeys.llmModels()),
     invalidateLive(client, llmCatalogKey),
     invalidateLive(client, llmDefaultModelKey),
+    invalidateLive(client, harnessCredentialsKey),
   ]);
 
   async function act(fn: () => Promise<unknown>) {
@@ -269,7 +271,7 @@ export default function SettingsLlmProviders() {
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
         ) : (
           <SettingsLlmModelTabs tabs={modelTab.tabs} tab={modelTab.tab} onTab={modelTab.select} models={models}
-            catalogRows={catalogRows} actions={modelActions} />
+            catalogRows={catalogRows} actions={modelActions} keysRead={modelTab.keysRead} />
         )}
       </div>
 
