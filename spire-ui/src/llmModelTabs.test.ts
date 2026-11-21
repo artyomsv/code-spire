@@ -8,7 +8,7 @@ const PROVIDERS = [
   llmProvider({ id: 'TEST-p3', name: 'TEST-a-openai', type: 'openai', isDefault: false }),
 ];
 
-const row = (type: string, label: string, manual: boolean) => ({ type, label, manual: manual ? {} : null });
+const row = (type: string, name: string, label: string, manual: boolean) => ({ type, name, label, manual: manual ? {} : null });
 
 describe('modelTabs', () => {
   it('makes one tab per vendor, joining the names of providers that share it', () => {
@@ -39,10 +39,18 @@ describe('chosenTab', () => {
 
 describe('rowsOfTab', () => {
   it('lists only the vendor\'s rows, by label without case, a manual model before its catalog row', () => {
-    const rows = [row('openai', 'beta', false), row('anthropic', 'Alpha', false), row('openai', 'Alpha', false),
-      row('openai', 'alpha', true), row('gemini', 'Gamma', false)];
+    const rows = [row('openai', 'TEST-b', 'beta', false), row('anthropic', 'TEST-a', 'Alpha', false),
+      row('openai', 'TEST-a', 'Alpha', false), row('openai', 'TEST-a', 'alpha', true), row('gemini', 'TEST-g', 'Gamma', false)];
 
-    expect(rowsOfTab(rows, 'openai')).toEqual([row('openai', 'alpha', true), row('openai', 'Alpha', false),
-      row('openai', 'beta', false)]);
+    expect(rowsOfTab(rows, 'openai')).toEqual([row('openai', 'TEST-a', 'alpha', true),
+      row('openai', 'TEST-a', 'Alpha', false), row('openai', 'TEST-b', 'beta', false)]);
+  });
+
+  it('keeps a manual model beside its catalog row when the manual label sorts elsewhere', () => {
+    const rows = [row('anthropic', 'TEST-opus-5-5', 'TEST Opus 5.5', false), row('anthropic', 'TEST-opus-4-8', 'TEST Opus 4.8', true),
+      row('anthropic', 'TEST-opus-5-5', 'TEST Opus  5.5', true)];
+
+    expect(rowsOfTab(rows, 'anthropic').map((r) => `${r.name}:${r.manual ? 'manual' : 'catalog'}`)).toEqual([
+      'TEST-opus-4-8:manual', 'TEST-opus-5-5:manual', 'TEST-opus-5-5:catalog']);
   });
 });

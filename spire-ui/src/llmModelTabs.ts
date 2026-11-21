@@ -7,9 +7,10 @@ export interface ModelTab {
   label: string;
 }
 
-/** What a tab filters and sorts: a row's vendor type, its label, and whether it is a manual model. */
+/** What a tab filters and sorts: a row's vendor type, model name, label, and whether it is a manual model. */
 export interface TabbedRow {
   type: string;
+  name: string;
   label: string;
   manual: unknown;
 }
@@ -34,12 +35,18 @@ export function chosenTab(tabs: ModelTab[], wanted: string | null): ModelTab | n
 }
 
 /**
- * A tab's rows: only its type, by label (case-insensitive), a manual model before the catalog row it shadows so the
- * pair sits together.
+ * A tab's rows: only its type, grouped by model name so a manual model sits right before the catalog row it shadows.
+ * Groups sort by label (case-insensitive), taking the catalog's label when the group has one: a manual label typed
+ * differently (an extra space, another word) must not split the pair.
  */
 export function rowsOfTab<T extends TabbedRow>(rows: T[], type: LlmType): T[] {
-  return rows
-    .filter((row) => row.type === type)
-    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })
-      || Number(!a.manual) - Number(!b.manual));
+  const own = rows.filter((row) => row.type === type);
+  const groupLabel = new Map<string, string>();
+  for (const row of own) {
+    if (!row.manual || !groupLabel.has(row.name)) groupLabel.set(row.name, row.label);
+  }
+  const labelOf = (row: T) => groupLabel.get(row.name) ?? row.label;
+  return own.sort((a, b) => labelOf(a).localeCompare(labelOf(b), undefined, { sensitivity: 'base' })
+    || a.name.localeCompare(b.name)
+    || Number(!a.manual) - Number(!b.manual));
 }
