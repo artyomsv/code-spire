@@ -1,7 +1,7 @@
 // How the model catalog reads on screen: status strings, its names, its prices. Shared by the Settings
-// table, its header and the catalog model detail, so the wording is written once.
-import type { CatalogModelView, CatalogRowView } from './api';
-import { TOKEN_TYPE_LABEL, formatRate, type RateType } from './llmPricing';
+// table, its header and the catalog model's read-only form, so the wording is written once.
+import type { CatalogModelView, CatalogRowView, LlmModelView } from './api';
+import { RATE_TYPES, TOKEN_TYPE_LABEL, formatRate, type RateType } from './llmPricing';
 
 /** A catalog model's prices by ledger type, as the pricer charges them (cacheWrite1h is shown apart). */
 export const CATALOG_RATE_FIELDS: { type: RateType; field: 'input' | 'cacheRead' | 'cacheWrite' | 'output' | 'reasoning' }[] = [
@@ -49,4 +49,23 @@ export function catalogRatesText(model: CatalogModelView): string {
 /** The first seven characters of a sha, as git shows one. */
 export function shortSha(sha: string | null): string {
   return sha ? sha.slice(0, 7) : '—';
+}
+
+/**
+ * A catalog entry in the shape the model form reads, so a catalog model opens in the same dialog as a manual one
+ * (read-only). No `api` means the form's own defaults; a type with no price and no "not billed" stays blank.
+ */
+export function catalogAsModel(model: CatalogModelView): LlmModelView {
+  const rates: Partial<Record<RateType, number>> = {};
+  for (const { type, field } of CATALOG_RATE_FIELDS) {
+    const rate = model.pricing?.[field];
+    if (rate != null) rates[type] = rate;
+  }
+  const notBilled = RATE_TYPES.filter((type) => model.pricing?.notBilled.includes(type));
+  return {
+    id: null, type: model.provider, name: model.modelId, label: model.displayName, pricingMode: 'METERED', rates,
+    notBilled, outputTokenParam: model.api?.outputTokenParam ?? 'MAX_TOKENS',
+    supportsTemperature: model.api?.temperature ?? true, reasoningEffort: model.api?.reasoningEffort ?? null,
+    extraParams: {}, enabled: model.lifecycle?.status !== 'RETIRED', createdAt: null, source: 'CATALOG',
+  };
 }

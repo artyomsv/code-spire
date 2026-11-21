@@ -80,6 +80,35 @@ describe('SettingsLlmProviders — catalog models', () => {
     expect(within(panel).queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
   });
 
+  it('a shadowed catalog row opens read-only with the catalog values, not the manual model\'s', async () => {
+    vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([manualModel({ name: 'TEST-cat-a', label: 'TEST manual label' })]);
+    vi.spyOn(api, 'fetchLlmCatalog').mockResolvedValue(catalogView({ rows: [catalogRow({}, true)] }));
+    renderPage();
+    expect(await screen.findByText('Ignored · a manual model has this name')).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Catalog model TEST-cat-a' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'TEST catalog model' });
+    expect(within(dialog).getByLabelText(/^label/i)).toHaveValue('TEST catalog model');
+    expect(within(dialog).getByLabelText(/^label/i)).toBeDisabled();
+    expect(within(dialog).queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
+  });
+
+  it('a manual row still opens the same dialog editable, with Save', async () => {
+    vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([manualModel()]);
+    vi.spyOn(api, 'fetchLlmCatalog').mockResolvedValue(catalogView({ rows: [catalogRow()] }));
+    renderPage();
+    const row = await rowOf('TEST-manual');
+    await waitFor(() => expect(within(row).getByRole('button', { name: 'Edit' })).toBeEnabled());
+
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Edit model' });
+    expect(within(dialog).getByLabelText(/^label/i)).toBeEnabled();
+    expect(within(dialog).getByRole('button', { name: 'Save changes' })).toBeEnabled();
+    expect(within(dialog).queryByRole('region', { name: 'Catalog details' })).not.toBeInTheDocument();
+  });
+
   it('typing a catalog name shows the override notice', async () => {
     vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([]);
     vi.spyOn(api, 'fetchLlmCatalog').mockResolvedValue(catalogView({ rows: [catalogRow({ aliases: ['TEST-cat-a-dated'] })] }));

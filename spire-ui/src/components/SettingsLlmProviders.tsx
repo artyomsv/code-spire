@@ -31,11 +31,10 @@ import Tooltip from './Tooltip';
 import SettingsLlmModelForm from './SettingsLlmModelForm';
 import SettingsLlmCatalogHeader from './SettingsLlmCatalogHeader';
 import SettingsLlmModelsTable, { type ModelRowActions } from './SettingsLlmModelsTable';
-import LlmCatalogModelDetail from './LlmCatalogModelDetail';
 import LlmMakeDefaultDialog from './LlmMakeDefaultDialog';
 import SettingsLlmDefaultModel from './SettingsLlmDefaultModel';
 import { vendorModelOptions } from '../llmModelOptions';
-import { catalogNames } from '../llmCatalog';
+import { catalogAsModel, catalogNames } from '../llmCatalog';
 import { useEditDeepLink } from '../hooks/useEditDeepLink';
 import { useEachRead } from '../hooks/useEachRead';
 import { invalidateLive } from '../liveCache';
@@ -340,7 +339,10 @@ export default function SettingsLlmProviders() {
         />
       )}
 
-      {catalogDetail && <LlmCatalogModelDetail model={catalogDetail} onClose={() => setCatalogDetail(null)} />}
+      {catalogDetail && (
+        <SettingsLlmModelForm initial={catalogAsModel(catalogDetail)} catalog={catalogDetail}
+          onClose={() => setCatalogDetail(null)} onSaved={async () => setCatalogDetail(null)} />
+      )}
     </section>
   );
 }
