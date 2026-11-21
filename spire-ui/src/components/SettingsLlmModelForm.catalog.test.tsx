@@ -50,7 +50,12 @@ describe('SettingsLlmModelForm — a catalog model', () => {
     expect(within(dialog).getByLabelText(/^model name/i)).toHaveValue('TEST-cat-a');
     expect(within(dialog).getByLabelText(/^label/i)).toHaveValue('TEST catalog model');
     expect(within(dialog).getByLabelText(/^input rate/i)).toHaveValue('1');
-    expect(within(dialog).getByLabelText(/^reasoning rate/i)).toHaveValue('');
+    // An absent price and a not-billed type say so in words; no example price stands in an empty field.
+    expect(within(dialog).getByLabelText(/^reasoning rate/i)).toHaveValue('not priced');
+    expect(within(dialog).getByLabelText(/^cache write rate/i)).toHaveValue('not billed');
+    const rates = within(dialog).getAllByLabelText(/rate \$ \/ 1M tokens/);
+    expect(rates).toHaveLength(5);
+    for (const rate of rates) expect(rate).not.toHaveAttribute('placeholder');
     expect(within(dialog).getByLabelText('Cache write: the vendor does not bill this')).toBeChecked();
     expect(within(dialog).getByLabelText('Input: the vendor does not bill this')).not.toBeChecked();
     expect(within(dialog).getByRole('combobox', { name: /output token limit/i })).toHaveTextContent('max_completion_tokens');
@@ -68,6 +73,15 @@ describe('SettingsLlmModelForm — a catalog model', () => {
     expect(detail(dialog, 'Cache write (1 hour)')).toHaveTextContent('/1M · recorded, not charged');
     expect(within(detail(dialog, 'Prices from')).getByRole('link')).toHaveAttribute('href', 'https://example.invalid/pricing');
     expect(detail(dialog, 'Prices from')).toHaveTextContent('read 1970-01-01');
+  });
+
+  it('the editable form keeps its example placeholders and blank fields', () => {
+    renderWithQuery(<SettingsLlmModelForm initial={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    const dialog = screen.getByRole('dialog', { name: 'Add model' });
+
+    expect(within(dialog).getByLabelText(/^input rate/i)).toHaveAttribute('placeholder');
+    expect(within(dialog).getByLabelText(/^reasoning rate/i)).toHaveValue('');
+    expect(within(dialog).getByLabelText(/^reasoning rate/i)).toBeEnabled();
   });
 
   it('shows a dash for a value the catalog does not state', () => {

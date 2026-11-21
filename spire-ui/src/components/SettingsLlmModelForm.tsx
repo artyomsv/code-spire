@@ -198,7 +198,8 @@ export default function SettingsLlmModelForm({ initial, catalogNames, catalog, d
             <section className="model-prices" aria-label="Prices">
               <div className="model-prices-title">Prices · $ per 1M tokens</div>
               {pricingMode === 'METERED'
-                ? <ModelRateFields rates={rates} onChange={setRate} notBilled={notBilled} onNotBilled={assert} />
+                ? <ModelRateFields rates={rates} onChange={setRate} notBilled={notBilled} onNotBilled={assert}
+                  readOnly={catalog !== undefined} />
                 : <small className="field-hint">Self-hosted: this model has no per-token price.</small>}
             </section>
           </div>
