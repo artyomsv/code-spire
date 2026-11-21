@@ -223,6 +223,9 @@ describe('SettingsLlmProviders — model form', () => {
   });
 
   it('shows a model marked self-hosted in the catalog table as "Self-hosted", never as a price', async () => {
+    // Models are listed under their vendor's provider tab, so this one needs an openai provider.
+    vi.mocked(api.fetchLlmProviders).mockResolvedValue([provider()]);
+    vi.spyOn(api, 'checkLlmProvider').mockResolvedValue({ ok: true, detail: null });
     vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([
       {
         id: 'model-1',

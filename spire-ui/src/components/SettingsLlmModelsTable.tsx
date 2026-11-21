@@ -1,5 +1,6 @@
 import { Library } from 'lucide-react';
-import type { CatalogModelView, CatalogRowView, LlmModelView } from '../api';
+import type { CatalogModelView, CatalogRowView, LlmModelView, LlmType } from '../api';
+import { rowsOfTab } from '../llmModelTabs';
 import { catalogNames, catalogRatesText, catalogStatus } from '../llmCatalog';
 import IconButton from './IconButton';
 import { profileHint, ratesSummary } from '../llmPricing';
@@ -17,6 +18,8 @@ interface SettingsLlmModelsTableProps {
   models: LlmModelView[];
   catalogRows: CatalogRowView[];
   actions: ModelRowActions;
+  /** The vendor tab shown: only its rows, sorted by label. */
+  type: LlmType;
 }
 
 interface ModelRow {
@@ -52,7 +55,11 @@ export function modelRows(models: LlmModelView[], catalogRows: CatalogRowView[])
 }
 
 /** Settings → LLM → Models: manual rows keep Edit and Delete; catalog rows open a read-only detail. */
-export default function SettingsLlmModelsTable({ models, catalogRows, actions }: SettingsLlmModelsTableProps) {
+export default function SettingsLlmModelsTable({ models, catalogRows, actions, type }: SettingsLlmModelsTableProps) {
+  const rows = rowsOfTab(modelRows(models, catalogRows), type);
+  if (rows.length === 0) {
+    return <p className="prov-note">No models of this vendor yet. Add one with the + above.</p>;
+  }
   return (
     <table className="prov-table">
       <thead>
@@ -66,7 +73,7 @@ export default function SettingsLlmModelsTable({ models, catalogRows, actions }:
         </tr>
       </thead>
       <tbody>
-        {modelRows(models, catalogRows).map((row) => (
+        {rows.map((row) => (
           <tr key={row.key}>
             <td>
               <ModelName row={row} onOpenCatalog={actions.onOpenCatalog} />

@@ -30,7 +30,9 @@ import Select from './Select';
 import Tooltip from './Tooltip';
 import SettingsLlmModelForm from './SettingsLlmModelForm';
 import SettingsLlmCatalogHeader from './SettingsLlmCatalogHeader';
-import SettingsLlmModelsTable, { type ModelRowActions } from './SettingsLlmModelsTable';
+import { type ModelRowActions } from './SettingsLlmModelsTable';
+import SettingsLlmModelTabs from './SettingsLlmModelTabs';
+import { useModelTab } from '../hooks/useModelTab';
 import LlmMakeDefaultDialog from './LlmMakeDefaultDialog';
 import SettingsLlmDefaultModel from './SettingsLlmDefaultModel';
 import { vendorModelOptions } from '../llmModelOptions';
@@ -107,6 +109,7 @@ export default function SettingsLlmProviders() {
   const [modelForm, setModelForm] = useState<'new' | LlmModelView | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ConfirmDelete | null>(null);
   const [catalogDetail, setCatalogDetail] = useState<CatalogModelView | null>(null);
+  const modelTab = useModelTab(providers);
   const [defaultFor, setDefaultFor] = useState<LlmProviderView | null>(null);
   const catalogRead = useQuery({ queryKey: llmCatalogKey, queryFn: () => fetchLlmCatalog() });
   const catalogRows = catalogRead.data?.rows ?? NO_ROWS;
@@ -264,13 +267,9 @@ export default function SettingsLlmProviders() {
           onRetry={() => void catalogRead.refetch()} />
         {modelsLoading ? (
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
-        ) : models.length === 0 && catalogRows.length === 0 ? (
-          <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>
-            No models yet — add one (name + rate per 1M tokens, or mark it self-hosted) so reviews can
-            be priced and providers can pick it.
-          </div>
         ) : (
-          <SettingsLlmModelsTable models={models} catalogRows={catalogRows} actions={modelActions} />
+          <SettingsLlmModelTabs tabs={modelTab.tabs} tab={modelTab.tab} onTab={modelTab.select} models={models}
+            catalogRows={catalogRows} actions={modelActions} />
         )}
       </div>
 
@@ -290,6 +289,7 @@ export default function SettingsLlmProviders() {
       {modelForm && (
         <SettingsLlmModelForm
           initial={modelForm === 'new' ? null : modelForm}
+          defaultType={modelTab.tab?.type}
           catalogNames={catalogNames(catalogRows)}
           onClose={() => setModelForm(null)}
           onSaved={async () => {

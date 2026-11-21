@@ -32,15 +32,17 @@ interface SettingsLlmModelFormProps {
   catalogNames?: Set<string>;
   /** A catalog model, shown read-only: {@code initial} is its form shape (catalogAsModel), this its own details. */
   catalog?: CatalogModelView;
+  /** A new model's type: the vendor tab the list shows. */
+  defaultType?: LlmType;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }
 
-export default function SettingsLlmModelForm({ initial, catalogNames, catalog, onClose, onSaved }: SettingsLlmModelFormProps) {
+export default function SettingsLlmModelForm({ initial, catalogNames, catalog, defaultType, onClose, onSaved }: SettingsLlmModelFormProps) {
   const editing = initial !== null;
   const title = catalog ? catalog.displayName || 'Catalog model' : editing ? 'Edit model' : 'Add model';
   const [identity, setIdentity] = useState<ModelIdentity>({
-    type: initial?.type ?? 'openai',
+    type: initial?.type ?? defaultType ?? 'openai',
     name: initial?.name ?? '',
     label: initial?.label ?? '',
   });

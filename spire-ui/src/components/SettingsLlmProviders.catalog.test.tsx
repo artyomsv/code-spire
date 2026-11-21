@@ -2,7 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor, within } from '@testing-library/react';
 import * as api from '../api';
 import { catalogRow, catalogView } from '../test/catalogFixtures';
-import { manualModel, renderLlmSettings as renderPage, rowOf, stubLlmSettingsReads } from '../test/llmSettingsFixtures';
+import { llmProvider, manualModel as openaiModel, renderLlmSettings as renderPage, rowOf, stubLlmSettingsReads } from '../test/llmSettingsFixtures';
+import type { LlmModelView } from '../api';
+
+/** A manual model of the catalog fixture's vendor, so both sit on the one tab this suite registers. */
+const manualModel = (over: Partial<LlmModelView> = {}) => openaiModel({ type: 'anthropic', ...over });
+const ANTHROPIC = [llmProvider({ name: 'TEST-anthropic', type: 'anthropic' })];
 
 beforeEach(stubLlmSettingsReads);
 
@@ -14,7 +19,7 @@ async function openAddModelForm(): Promise<HTMLElement> {
 
 describe('SettingsLlmProviders — catalog models', () => {
   beforeEach(() => {
-    vi.spyOn(api, 'fetchLlmProviders').mockResolvedValue([]);
+    vi.spyOn(api, 'fetchLlmProviders').mockResolvedValue(ANTHROPIC);
     vi.spyOn(api, 'checkLlmProvider').mockResolvedValue({ ok: true, detail: null });
   });
 
@@ -125,7 +130,7 @@ describe('SettingsLlmProviders — catalog models', () => {
 
 describe('SettingsLlmProviders — a failed catalog read', () => {
   beforeEach(() => {
-    vi.spyOn(api, 'fetchLlmProviders').mockResolvedValue([]);
+    vi.spyOn(api, 'fetchLlmProviders').mockResolvedValue(ANTHROPIC);
     vi.spyOn(api, 'checkLlmProvider').mockResolvedValue({ ok: true, detail: null });
   });
 
