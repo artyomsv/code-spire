@@ -73,24 +73,30 @@ export default function SettingsLlmModelsTable({ models, catalogRows, actions, t
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => (
-          <tr key={row.key}>
-            <td>
-              <ModelName row={row} onOpenCatalog={actions.onOpenCatalog} />
-            </td>
-            <td className="mono">{row.type}</td>
-            <td>{row.manual ? 'Manual' : 'Catalog'}</td>
-            <td>{row.status}</td>
-            <td className={`mono${row.rates.warn ? ' rate-unset' : ''}`}>{row.rates.text}</td>
-            <td>{row.manual && <ManualActions model={row.manual} overrides={row.overrides} actions={actions} />}</td>
-          </tr>
-        ))}
+        {rows.map((row) => <ModelTableRow key={row.key} row={row} actions={actions} />)}
       </tbody>
     </table>
   );
 }
 
-function ModelName({ row, onOpenCatalog }: { row: ModelRow; onOpenCatalog: (model: CatalogModelView) => void }) {
+/** One model's row: its name (a catalog row opens read-only), vendor, source, status, rates and a manual row's actions. */
+function ModelTableRow({ row, actions }: { row: ModelRow; actions: ModelRowActions }) {
+  return (
+    <tr>
+      <td>
+        <ModelName row={row} onOpenCatalog={actions.onOpenCatalog} />
+      </td>
+      <td className="mono">{row.type}</td>
+      <td>{row.manual ? 'Manual' : 'Catalog'}</td>
+      <td>{row.status}</td>
+      <td className={`mono${row.rates.warn ? ' rate-unset' : ''}`}>{row.rates.text}</td>
+      <td>{row.manual && <ManualActions model={row.manual} overrides={row.overrides} actions={actions} />}</td>
+    </tr>
+  );
+}
+
+function ModelName({ row, onOpenCatalog }
+: { row: ModelRow; onOpenCatalog: (model: CatalogModelView) => void }) {
   const name = <span className="mono" style={{ color: 'var(--text-3)', fontSize: 11 }}>{row.name}</span>;
   if (row.catalog) {
     const model = row.catalog;
