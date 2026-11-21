@@ -5,6 +5,14 @@ import { llmProvider as provider, manualModel, renderLlmSettings as renderPage, 
 
 beforeEach(stubLlmSettingsReads);
 
+/** A provider's name also labels its vendor's model tab, so find the one in the provider list. */
+async function providerName(name: string): Promise<HTMLElement> {
+  const matches = await screen.findAllByText(name);
+  const inList = matches.find((element) => element.closest('.prov-table'));
+  if (!inList) throw new Error(`${name} is not in the provider list`);
+  return inList;
+}
+
 describe('SettingsLlmProviders — default provider and model', () => {
   const openaiModel = manualModel({ id: 'TEST-o-id', name: 'TEST-o', label: 'TEST openai' });
   const anthropicModel = manualModel({ id: 'TEST-a-id', type: 'anthropic', name: 'TEST-a', label: 'TEST anthropic' });
@@ -32,7 +40,7 @@ describe('SettingsLlmProviders — default provider and model', () => {
     ]);
     const setDefault = vi.spyOn(api, 'setDefaultLlmProvider').mockResolvedValue(provider());
     renderPage();
-    const row = (await screen.findByText('TEST-anthropic')).closest('tr') as HTMLElement;
+    const row = (await providerName('TEST-anthropic')).closest('tr') as HTMLElement;
     await waitFor(() => expect(within(row).getByRole('button', { name: 'Set default' })).toBeEnabled());
 
     fireEvent.click(within(row).getByRole('button', { name: 'Set default' }));
@@ -57,7 +65,7 @@ describe('SettingsLlmProviders — a new default provider', () => {
 
   async function openNewDefaultForm(): Promise<HTMLElement> {
     renderPage();
-    await screen.findByText('TEST-provider');
+    await providerName('TEST-provider');
     fireEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
     const form = (await screen.findByRole('heading', { name: 'Add LLM provider' })).closest('.modal') as HTMLElement;
     fireEvent.click(within(form).getByLabelText('Use as the default provider'));
@@ -93,6 +101,6 @@ describe('SettingsLlmProviders — a failed default-model read', () => {
     renderPage();
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not load the default review model: TEST-settings down');
-    expect(await screen.findByText('TEST-provider')).toBeInTheDocument();
+    expect(await providerName('TEST-provider')).toBeInTheDocument();
   });
 });
