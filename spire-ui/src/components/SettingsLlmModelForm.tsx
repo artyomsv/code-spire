@@ -160,7 +160,7 @@ export default function SettingsLlmModelForm({ initial, catalogNames, catalog, d
                   <span>Model name</span>
                   <input
                     className="mono"
-                    placeholder="gpt-4o"
+                    placeholder={catalog ? undefined : 'gpt-4o'}
                     value={identity.name}
                     onChange={(e) => updateIdentity({ name: e.target.value })}
                   />
@@ -174,7 +174,7 @@ export default function SettingsLlmModelForm({ initial, catalogNames, catalog, d
                 <span>
                   Label <span className="field-optional">defaults to the model name</span>
                 </span>
-                <input placeholder="GPT-4o" value={identity.label} onChange={(e) => updateIdentity({ label: e.target.value })} />
+                <input placeholder={catalog ? undefined : 'GPT-4o'} value={identity.label} onChange={(e) => updateIdentity({ label: e.target.value })} />
               </label>
 
               <label className="field-check">
@@ -192,6 +192,7 @@ export default function SettingsLlmModelForm({ initial, catalogNames, catalog, d
                 onDialectChange={updateDialect}
                 extraParams={extraParams}
                 onExtraParamsChange={setExtraParams}
+                readOnly={catalog !== undefined}
               />
             </div>
 

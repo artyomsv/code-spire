@@ -55,7 +55,10 @@ describe('SettingsLlmModelForm — a catalog model', () => {
     expect(within(dialog).getByLabelText(/^cache write rate/i)).toHaveValue('not billed');
     const rates = within(dialog).getAllByLabelText(/rate \$ \/ 1M tokens/);
     expect(rates).toHaveLength(5);
-    for (const rate of rates) expect(rate).not.toHaveAttribute('placeholder');
+    // No field carries an example value: not a rate, not the names, not the extra params (which a catalog model has
+    // none of, so that field is left out).
+    for (const field of within(dialog).getAllByRole('textbox')) expect(field).not.toHaveAttribute('placeholder');
+    expect(within(dialog).queryByLabelText(/^extra params/i)).not.toBeInTheDocument();
     expect(within(dialog).getByLabelText('Cache write: the vendor does not bill this')).toBeChecked();
     expect(within(dialog).getByLabelText('Input: the vendor does not bill this')).not.toBeChecked();
     expect(within(dialog).getByRole('combobox', { name: /output token limit/i })).toHaveTextContent('max_completion_tokens');
@@ -80,6 +83,7 @@ describe('SettingsLlmModelForm — a catalog model', () => {
     const dialog = screen.getByRole('dialog', { name: 'Add model' });
 
     expect(within(dialog).getByLabelText(/^input rate/i)).toHaveAttribute('placeholder');
+    expect(within(dialog).getByLabelText(/^extra params/i)).toHaveAttribute('placeholder');
     expect(within(dialog).getByLabelText(/^reasoning rate/i)).toHaveValue('');
     expect(within(dialog).getByLabelText(/^reasoning rate/i)).toBeEnabled();
   });
