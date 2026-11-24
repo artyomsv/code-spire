@@ -623,8 +623,11 @@ approval posted as a Comment still labels `review: approved`; Request changes la
 removes every other label starting `review: `, keeps unrelated labels and creates a missing label. A degraded,
 refused, failed or superseded review sets none. Labelling is best effort: a failure rides on `CommentsPosted` as
 `labelFailure`, raises a `REVIEW_LABEL_FAILED` warning and never fails, retries or re-posts the review; the next
-report clears it. The port capability is `CommentSink.setVerdictLabel`; GitLab and Bitbucket keep the default,
-"unsupported".
+report clears it. The attempt runs once per review run: its outcome, success or failure, is recorded in the worker's
+claim store under `LABEL`, and a redelivered PostComments reports that outcome without calling the forge, so it cannot
+overwrite a label set since (review of PR #444, M-1). A worker that dies between the call and the record calls once
+more on redelivery. The port capability is `CommentSink.setVerdictLabel(repo, prId, VerdictLabel)`; GitLab and
+Bitbucket keep the default, "unsupported".
 
 ---
 

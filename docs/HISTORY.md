@@ -2593,7 +2593,9 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   approval posted as a Comment still labels approved), removes every other `review: ` label, keeps unrelated labels
   and creates a missing one. Degraded, refused, failed and superseded reviews set none; a replay writes nothing new.
   A failure is logged, rides on `CommentsPosted.labelFailure` and raises `REVIEW_LABEL_FAILED` (warning); the review
-  stays posted and is never retried for it, and the next report clears the row. New wire fields: `PostComments.
+  stays posted and is never retried for it, and the next report clears the row. The attempt is recorded once per run
+  in the worker's claim store (`LABEL`), so a redelivery reports it instead of labelling again and cannot overwrite a
+  label set since; only a worker that dies between the call and the record labels twice. New wire fields: `PostComments.
   verdictLabels` and `CommentsPosted.labelFailure`, both nullable, so an older command or event reads as off and no
   failure. Upgrading: V120 adds `repository.verdict_labels` (default false) and `review_status.label_failure`; roll
   the orchestrator and the review worker together (an older worker ignores the setting, which sets no label). Not yet
