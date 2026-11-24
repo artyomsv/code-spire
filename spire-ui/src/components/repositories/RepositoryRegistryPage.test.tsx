@@ -17,7 +17,7 @@ const provider = (id: string, role: accounts.ProviderRole, baseUrl = 'https://fo
 });
 const repo: api.Repository = {
   id: 'TEST-repo-id', scmType: 'gitlab', forgeOrigin: 'https://forge.example.test', workspace: 'TEST-group/nested',
-  slug: 'TEST-repo', enabled: true, revision: 3, reviewerMayApprove: true, blockApprovalAt: 'BLOCKER', reviewLlmProviderId: null, reviewLlmModel: null,
+  slug: 'TEST-repo', enabled: true, revision: 3, reviewerMayApprove: true, blockApprovalAt: 'BLOCKER', verdictLabels: false, reviewLlmProviderId: null, reviewLlmModel: null,
   reviewHarness: null,
   reviewer: { id: 'TEST-reviewer', name: 'TEST-reviewer', role: 'REVIEWER', handle: 'TEST-review-bot', state: 'configured' },
   factory: { id: 'TEST-factory', name: 'TEST-factory', role: 'FACTORY', handle: null, state: 'disabled' },

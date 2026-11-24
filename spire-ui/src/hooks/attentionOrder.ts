@@ -2,7 +2,7 @@ import type { AttentionItem } from '../api';
 
 const SEVERITY_RANK: Record<AttentionItem['severity'], number> = { BLOCKING: 0, WARNING: 1 };
 
-/** Every per-review code carries it: REVIEW_STUCK, REVIEW_FAILED, REVIEW_DEGRADED, REVIEW_HARNESS_REFUSED. */
+/** Every per-review code carries it: REVIEW_STUCK, REVIEW_FAILED, REVIEW_DEGRADED, REVIEW_HARNESS_REFUSED, REVIEW_LABEL_FAILED. */
 const REVIEW_PREFIX = 'REVIEW_';
 
 /** Whether a row is about one review. */

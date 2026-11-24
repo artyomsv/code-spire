@@ -26,6 +26,8 @@ export interface Repository {
   reviewerMayApprove: boolean;
   // Open findings at this level or higher make the review Request changes and hold a factory land (V115).
   blockApprovalAt: BlockApprovalAt;
+  // Each posted review sets one `review: ` label from its decided verdict (V120). GitHub only; off by default.
+  verdictLabels: boolean;
   // The LLM provider this repository's reviews and replies use; null means the global default.
   reviewLlmProviderId: string | null;
   // The model used with reviewLlmProviderId; null exactly when that is null.
@@ -51,6 +53,7 @@ export interface RepositoryInput {
   factoryAccountId: string | null;
   reviewerMayApprove: boolean;
   blockApprovalAt: BlockApprovalAt;
+  verdictLabels: boolean;
   reviewLlmProviderId: string | null;
   reviewLlmModel: string | null;
   reviewHarness: ReviewHarness | null;
