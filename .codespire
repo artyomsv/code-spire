@@ -1,0 +1,45 @@
+# Code Spire review rules
+
+These are this repository's conventions. Treat a break of one as a finding, and name the rule.
+
+## Size and shape (Java and TypeScript, tests included)
+- A Java class: at most 300 lines. A React/TS file: at most 250 lines. A method or function: at most 30 lines.
+- A change must not make a file that is already over its limit any longer. Move new work into a new, focused class instead.
+- At most 3 parameters. For 4 or more, use a small immutable value object (a record).
+- No boolean "mode" parameters (`doIt(x, true, false)`). Use two named methods, an enum, or named builders. This applies to test helpers too.
+- At most 2 levels of nesting in a method. Prefer early returns.
+- One responsibility per class. If its description needs "and", split it.
+## Java
+- 4-space indentation. Explicit types, not `var`.
+- Pure domain modules (`spire-contract`, `spire-diff`) import no framework; only the JDK and `jackson-annotations` on wire types.
+- Components talk only through async events and commands. Only the aggregate appends domain events; workers emit integration events and sagas translate them.
+- Adding a field to a wire record: update every rebuild site through a wither that lists all components. Keep older constructors for compatibility. Expect
+`ContractSchemaSnapshotTest` to change.
+- No hard-coded LLM or SCM provider, and no default value for a credential. A missing setting must fail at start, naming the variable.
+- Money is integer millicents, never floating point.
+- Never log or store an email address, token, key or secret. Error messages must not echo values that could contain one.
+- Diffs are never stored. Findings and context are sensitive and are encrypted at rest.
+
+## Reliability
+- Every message handler must be safe to run twice. A redelivery must not post, charge, label or write anything a second time, and it must not overwrite a newer state with an  older one.
+- "Best effort" means best effort for the whole step, including its bookkeeping. A failure in a side step (a label, a cache, a notification) must never fail the main result
+that is already done.
+- A test fake that replaces a class must override every method the new code reaches, or it silently opens a real database.
+
+## TypeScript / React (spire-ui)
+- 2-space indentation. Use `interface` for object shapes, not `type`.
+- Server data only through React Query. No polling; live updates come through `useLiveSocket` and `liveCache`.
+- A new backend status value must also be added to the TS union, `STATUS_LABEL`, `miniPipeline` and `needsAttention`.
+- At most 8 `useState` calls and 8 props per component. An inline handler longer than 2 lines becomes a named function.
+- Every destructive action (delete, remove, unlink, reset) asks first through `ConfirmDialog`.
+- Icons come from lucide-react, never emoji. Every `className` must exist in the stylesheet.
+
+## Tests
+- Every guard needs a test that fails when the guard is removed. Test the case that tells "works" apart from "does nothing", not just the easy case.
+- Tests use obviously fake data (`TEST-` ids, `example.invalid` hosts), never values that look real.
+- A Java test class is held to the same 300-line limit. Put new cases in a new focused test class rather than growing a long one.
+
+## Docs and commits
+- A behaviour change updates its docs in the same change (`docs/HISTORY.md`, and `docs/UNVERIFIED.md` for anything not proven live).
+- Commit subject: imperative, at most 72 characters. No issue-closing keywords.
+- Never call this project "open source" in docs or UI; it is source-available.
