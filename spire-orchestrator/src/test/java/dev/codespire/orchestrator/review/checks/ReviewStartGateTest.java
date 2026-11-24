@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.review.checks;
 
 import dev.codespire.contract.command.ActionCommand;
+import dev.codespire.orchestrator.llm.ReviewRuns;
 import dev.codespire.orchestrator.repository.StartReview;
 import org.junit.jupiter.api.Test;
 
@@ -21,7 +22,7 @@ class ReviewStartGateTest extends ChecksWaitFixture {
         ActionCommand.FetchDiff fetch = fetch(HEAD);
         gate().begin(fetch);
         assertEquals(List.of(fetch), emitted);
-        assertNull(waits.waitOf(REVIEW_ID));
+        assertNull(waits.rowOf(REVIEW_ID));
         assertTrue(statuses.isEmpty(), statuses.toString());
     }
 
@@ -31,16 +32,17 @@ class ReviewStartGateTest extends ChecksWaitFixture {
         waits.startWaiting(waitOn(HEAD, 0));
         setting = StartReview.IMMEDIATELY;
         gate().begin(fetch(NEXT_HEAD));
-        assertNull(waits.waitOf(REVIEW_ID));
+        assertNull(waits.rowOf(REVIEW_ID));
         assertEquals(1, fetches().size());
     }
 
     @Test
-    void afterChecksRecordsAWaitAndSendsNothing() {
+    void afterChecksRecordsAWaitOfThisRunAndSendsNothing() {
         gate().begin(fetch(HEAD));
         assertTrue(emitted.isEmpty(), "nothing runs and nothing is charged while the review waits");
-        ChecksWait wait = waits.waitOf(REVIEW_ID);
+        ChecksWait wait = waits.rowOf(REVIEW_ID);
         assertEquals(HEAD, wait.head());
+        assertEquals(round, wait.round());
         assertTrue(wait.untrusted(), "the start sends the fork flag the event carried");
         assertEquals(List.of(ChecksWaitStatus.WAITING), statuses);
         assertEquals(List.of("ChecksWaitStarted"), history);
@@ -55,12 +57,22 @@ class ReviewStartGateTest extends ChecksWaitFixture {
         assertFalse(waits.isWaiting(REVIEW_ID));
     }
 
+    /** Without the run's round a wait could not be told from a re-run's, so the review starts rather than guess. */
+    @Test
+    void anUnreadableRoundStartsAtOnce() {
+        round = ReviewRuns.UNKNOWN_RUN;
+        gate().begin(fetch(HEAD));
+        assertEquals(1, fetches().size());
+        assertNull(waits.rowOf(REVIEW_ID));
+    }
+
     /** A new commit while waiting replaces the wait for the old head (the aggregate superseded it). */
     @Test
     void aNewCommitReplacesTheWait() {
         gate().begin(fetch(HEAD));
-        gate().begin(fetch(NEXT_HEAD));
-        assertEquals(NEXT_HEAD, waits.waitOf(REVIEW_ID).head());
+        requestRun(NEXT_HEAD);
+        assertEquals(NEXT_HEAD, waits.rowOf(REVIEW_ID).head());
+        assertEquals(2, waits.rowOf(REVIEW_ID).round());
         assertTrue(emitted.isEmpty());
     }
 }

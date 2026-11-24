@@ -9,25 +9,29 @@ import dev.codespire.contract.lifecycle.ReviewState;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.TestRepositoryProjection;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
+import dev.codespire.orchestrator.llm.ReviewRuns;
 import dev.codespire.orchestrator.pipeline.CommandsEmitter;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
 import dev.codespire.orchestrator.repository.StartReview;
+import dev.codespire.orchestrator.review.run.ReviewRoundLock;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * The gate, the resolver and the outcomes wired with hand-written fakes: no CDI container, no database, no forge.
- * The aggregate is the real {@link ReviewLifecycle} decider over an in-memory state, so its commit guard is the real one.
+ * The aggregate is the real {@link ReviewLifecycle} decider over an in-memory state, so its commit guard is the real
+ * one. {@link #duringRead} and {@link #duringSend} run once, inside a read or a send, which is how a test places a
+ * second resolver, a push or a crash between one resolver's steps.
  */
-abstract class ChecksWaitFixture {
+abstract class ChecksWaitFixture extends ChecksWaitFakes {
 
     static final RepoRef REPO = new RepoRef("TEST-owner", "TEST-repo");
     static final String REVIEW_ID = ReviewIds.reviewId(REPO, 7L);
@@ -36,42 +40,36 @@ abstract class ChecksWaitFixture {
     static final String NEXT_HEAD = "b".repeat(40);
 
     final InMemoryChecksWaits waits = new InMemoryChecksWaits();
-    final List<ActionCommand> emitted = new ArrayList<>();
-    final List<RecordCommand> recorded = new ArrayList<>();
-    final List<String> statuses = new ArrayList<>();
-    final List<String> history = new ArrayList<>();
-    final List<String> reads = new ArrayList<>();
     ReviewState state = reviewing(HEAD);
+    int round = 1;
     StartReview setting = StartReview.AFTER_CHECKS;
     boolean checksReadable = true;
     ChecksVerdict verdict = ChecksVerdict.PENDING;
     boolean verdictLabels;
-    String note;
+    /** Runs once inside the next read, before it answers. */
+    Runnable duringRead;
+    /** Runs once inside the next send, before it is acknowledged; it may throw, as a lost broker ack would. */
+    Runnable duringSend;
 
     static ReviewState reviewing(String head) {
         return new ReviewState(REVIEW_ID, REPO, 7L, ReviewState.Status.REVIEWING, head, Set.of(), null, Map.of(), Set.of());
-    }
-
-    static ChecksVerdict green() {
-        return new ChecksVerdict(ChecksVerdict.Kind.GREEN, List.of());
-    }
-
-    static ChecksVerdict red(String... failed) {
-        return new ChecksVerdict(ChecksVerdict.Kind.RED, List.of(failed));
     }
 
     static ActionCommand.FetchDiff fetch(String head) {
         return new ActionCommand.FetchDiff(REVIEW_ID, REPO, 7L, head, "TEST-packed-at-event", true);
     }
 
-    /** A wait on {@code head} that started {@code ageSeconds} ago. */
-    static ChecksWait waitOn(String head, long ageSeconds) {
-        return new ChecksWait(REVIEW_ID, REPOSITORY_ID, head, true, Instant.now().minusSeconds(ageSeconds));
+    /** A wait of round {@link #round} on {@code head} that started {@code ageSeconds} ago. */
+    ChecksWait waitOn(String head, long ageSeconds) {
+        return new ChecksWait(REVIEW_ID, REPOSITORY_ID, head, round, true, Instant.now().minusSeconds(ageSeconds),
+                ChecksWait.Stage.WAITING, null);
     }
 
-    List<ActionCommand.FetchDiff> fetches() {
-        return emitted.stream().filter(ActionCommand.FetchDiff.class::isInstance)
-                .map(ActionCommand.FetchDiff.class::cast).toList();
+    /** A new commit or a re-run: the aggregate's next round, as the saga and the re-run service ask for it. */
+    void requestRun(String head) {
+        round++;
+        state = reviewing(head);
+        gate().begin(fetch(head));
     }
 
     ReviewStartGate gate() {
@@ -86,6 +84,7 @@ abstract class ChecksWaitFixture {
         gate.reader = reader();
         gate.waits = waits;
         gate.commands = commands();
+        gate.runs = runs();
         return gate;
     }
 
@@ -106,7 +105,7 @@ abstract class ChecksWaitFixture {
         return sweep;
     }
 
-    private ChecksWaitOutcomes outcomes() {
+    ChecksWaitOutcomes outcomes() {
         ChecksWaitOutcomes outcomes = new ChecksWaitOutcomes();
         outcomes.waits = waits;
         outcomes.lifecycle = lifecycle();
@@ -124,7 +123,23 @@ abstract class ChecksWaitFixture {
                 return Optional.of(verdictLabels);
             }
         };
+        outcomes.rounds = new ReviewRoundLock() {
+            @Override
+            public <T> T holding(String reviewId, Supplier<T> work) {
+                return work.get();
+            }
+        };
+        outcomes.runs = runs();
         return outcomes;
+    }
+
+    private ReviewRuns runs() {
+        return new ReviewRuns() {
+            @Override
+            public int roundOrUnknown(String reviewId) {
+                return round;
+            }
+        };
     }
 
     private ChecksReader reader() {
@@ -137,6 +152,7 @@ abstract class ChecksWaitFixture {
             @Override
             public ChecksVerdict read(ChecksWait wait) {
                 reads.add(wait.head());
+                runOnce(() -> duringRead, () -> duringRead = null);
                 return verdict;
             }
         };
@@ -164,37 +180,21 @@ abstract class ChecksWaitFixture {
         return new CommandsEmitter() {
             @Override
             public void emit(ActionCommand command) {
+                runOnce(() -> duringSend, () -> duringSend = null);
                 emitted.add(command);
             }
         };
     }
 
     private ReviewProjection projection() {
-        return new TestRepositoryProjection() {
-            @Override
-            public void updateStatus(String reviewId, String status) {
-                statuses.add(status);
-            }
+        return recordingProjection();
+    }
 
-            @Override
-            public void updateStatus(String reviewId, String status, int stage) {
-                statuses.add(status);
-            }
-
-            @Override
-            public void appendEvent(String reviewId, String lane, String type, String detail) {
-                history.add(type);
-            }
-
-            @Override
-            public void setNote(String reviewId, String text) {
-                note = text;
-            }
-
-            @Override
-            public boolean archived(String reviewId) {
-                return false;
-            }
-        };
+    /** Runs the hook once, clearing it first, so a hook that re-enters the code under test does not run again. */
+    private static void runOnce(Supplier<Runnable> hook, Runnable clear) {
+        Runnable once = hook.get();
+        if (once == null) return;
+        clear.run();
+        once.run();
     }
 }

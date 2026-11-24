@@ -18,36 +18,37 @@ class ChecksWaitDecisionTest {
 
     static final String HEAD = "a".repeat(40);
     private static final Instant SINCE = Instant.parse("1970-01-01T00:00:00Z");
-    private static final ChecksWait WAIT = new ChecksWait("TEST-review", UUID.randomUUID(), HEAD, false, SINCE);
+    private static final ChecksWait WAIT = new ChecksWait("TEST-review", UUID.randomUUID(), HEAD, 1, false, SINCE,
+            ChecksWait.Stage.WAITING, null);
 
     @Test
     void greenStartsAndRedSkipsAtOnce() {
-        assertEquals(Action.START, decide(Checks.PASSED, 3, 3, SINCE));
-        assertEquals(Action.SKIP, decide(Checks.FAILED, 3, 3, SINCE));
+        assertEquals(Action.START, decide(checks(Checks.PASSED, 3, 3), SINCE));
+        assertEquals(Action.SKIP, decide(checks(Checks.FAILED, 3, 3), SINCE));
     }
 
     /** Only green starts: a cancelled, timed-out or errored check is not a pass. */
     @Test
     void aCheckThatIsNotCodeIsRedToo() {
-        assertEquals(Action.SKIP, decide(Checks.NOT_CODE, 2, 2, SINCE));
+        assertEquals(Action.SKIP, decide(checks(Checks.NOT_CODE, 2, 2), SINCE));
     }
 
     /** The reduction ranks FAILED above PENDING; a failure among unfinished checks still waits for the rest. */
     @Test
     void aFailureWhileOtherChecksRunKeepsWaiting() {
-        assertEquals(Action.KEEP_WAITING, decide(Checks.FAILED, 2, 3, SINCE.plusSeconds(120)));
+        assertEquals(Action.KEEP_WAITING, decide(checks(Checks.FAILED, 2, 3), SINCE.plusSeconds(120)));
     }
 
     @Test
     void noChecksWaitsForTheGraceReadThenStarts() {
-        assertEquals(Action.KEEP_WAITING, decide(Checks.PASSED, 0, 0, SINCE.plusSeconds(59)));
-        assertEquals(Action.START, decide(Checks.PASSED, 0, 0, SINCE.plus(ChecksWaitDecision.GRACE)));
+        assertEquals(Action.KEEP_WAITING, decide(checks(Checks.PASSED, 0, 0), SINCE.plusSeconds(59)));
+        assertEquals(Action.START, decide(checks(Checks.PASSED, 0, 0), SINCE.plus(ChecksWaitDecision.GRACE)));
     }
 
     @Test
     void pendingChecksStartAnUnfinishedReviewOnlyAtTheTimeout() {
-        assertEquals(Action.KEEP_WAITING, decide(Checks.PENDING, 1, 2, SINCE.plusSeconds(3599)));
-        assertEquals(Action.START_UNFINISHED, decide(Checks.PENDING, 1, 2, SINCE.plus(ChecksWaitDecision.TIMEOUT)));
+        assertEquals(Action.KEEP_WAITING, decide(checks(Checks.PENDING, 1, 2), SINCE.plusSeconds(3599)));
+        assertEquals(Action.START_UNFINISHED, decide(checks(Checks.PENDING, 1, 2), SINCE.plus(ChecksWaitDecision.TIMEOUT)));
     }
 
     @Test
@@ -79,8 +80,13 @@ class ChecksWaitDecisionTest {
         assertEquals(ChecksVerdict.Kind.PENDING, ChecksVerdict.of(incomplete, HEAD).kind());
     }
 
-    private static Action decide(Checks state, int done, int total, Instant now) {
-        LandState read = pullRequest(HEAD, new CheckSummary(state, done, total, List.of()));
+    /** Every check of a head, done or not, with none named as failed. */
+    private static CheckSummary checks(Checks state, int done, int total) {
+        return new CheckSummary(state, done, total, List.of());
+    }
+
+    private static Action decide(CheckSummary checks, Instant now) {
+        LandState read = pullRequest(HEAD, checks);
         return ChecksWaitDecision.decide(WAIT, ChecksVerdict.of(read, HEAD), now);
     }
 

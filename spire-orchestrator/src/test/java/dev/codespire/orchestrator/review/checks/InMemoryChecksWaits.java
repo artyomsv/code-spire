@@ -1,30 +1,24 @@
 package dev.codespire.orchestrator.review.checks;
 
-import java.util.ArrayList;
+import dev.codespire.orchestrator.review.checks.ChecksWait.Stage;
+
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * The wait table in memory, with the real one's take semantics: only a waiting row on the named head can be taken, and
- * only once. Every method the gate, the resolver and the outcomes reach is overridden; the real ones open a database.
+ * The wait table in memory, with the real one's guards: a claim moves only a waiting row of the same round, and every
+ * later change names the round, so it never touches a newer run's row. Every method the gate, the resolver and the
+ * outcomes reach is overridden; the real ones open a database. The sweep claims every row but the timed-out hold.
  */
 class InMemoryChecksWaits extends ChecksWaitStore {
 
-    private static final String WAITING = "waiting";
-    private static final String TIMED_OUT = "timed_out";
-
-    private record Row(ChecksWait checksWait, String state) {
-    }
-
-    private final Map<String, Row> rows = new LinkedHashMap<>();
-    /** What a sweep claims; the tests decide which waits are due. */
-    final List<ChecksWait> due = new ArrayList<>();
+    private final Map<String, ChecksWait> rows = new LinkedHashMap<>();
 
     @Override
     public void startWaiting(ChecksWait wait) {
-        rows.put(wait.reviewId(), new Row(wait, WAITING));
+        rows.put(wait.reviewId(), wait.at(Stage.WAITING));
     }
 
     @Override
@@ -33,54 +27,55 @@ class InMemoryChecksWaits extends ChecksWaitStore {
     }
 
     @Override
-    public boolean take(String reviewId, String head) {
-        if (!isWaitingOn(reviewId, head)) return false;
-        rows.remove(reviewId);
+    public boolean claim(ChecksWait claimed) {
+        ChecksWait row = rows.get(claimed.reviewId());
+        if (row == null || row.round() != claimed.round() || row.stage() != Stage.WAITING) return false;
+        rows.put(claimed.reviewId(), claimed);
         return true;
     }
 
     @Override
-    public boolean markTimedOut(String reviewId, String head) {
-        if (!isWaitingOn(reviewId, head)) return false;
-        rows.put(reviewId, new Row(rows.get(reviewId).checksWait(), TIMED_OUT));
-        return true;
+    public void finish(ChecksWait claimed) {
+        ChecksWait row = rows.get(claimed.reviewId());
+        if (row == null || row.round() != claimed.round() || row.stage() != claimed.stage()) return;
+        if (claimed.stage() == Stage.STARTING_UNFINISHED) rows.put(claimed.reviewId(), row.at(Stage.TIMED_OUT));
+        else rows.remove(claimed.reviewId());
+    }
+
+    @Override
+    public void drop(ChecksWait wait) {
+        ChecksWait row = rows.get(wait.reviewId());
+        if (row != null && row.round() == wait.round()) rows.remove(wait.reviewId());
     }
 
     @Override
     public boolean startedUnfinished(String reviewId, String commit) {
-        Row row = rows.get(reviewId);
-        return row != null && TIMED_OUT.equals(row.state()) && row.checksWait().head().equals(commit);
+        ChecksWait row = rows.get(reviewId);
+        return row != null && row.head().equals(commit)
+                && (row.stage() == Stage.STARTING_UNFINISHED || row.stage() == Stage.TIMED_OUT);
     }
 
     @Override
     public boolean isWaiting(String reviewId) {
-        Row row = rows.get(reviewId);
-        return row != null && WAITING.equals(row.state());
+        ChecksWait row = rows.get(reviewId);
+        return row != null && row.stage() == Stage.WAITING;
     }
 
     @Override
     public List<ChecksWait> waitingOn(UUID repositoryId, String head) {
         return rows.values().stream()
-                .filter(row -> WAITING.equals(row.state()) && row.checksWait().head().equals(head)
-                        && row.checksWait().repositoryId().equals(repositoryId))
-                .map(Row::checksWait).toList();
+                .filter(row -> row.stage() == Stage.WAITING && row.head().equals(head)
+                        && row.repositoryId().equals(repositoryId))
+                .toList();
     }
 
     @Override
     public List<ChecksWait> claimDue(int limit) {
-        List<ChecksWait> claimed = List.copyOf(due);
-        due.clear();
-        return claimed;
+        return rows.values().stream().filter(row -> row.stage() != Stage.TIMED_OUT).toList();
     }
 
-    /** The review's wait, or null. */
-    ChecksWait waitOf(String reviewId) {
-        Row row = rows.get(reviewId);
-        return row == null ? null : row.checksWait();
-    }
-
-    private boolean isWaitingOn(String reviewId, String head) {
-        Row row = rows.get(reviewId);
-        return row != null && WAITING.equals(row.state()) && row.checksWait().head().equals(head);
+    /** The review's row, or null. */
+    ChecksWait rowOf(String reviewId) {
+        return rows.get(reviewId);
     }
 }

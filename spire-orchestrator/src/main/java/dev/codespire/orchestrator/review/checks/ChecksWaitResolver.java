@@ -13,8 +13,9 @@ import java.util.UUID;
 
 /**
  * Reads a waiting head's checks and acts on {@link ChecksWaitDecision}. Reached two ways: a {@code check_suite} or
- * {@code status} webhook for the head ({@link #wake}), and the fallback sweep ({@link ChecksWaitSweep}). The webhook
- * only wakes; the read decides, so a forged or out-of-order event cannot start or skip a review by itself.
+ * {@code status} webhook for the head ({@link #wake}), and the fallback sweep ({@link #resume}), which also finishes an
+ * outcome a process claimed and did not complete. The webhook only wakes; the read decides, so a forged or
+ * out-of-order event cannot start or skip a review by itself.
  *
  * <p>A wait whose review moved on is dropped without a read: the aggregate no longer reviews that head (a close
  * cancelled it, a newer commit replaced it) or the review was archived.
@@ -46,11 +47,22 @@ public class ChecksWaitResolver {
         }
     }
 
+    /** A row the sweep claimed: a wait to read, or a claimed outcome to finish. */
+    public void resume(ChecksWait wait) {
+        switch (wait.stage()) {
+            case WAITING -> resolve(wait);
+            case STARTING, STARTING_UNFINISHED -> {
+                if (stillCurrent(wait)) outcomes.dispatch(wait);
+                else drop(wait);
+            }
+            case SKIPPING -> outcomes.finishSkip(wait);
+            case TIMED_OUT -> LOG.debugf("review %s: the timed-out hold on %s needs no sweep", wait.reviewId(), wait.head());
+        }
+    }
+
     public void resolve(ChecksWait wait) {
-        if (!stillWaiting(wait)) {
-            waits.take(wait.reviewId(), wait.head());
-            LOG.infof("review %s: dropped the wait on %s; the review no longer waits on that head", wait.reviewId(),
-                    wait.head());
+        if (!stillCurrent(wait)) {
+            drop(wait);
             return;
         }
         ChecksVerdict verdict = reader.read(wait);
@@ -62,7 +74,13 @@ public class ChecksWaitResolver {
         }
     }
 
-    private boolean stillWaiting(ChecksWait wait) {
+    private void drop(ChecksWait wait) {
+        waits.drop(wait);
+        LOG.infof("review %s: dropped the wait on %s; the review no longer waits on that head", wait.reviewId(),
+                wait.head());
+    }
+
+    private boolean stillCurrent(ChecksWait wait) {
         if (projection.archived(wait.reviewId())) return false;
         ReviewState state = lifecycle.currentState(wait.reviewId());
         return state.isReviewing() && wait.head().equals(state.currentCommit());

@@ -38,7 +38,7 @@ public class ChecksReader {
         if (reader.isEmpty()) return ChecksVerdict.UNREADABLE;
         ReviewIds.Parsed review = ReviewIds.parse(wait.reviewId());
         try {
-            return ChecksVerdict.of(reader.get().read(review.repo(), review.prId()), wait.head());
+            return ChecksVerdict.of(reader.orElseThrow().read(review.repo(), review.prId()), wait.head());
         } catch (RuntimeException unreadable) {
             LOG.warnf(unreadable, "review %s: the checks on %s could not be read; the wait goes on", wait.reviewId(),
                     wait.head());
