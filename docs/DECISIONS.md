@@ -631,6 +631,16 @@ label failure, and the posted review is still reported. A worker that dies betwe
 record cannot be written, labels again on redelivery. The port capability is `CommentSink.setVerdictLabel(repo, prId, VerdictLabel)`; GitLab and
 Bitbucket keep the default, "unsupported".
 
+**Amended 2026-11-24 — Review waits for CI (V121;
+[the CI-wait design](superpowers/specs/2026-11-24-review-waits-for-ci-design.md)).** A review a repository started on
+the 60-minute check timeout ("Start review: after checks finish", checks still pending) is posted as a Comment
+(reason `checks_unfinished`) and sets no `review: approved`, even with an approving assessment: an approval the bot
+withheld because CI had not finished must not reach the label. A blocking assessment still labels
+`review: changes-requested`. This exception is the CI hold's alone: a review held by "Reviewer may approve" off
+still labels from its assessment as above. A head whose checks failed gets no review and `review: ci-failed`, set
+once per skipped run by `LabelChecksFailed`, never on a head the pull request moved past, and never after a later
+review of the same head set its verdict label.
+
 ---
 
 ## ADR-046 — Verify runs the operator's checks on a clean copy of the checkpoint

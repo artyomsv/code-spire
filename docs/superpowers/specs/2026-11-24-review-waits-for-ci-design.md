@@ -34,7 +34,12 @@ finished green; a red build gets no review until a new commit (operator decision
 7. **Superseded / closed.** A new commit while waiting replaces the wait for the old head (existing supersede rule);
    a closed pull request ends the wait.
 8. **Timeout.** Checks still pending after 60 minutes: the review starts anyway, never approves (posted as a Comment),
-   and its summary says CI had not finished.
+   and its summary says CI had not finished. With Verdict labels on it sets no `review: approved` (a blocking
+   review still labels `review: changes-requested`; ADR-047, amended 2026-11-24).
+9. **One resolver per run.** Webhook and sweep may read one wait at once. Claiming the waiting row, keyed by the run's
+   round, is the permit to start or skip; a skip ends the run under the review's round lock and only while its round is
+   the review's, so it never cancels a started run or a re-run of the same head. A claim survives a crash and the
+   sweep finishes it (a FetchDiff or label may be sent twice, never zero times).
 
 ## Webhook setup
 

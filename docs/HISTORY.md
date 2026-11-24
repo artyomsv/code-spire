@@ -2623,12 +2623,19 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   a head with no checks starts after the 60 s grace read; red skips it: no review, no charge, status `skipped` with
   the failed check names, and `review: ci-failed` (posted with no comment) when Verdict labels is on. Checks still
   pending at the first read after 60 minutes start a review that never approves (posted as a Comment, its summary
-  opening with "CI had not finished"). The wait is durable (`review_checks_wait`), and taking its row is the permit to
-  start or skip, so a duplicate wake-up starts one review. The aggregate keeps the run REVIEWING while it waits, so a
-  new commit supersedes the wait and a close cancels it; a skip ends the run through the new, commit-guarded
+  opening with "CI had not finished", and no `review: approved` label; a blocking one still labels
+  `review: changes-requested`). The wait is a row of `review_checks_wait` keyed by the run (its round). Claiming the
+  waiting row (start, timed-out start or skip) is the permit to act, so only one resolver acts on a run; the claimed row
+  stays until its effects are done, and the sweep finishes a claim a crash left, which can send a run's FetchDiff or
+  label twice but never zero times. Nothing restores a wait after a failed send, so a newer head's wait is never
+  overwritten. The aggregate keeps the run REVIEWING while it waits, so a new commit supersedes the wait and a close
+  cancels it; a skip ends the run under the review's round lock through the new, commit-guarded
   `RecordCommand.SkipReview`, which emits the existing `ReviewCancelled` (reason `CHECKS_FAILED`, projected as
-  `skipped`). New wire types: `IntegrationEvent.ChecksChanged` (repository and head sha only) and
-  `ActionCommand.LabelChecksFailed`. Upgrading: V121 adds `repository.start_review` (default `IMMEDIATELY`) and the
+  `skipped`), only while the claimed round is still the review's, so a re-run on the same head is never cancelled. The
+  worker sets `review: ci-failed` once per skipped run, never on a head the pull request moved past, nor after a later
+  review of the same head set its verdict label. New wire types: `IntegrationEvent.ChecksChanged` (repository and head sha only) and
+  `ActionCommand.LabelChecksFailed` (with the skipped run's round). Interleavings are proven single-threaded against
+  fakes only (docs/UNVERIFIED.md). Upgrading: V121 adds `repository.start_review` (default `IMMEDIATELY`) and the
   `review_checks_wait` table. Add the **Check suites** and **Statuses** events to each GitHub Reviewer webhook (an
   existing webhook without them still works through the 5-minute sweep). Roll the gateway, the orchestrator and the
   review worker together: an older gateway drops the two events (the sweep still reads), and an older worker ignores
