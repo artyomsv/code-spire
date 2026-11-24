@@ -10,7 +10,9 @@
 # given a placeholder key and the proxy's address, and the real Anthropic API key never enters this
 # container. It pays with an API key only; a Claude subscription is never a path (docs/factory/
 # AGENT-IMAGE-CONTRACT.md).
-FROM node:22-bookworm-slim
+# Debian 13 (trixie), not 12 (bookworm): on 2026-11-24 Trivy reported about 120 HIGH and CRITICAL
+# findings in this image on bookworm packages with no fix released for bookworm.
+FROM node:22-trixie-slim
 
 # ca-certificates is NOT optional: without it every TLS call fails "invalid peer certificate:
 # UnknownIssuer". Behind the model proxy the agent speaks plain HTTP to spire-model:8080, but git and

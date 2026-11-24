@@ -2602,3 +2602,13 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   failure. Upgrading: V120 adds `repository.verdict_labels` (default false) and `review_status.label_failure`; roll
   the orchestrator and the review worker together (an older worker ignores the setting, which sets no label). Not yet
   run live: see the docs/UNVERIFIED.md entry.
+
+- **Dependabot and Trivy pass (2026-11-24, PRs #445 and #446).** Twelve Dependabot PRs were open and code scanning
+  held 995 Trivy alerts. Eight PRs (three actions, five dashboard packages) merged as they were. Four Gradle PRs were
+  closed for #445: one Jackson PR was pinned back down by the root `advisoryOverrides` force, one mixed Jackson minors,
+  and two moved two of the three langchain4j modules. #445 aligns every `com.fasterxml.jackson*` module on one release
+  (2.23.0, annotations 2.23) through `jacksonRelease`/`jacksonAnnotations`, moves langchain4j to 1.23.0, groups both
+  families in dependabot.yml, and forces bouncycastle 1.85, httpclient5 5.6.3 and guava 33.7.2-jre, found by Trivy in
+  the run-worker image. 981 of the 995 alerts were in the two agent images, almost all bookworm packages with no fix
+  released for bookworm, so #446 moves both images from `node:22-bookworm-slim` to `node:22-trixie-slim`. Neither
+  change is measured after merge yet (docs/UNVERIFIED.md, the two 2026-11-24 entries).

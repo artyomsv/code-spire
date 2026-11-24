@@ -33,6 +33,19 @@ evidence would settle it**.
 
 ---
 
+## Agent images on Debian trixie (2026-11-24)
+
+Built in CI only. Both agent images moved from `node:22-bookworm-slim` to `node:22-trixie-slim`.
+
+- **No live run on trixie.** No review, build or reply has run on either image since the move. A Codex review on a
+  seat and on a key, and a Claude Code review on a key (with the 3b canaries), on `spire-test` would close it.
+- **arm64 on trixie** is checked statically only, like the rest of the arm64 images.
+- **The Trivy reduction is not measured.** The aim is to drop the about 120 HIGH and CRITICAL bookworm findings per
+  image, but PR runs only build: Scan and Report run on master pushes, and Trivy exits 0 either way. A green build or
+  a successful scan is not a measured reduction. The first master scan and SARIF upload for each new image settles it:
+  record the run and both image digests, compare their HIGH and CRITICAL findings with the bookworm baseline
+  (2026-11-24: 121 per image, 2 of them critical), and read the alerts that remain.
+
 ## Dependency forces of 2026-11-24 (PR #445)
 
 The advisory and version mappings are checked: bouncycastle 1.85, httpclient5 5.6.3, guava 33.7.2-jre are the fixed releases in their
