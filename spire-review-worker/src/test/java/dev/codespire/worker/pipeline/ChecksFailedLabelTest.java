@@ -52,6 +52,19 @@ class ChecksFailedLabelTest {
         assertEquals(Set.of("review: requested"), sink.labels);
     }
 
+    /**
+     * A re-run of the same head marks the earlier run's open receipt superseded (and keeps it when it clears the
+     * worker's claims): the earlier run's command, replayed or delayed, labels nothing, though the head is the same.
+     */
+    @Test
+    void aSupersededRunLabelsNothingOnTheSameHead() {
+        claims.markPosted("TEST-review", HEAD, ChecksFailedLabel.CLAIM_PREFIX + 1, ChecksFailedLabel.SUPERSEDED);
+        sink.labels.add("TEST-operator-label");
+        label().apply(COMMAND);
+        assertTrue(sink.labelCalls.isEmpty());
+        assertEquals(Set.of("TEST-operator-label"), sink.labels);
+    }
+
     /** A delayed command for a head the pull request moved past never labels the newer head. */
     @Test
     void aNewerHeadIsNotLabelled() {

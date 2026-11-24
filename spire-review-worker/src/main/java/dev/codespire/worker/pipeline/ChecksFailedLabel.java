@@ -17,6 +17,9 @@ import org.jboss.logging.Logger;
  * <ul>
  *   <li>once per skipped run: the attempt is recorded under {@code CI_FAILED:<round>}, so a replayed command never
  *   labels again over a label someone set since;</li>
+ *   <li>never for a run a newer run replaced: the orchestrator opens the receipt before it sends the command and marks
+ *   every open one {@code superseded} when the next run of the review is admitted, a re-run of the same head included
+ *   (a re-run keeps these receipts when it clears the worker's claims);</li>
  *   <li>never for a head the pull request has moved past (a delayed command);</li>
  *   <li>never after a later review of the same head set its verdict label (a re-run on the same commit).</li>
  * </ul>
@@ -28,6 +31,8 @@ public class ChecksFailedLabel {
 
     /** The claim slot of one skipped run's label, beside the review's own slots; never a posted comment. */
     static final String CLAIM_PREFIX = "CI_FAILED:";
+    /** What the orchestrator records on an open receipt when the next run of the review is admitted. */
+    static final String SUPERSEDED = "superseded";
     private static final Logger LOG = Logger.getLogger(ChecksFailedLabel.class);
 
     @Inject
@@ -53,9 +58,9 @@ public class ChecksFailedLabel {
         }
         String slot = CLAIM_PREFIX + command.round();
         if (idempotency.claim(command.reviewId(), command.commit(), slot)
-                instanceof CommentIdempotencyStore.Claim.AlreadyPosted) {
-            LOG.infof("review %s: run %d's %s label was already attempted", command.reviewId(), command.round(),
-                    VerdictLabel.CI_FAILED.name());
+                instanceof CommentIdempotencyStore.Claim.AlreadyPosted recorded) {
+            LOG.infof("review %s: no %s label for run %d: %s", command.reviewId(), VerdictLabel.CI_FAILED.name(),
+                    command.round(), SUPERSEDED.equals(recorded.postedRef()) ? "a newer run started" : "already attempted");
             return;
         }
         LabelOutcome outcome = clients.comments().setVerdictLabel(command.repo(), command.prId(), VerdictLabel.CI_FAILED);

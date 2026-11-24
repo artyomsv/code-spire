@@ -172,6 +172,17 @@ class ReviewWorkerVerdictLabelTest {
         assertTrue(fx.idempotency.postedFor(REVIEW_ID, COMMIT).containsKey(VerdictLabels.CLAIM_KEY));
     }
 
+    /** An earlier skipped run's ci-failed receipt on this head (V121) is never recovered as an inline comment. */
+    @Test
+    void aSkippedRunsLabelReceiptNeverBecomesAnInlineComment() {
+        fx.idempotency.markPosted(REVIEW_ID, COMMIT, ChecksFailedLabel.CLAIM_PREFIX + 1, "APPLIED");
+
+        worker.postComments(labelled(ReviewVerdict.APPROVE));
+
+        assertTrue(posted().inline().isEmpty(), posted().inline().toString());
+        assertFalse(InlineRecovery.isInline(ChecksFailedLabel.CLAIM_PREFIX + 1));
+    }
+
     /** Review of PR #444, M-2: the claim store is down after the review was posted. Unknown state: no label call. */
     @Test
     void aLabelClaimThatCannotBeReadSkipsTheLabelAndStillReportsTheReview() {
