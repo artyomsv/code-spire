@@ -422,6 +422,7 @@ Every event (integration or domain) is wrapped:
 | `PullRequestClosed` | `spire-gateway` | repo, prId, reason(`MERGED`/`DECLINED`) — triggers the cancel saga (ADR-013); for a pull request a work item delivered, also the land observation (M4 land §7.8) |
 | `ManualCommandReceived` | `spire-gateway` | repo, prId, command(`review`/…), args, author{providerUserId,username} — parsed from a `/command` PR comment; the saga maps `review` → `RequestReview{force=true}` |
 | `PushReceived` *(P3)* | `spire-gateway` | repo, ref, commits[] |
+| `ChecksChanged` | `spire-gateway` | repo, headCommit — a GitHub `check_suite` (completed) or final `status` on the Reviewer webhook. Only wakes the reviews waiting on that head (review waits for CI, V121); the orchestrator's own read of the checks decides |
 | `DiffFetched` | `spire-review-worker` (via `DiffSource`) | reviewId, prId, commit, changedFiles, languages[], sizeBytes, truncated — **metadata only; no diff content** (deliberate two-fetch: content is re-fetched by commit at generate time; a 404 on re-fetch means the commit was force-pushed away → treat as superseded) |
 | `ContextRequested` | `spire-context-worker` | reviewId, repo, prId, commit, **references[]**, **expectedSources[]**, **scmType** — fan-out signal each `ContextProvider` subscribes to (§8) |
 | `ContextContributed` | each `ContextProvider` | reviewId, source(`JIRA`/`CONFLUENCE`/`GITHUB_ISSUES`/`GITLAB_ISSUES`/`RULES`/`CODE`/`MEMORY`), status(`OK`/`EMPTY`/`ERROR`), items[], latencyMs |
@@ -471,6 +472,7 @@ Every event (integration or domain) is wrapped:
 | `AnswerFollowUp` | `spire-review-worker` | reviewId, repo, prId, threadRef, question, replyAuthor? (the triggering comment's author, no email; the answer opens with the forge's mention of them) — the worker fetches the thread history from the SCM on demand (no blob; same re-fetch philosophy as diffs) |
 | `NotifyTurnCap` | `spire-review-worker` | reviewId, repo, prId, threadRef, turnCap — fixed-text hand-off notice, no LLM credential; the worker claims once per thread (the slot is the thread ref) so later replies to a capped thread post nothing |
 | `NotifyArchived` | `spire-review-worker` | reviewId, repo, prId, threadRef? (null → top-level PR comment) — fixed-text retirement notice, no LLM credential; claimed once per review (ADR-024) |
+| `LabelChecksFailed` | `spire-review-worker` | reviewId, repo, prId, commit — the head's checks failed and no review ran (V121): set `review: ci-failed` (replacing every other `review: ` label), post nothing; best effort, a failure is logged; sent only with Verdict labels on |
 | `ConfirmFinding` | `spire-review-worker` | reviewId, repo, prId, threadRef, triggeringCommentId, severity, path, line — fixed-text confirmation that a `/finding` was filed, no LLM credential; claimed per triggering comment, so a second finding in one thread gets its own confirmation |
 | `RefuseFinding` | `spire-review-worker` | reviewId, repo, prId, threadRef — fixed-text refusal that a `/finding` had nowhere to anchor, no LLM credential; only emitted when there is a thread to reply into (a bare timeline note otherwise) |
 | `PrepareHarnessReview` | `spire-review-worker` | reviewId, repo, prId, commit, contextRef?, scmCredential, priorRun?, round (from 1), kind — `RECONCILE` exactly when `priorRun` has findings, `REVIEW` otherwise, `FOLLOWUP` refused; `toString` prints neither the credential nor a finding |
@@ -484,6 +486,7 @@ Every event (integration or domain) is wrapped:
 |---|---|
 | `RequestReview{commit,trigger,force}` | new commit → `ReviewRequested`; if newer run active → also `ReviewSuperseded`; `force=true` bypasses the reviewed-commit idempotency (FR-12) |
 | `CancelReview{reason}` | REVIEWING → `ReviewCancelled` (from `PullRequestClosed` or an operator action) |
+| `SkipReview{commit,reason}` | commit==current → `ReviewCancelled{reason}` (review waits for CI: the head's checks failed; reason `CHECKS_FAILED`, projected as `skipped`; a skip for a replaced head → no-op) |
 | `RecordReviewOutcome{commit,findingsCount,summaryDigest}` | commit==current → `ReviewOutcomeRecorded` (aggregate keeps only a digest, not the findings) |
 | `RecordCommentsPosted{commit,summaryCommentId,count}` | commit==current → `ReviewCompleted` |
 | `RecordFailure{commit,phase,retryable}` | commit==current AND !retryable → `ReviewFailedTerminally` (stale failure from a superseded run → no-op) |
@@ -524,6 +527,7 @@ raisedFindingComments: Set<commentId>  // idempotency for /finding, same shape a
 | `REVIEWING` | `RecordFailure{c,retryable=false}` | **`c == currentCommit`** (stale failure from a superseded run → no-op) | `ReviewFailedTerminally` | FAILED |
 | `REVIEWING` | `CancelReview{reason}` | — | `ReviewCancelled{reason}` | CANCELLED |
 | `IDLE/COMPLETED/FAILED/CANCELLED` | `CancelReview` | — | `[]` (nothing in flight — no-op) | — |
+| `REVIEWING` | `SkipReview{c,reason}` | **`c == currentCommit`** (a skip decided for a head a newer commit replaced → no-op) | `ReviewCancelled{reason}` | CANCELLED (a redelivered event for `c` stays a no-op; a new commit requests afresh) |
 | any | `OpenThread` / `RecordFollowUp` | — | `ThreadOpened` / `FollowUpRecorded` | threads updated |
 | any | `RaiseConversationFinding{threadRef,path,line,severity,message,triggeringCommentId}` | `triggeringCommentId ∉ raisedFindingComments` | `ConversationFindingRaised` (redelivered comment id → `[]`, idempotent no-op) | +raisedFindingComments |
 

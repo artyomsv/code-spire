@@ -137,7 +137,12 @@ default `BLOCKER`, checked to `BLOCKER`, `MAJOR` or `MINOR`; ADR-047 as amended 
 or above it makes the review Request changes and holds a factory land. V120 adds `verdict_labels` (boolean, not
 null, default false; ADR-047 as amended 2026-11-24): on, each posted review sets one `review: ` label from its
 decided verdict, and `review_status.label_failure` (text, nullable) holds why the last posted review's label call
-failed. V105 adds nullable
+failed. V121 adds `start_review` (text, not null, default `IMMEDIATELY`, checked to `IMMEDIATELY` or
+`AFTER_CHECKS`; review waits for CI): with `AFTER_CHECKS` a review of a new head waits in `review_checks_wait`
+(one row per review: repository, head, fork flag, `waiting` or `timed_out`, the wait's start and the sweep's next
+read; FK to `review_status` with ON DELETE CASCADE) until its checks finish. A `timed_out` row is kept as the hold that
+keeps the review started on the 60-minute timeout from approving. The read model shows `waiting_for_checks` and
+`skipped`. V105 adds nullable
 `review_llm_provider_id` (FK to `llm_provider`, no ON DELETE action): the LLM provider the
 repository's reviews and replies use, null meaning the global default. Deleting a provider a
 repository names is refused (409); a switched-off one refuses the repository's reviews rather than

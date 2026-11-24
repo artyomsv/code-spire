@@ -2612,3 +2612,24 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   the run-worker image. 981 of the 995 alerts were in the two agent images, almost all bookworm packages with no fix
   released for bookworm, so #446 moves both images from `node:22-bookworm-slim` to `node:22-trixie-slim`. Neither
   change is measured after merge yet (docs/UNVERIFIED.md, the two 2026-11-24 entries).
+
+- **Review waits for CI (2026-11-24, branch `feat/review-waits-for-ci`, V121, Part of #391).** On code-spire #444 the
+  bot approved while CI was still running, and CI then failed. A GitHub repository may now set "Start review" to
+  "After checks finish" (Repository → Settings → Reviewing, beside "Verdict labels"; "Immediately" stays the default
+  and behaves as before). The review of a new head, a re-run included, is then recorded as `waiting_for_checks` and
+  nothing runs. A `check_suite` (completed) or `status` webhook wakes the reviews waiting on its head, and a sweep reads
+  every wait 60 s after it starts and then every 5 minutes, so a lost webhook only delays a review; the webhook only
+  wakes, and the reviewer account's own read (the land path's `GitHubCheckReduction`) decides. Green starts the review;
+  a head with no checks starts after the 60 s grace read; red skips it: no review, no charge, status `skipped` with
+  the failed check names, and `review: ci-failed` (posted with no comment) when Verdict labels is on. Checks still
+  pending at the first read after 60 minutes start a review that never approves (posted as a Comment, its summary
+  opening with "CI had not finished"). The wait is durable (`review_checks_wait`), and taking its row is the permit to
+  start or skip, so a duplicate wake-up starts one review. The aggregate keeps the run REVIEWING while it waits, so a
+  new commit supersedes the wait and a close cancels it; a skip ends the run through the new, commit-guarded
+  `RecordCommand.SkipReview`, which emits the existing `ReviewCancelled` (reason `CHECKS_FAILED`, projected as
+  `skipped`). New wire types: `IntegrationEvent.ChecksChanged` (repository and head sha only) and
+  `ActionCommand.LabelChecksFailed`. Upgrading: V121 adds `repository.start_review` (default `IMMEDIATELY`) and the
+  `review_checks_wait` table. Add the **Check suites** and **Statuses** events to each GitHub Reviewer webhook (an
+  existing webhook without them still works through the 5-minute sweep). Roll the gateway, the orchestrator and the
+  review worker together: an older gateway drops the two events (the sweep still reads), and an older worker ignores
+  `LabelChecksFailed`. Not yet run live: see the docs/UNVERIFIED.md entry.
