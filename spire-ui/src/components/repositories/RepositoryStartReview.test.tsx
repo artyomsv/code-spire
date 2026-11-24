@@ -4,6 +4,7 @@ import * as accounts from '../../api';
 import * as api from './repositoriesApi';
 import RepositorySwitches from './RepositorySwitches';
 import RepositorySettings from './RepositorySettings';
+import { START_REVIEW_HINT } from './RepositoryStartReview';
 import { queryWrapper } from '../../test/queryWrapper';
 
 const fields = (scmType: string): api.RepositoryInput => ({
@@ -27,13 +28,15 @@ describe('Start review', () => {
     vi.spyOn(api, 'saveRepository').mockResolvedValue({ ...github, startReview: 'AFTER_CHECKS', revision: 4 });
   });
 
-  it('is offered on a GitHub repository, immediately by default, and a choice changes it', () => {
+  it('is offered on a GitHub repository, immediately by default, explained on its info control, and a choice changes it', () => {
     const onChange = vi.fn();
     render(<RepositorySwitches fields={fields('github')} onChange={onChange} />);
 
     const setting = screen.getByRole('combobox', { name: 'Start review' });
     expect(setting).toHaveValue('IMMEDIATELY');
-    expect(screen.getByText(/a red build gets no review and no charge/)).toBeInTheDocument();
+    fireEvent.focus(screen.getByRole('button', { name: 'About start review — repository' }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent(START_REVIEW_HINT);
+    expect(screen.queryByText(/a red build gets no review/, { selector: 'p' })).not.toBeInTheDocument();
     fireEvent.change(setting, { target: { value: 'AFTER_CHECKS' } });
     expect(onChange).toHaveBeenCalledWith({ startReview: 'AFTER_CHECKS' });
   });
