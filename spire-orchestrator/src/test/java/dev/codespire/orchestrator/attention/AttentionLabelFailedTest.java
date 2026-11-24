@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.attention;
 
 import dev.codespire.contract.attention.AttentionView;
+import dev.codespire.orchestrator.readmodel.ArchiveOutcome;
 import dev.codespire.orchestrator.readmodel.ReviewFixtures;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import io.quarkus.test.junit.QuarkusTest;
@@ -70,10 +71,13 @@ class AttentionLabelFailedTest {
     @Test
     void anArchivedReviewRaisesNothing() {
         long pr = reviewing();
-        projection.recordLabelFailure(ReviewFixtures.reviewIdFor(pr), head(pr), "TEST-HTTP-403");
+        String reviewId = ReviewFixtures.reviewIdFor(pr);
+        // A label failure belongs to a posted review, and a review still reviewing cannot be archived.
+        projection.updateStatus(reviewId, "completed", ReviewProjection.STAGE_DONE);
+        projection.recordLabelFailure(reviewId, head(pr), "TEST-HTTP-403");
         assertEquals(1, rowsFor(pr).size(), "raised while live");
 
-        projection.archiveReview(WS, REPO, pr);
+        assertEquals(ArchiveOutcome.ARCHIVED, projection.archiveReview(WS, REPO, pr));
 
         assertTrue(rowsFor(pr).isEmpty());
     }
