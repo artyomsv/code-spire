@@ -77,8 +77,9 @@ public final class ReviewVerdictDecision {
      * is posted as a Comment whatever the findings say, as with "Reviewer may approve" off. The assessment is kept.
      */
     public static Decision holdForUnfinishedChecks(Decision decision) {
-        return new Decision(decision.assessment(), ReviewVerdict.COMMENT, false,
-                decision.reason() + " · " + REASON_CHECKS_UNFINISHED);
+        String reason = decision.reason() == null ? REASON_CHECKS_UNFINISHED
+                : decision.reason() + " · " + REASON_CHECKS_UNFINISHED;
+        return new Decision(decision.assessment(), ReviewVerdict.COMMENT, false, reason);
     }
 
     /** Why the bot may not change merge state here; null when it may. */

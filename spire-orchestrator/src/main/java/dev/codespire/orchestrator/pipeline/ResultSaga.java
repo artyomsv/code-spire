@@ -119,8 +119,7 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.prompt.WorkerPromptTemplates promptTemplates;
 
-    /** Max pipeline runs before a retryable failure fails terminally (C8) — read from the policy on each
-     *  failure, so changing it in Settings takes effect without a restart. */
+    /** Max pipeline runs before a retryable failure fails terminally (C8), read on each failure (no restart). */
     @Inject
     dev.codespire.orchestrator.policy.ReviewPolicy reviewPolicy;
 
@@ -129,8 +128,7 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.caps.CapPolicy capPolicy;
 
-    /** The spend/call cap (Task 6), shared with {@link ConversationSaga}'s follow-up gate so the two
-     *  paid-call sites cannot drift apart on what "over the cap" means. */
+    /** The spend/call cap (Task 6), shared with {@link ConversationSaga}'s follow-up gate so the two cannot drift. */
     @Inject
     dev.codespire.orchestrator.caps.SpendGate spendGate;
 
@@ -487,30 +485,32 @@ public class ResultSaga {
             projection.recordReconciliation(e.reviewId(), e.verdicts(),
                     prior.map(PriorRun::findings).orElse(List.of()));
         }
-        // Carry-forward baseline for the NEXT follow-up (ADR-019 refinement): unconditional,
-        // even with empty verdicts — a first review then stores just its own findings,
-        // priming carry-forward for round 2 (recordPosted's COALESCE keeps first-review
-        // posted_findings_json semantics unchanged since the two columns hold the same
-        // findings in that case).
+        // Carry-forward baseline for the NEXT follow-up (ADR-019): unconditional, so a first review stores just its own
+        // findings (recordPosted's COALESCE keeps first-review posted_findings_json unchanged).
         projection.recordOpenFindings(e.reviewId(), visible, e.verdicts(),
                 prior.map(PriorRun::findings).orElse(List.of()));
         projection.setNote(e.reviewId(), noteFor(visible));
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
                 e.commit(), visible.findings().size(),
                 Integer.toHexString(visible.summary().hashCode())));
+        postReview(e, filtered, priorSummaryRef);
+    }
+
+    /** The verdict (ADR-047 D4, V115), the label (V120) and the CI hold (V121), sent as this run's PostComments. */
+    private void postReview(ReviewGenerated e, dev.codespire.orchestrator.memory.PreferenceFilter.Filtered filtered,
+                            String priorSummaryRef) {
         ReviewPostSettings settings = new ReviewPostSettings(
                 new ReviewPostSettings.Sources(projection, repositories, repositoryAccounts, checksWaits));
-        ReviewVerdictDecision.Decision decision = settings.decide(e, visible);
+        ReviewVerdictDecision.Decision decision = settings.decide(e, filtered.result());
         projection.appendEvent(e.reviewId(), "result", "ReviewVerdictDecided", decision.detail());
-        // The run's token travels with the command: the worker marks this run's review with it, so a
-        // re-run on the same head posts beside the earlier run's review instead of reusing it.
+        // The worker marks this run's review with its token, so a re-run on the same head posts beside the earlier one.
         String runToken = projection.runTokenOf(e.reviewId()).orElse(null);
         emitWithCredential(e.reviewId(), "PostComments", cred -> new ActionCommand.PostComments(
-                e.reviewId(), repo, e.prId(), e.commit(), settings.posted(e, visible), cred,
-                e.verdicts(), priorSummaryRef, filtered.suppressedCount())
+                e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
+                settings.posted(e, filtered.result()), cred, e.verdicts(), priorSummaryRef, filtered.suppressedCount())
                 .withVerdict(decision.assessment(), decision.verdict(), decision.mayApprove())
                 .withRunToken(runToken)
-                .withVerdictLabels(settings.verdictLabels(e.reviewId())));
+                .withVerdictLabels(settings.verdictLabels(e, decision)));
     }
 
     /**

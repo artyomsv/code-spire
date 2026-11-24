@@ -109,14 +109,19 @@ public class RepositoryRegistry {
             statement.setString(11, input.startReview()); // null: keep the stored setting (V121)
             statement.setObject(12, id);
             statement.setLong(13, expectedRevision);
-            statement.setString(14, input.scmType());
-            statement.setString(15, input.forgeOrigin());
-            statement.setString(16, input.workspace());
-            statement.setString(17, input.slug());
+            setCoordinates(statement, input);
             if (statement.executeUpdate() != 1) throw new AccountConflict("Repository changed or its coordinates differ; reload before saving");
             bindings.replace(connection, id, input);
         } catch (SQLException failure) { throw referenceGone(failure); }
         return get(id).orElseThrow();
+    }
+
+    /** The coordinates an update is guarded on, parameters 14 to 17: a form for another repository changes nothing. */
+    private static void setCoordinates(PreparedStatement statement, RepositoryInput input) throws SQLException {
+        statement.setString(14, input.scmType());
+        statement.setString(15, input.forgeOrigin());
+        statement.setString(16, input.workspace());
+        statement.setString(17, input.slug());
     }
 
     private void insert(Connection connection, UUID id, RepositoryInput input) throws SQLException {
@@ -152,8 +157,8 @@ public class RepositoryRegistry {
 
     public RepositoryInput normalize(RepositoryInput input) {
         if (input == null || input.scmType() == null || !ProviderClients.SUPPORTED_TYPES.contains(input.scmType())) throw new IllegalArgumentException("Select a supported forge kind");
-        String workspace = path(input.workspace());
-        String slug = path(input.slug());
+        String workspace = RepositoryPaths.path(input.workspace());
+        String slug = RepositoryPaths.path(input.slug());
         if (slug.contains("/")) throw new IllegalArgumentException("Repository slug cannot contain a slash");
         return new RepositoryInput(input.scmType(), ForgeOrigin.of(input.forgeOrigin()), workspace, slug,
                 input.enabled() == null || input.enabled(), input.reviewerAccountId(), input.factoryAccountId(),
@@ -247,16 +252,6 @@ public class RepositoryRegistry {
                 return rows.next() ? Optional.of(BlockApprovalAt.valueOf(rows.getString(1))) : Optional.empty();
             }
         } catch (SQLException failure) { throw database(failure); }
-    }
-
-    private String path(String value) {
-        if (value == null || value.isBlank()) throw new IllegalArgumentException("Workspace and repository slug are required");
-        String result = value.trim();
-        for (String part : result.split("/", -1)) {
-            if (part.isBlank() || part.equals(".") || part.equals("..") || part.contains("\\")
-                    || part.chars().anyMatch(Character::isISOControl)) throw new IllegalArgumentException("Invalid repository path");
-        }
-        return result;
     }
 
     private RepositoryView view(ResultSet rows) throws SQLException {

@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.pipeline;
 
 import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
 import dev.codespire.contract.review.ReviewResult;
+import dev.codespire.contract.review.ReviewVerdict;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.repository.BlockApprovalAt;
 import dev.codespire.orchestrator.repository.RepositoryAccounts;
@@ -63,10 +64,16 @@ final class ReviewPostSettings {
         return visible.withSummary(CHECKS_UNFINISHED_NOTICE + Objects.toString(visible.summary(), ""));
     }
 
-    /** The repository's "Verdict labels" (V120); off for an unknown repository. */
-    boolean verdictLabels(String reviewId) {
-        return sources.projection().repositoryIdOf(reviewId)
+    /**
+     * The repository's "Verdict labels" (V120); off for an unknown repository. A review that started before its checks
+     * finished sets no {@code review: approved}: an approval it never posted must not reach the label either. It keeps
+     * {@code review: changes-requested}, which an unfinished build does not weaken. The labels of a review held by
+     * "Reviewer may approve" still follow its assessment (ADR-047).
+     */
+    boolean verdictLabels(ReviewGenerated generated, ReviewVerdictDecision.Decision decision) {
+        boolean on = sources.projection().repositoryIdOf(generated.reviewId())
                 .flatMap(id -> sources.repositories().verdictLabels(id)).orElse(false);
+        return on && !(decision.assessment() == ReviewVerdict.APPROVE && checksUnfinished(generated));
     }
 
     /** Whether this run started on the check timeout (V121); never for an unknown repository. */
