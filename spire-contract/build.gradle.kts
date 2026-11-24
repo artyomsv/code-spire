@@ -19,10 +19,10 @@ dependencies {
     api(project(":spire-worksource")) // framework-free normalized work-source control facts
     // Annotations only (no databind): the sealed event/command hierarchies ARE
     // the wire contract, so the polymorphic type ids live with them.
-    api("com.fasterxml.jackson.core:jackson-annotations:2.22")
+    api("com.fasterxml.jackson.core:jackson-annotations:2.23")
 
-    testImplementation("com.fasterxml.jackson.core:jackson-databind:2.22.4")
-    testImplementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.22.4")
+    testImplementation("com.fasterxml.jackson.core:jackson-databind:2.23.0")
+    testImplementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.23.0")
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

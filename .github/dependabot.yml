@@ -19,6 +19,16 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 7
+    # Jackson and langchain4j publish modules that must share one version. One PR per module mixed
+    # them (2.23 jsr310 on 2.22 databind; anthropic 1.23 beside open-ai 1.22). A Jackson group PR still
+    # needs the advisoryOverrides force in the root build.gradle.kts moved by hand.
+    groups:
+      jackson:
+        patterns:
+          - "com.fasterxml.jackson*"
+      langchain4j:
+        patterns:
+          - "dev.langchain4j*"
 
   - package-ecosystem: npm
     directory: /spire-ui

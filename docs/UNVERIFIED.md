@@ -33,6 +33,18 @@ evidence would settle it**.
 
 ---
 
+## Dependency forces of 2026-11-24 (PR #445)
+
+The advisory and version mappings are checked: bouncycastle 1.85, httpclient5 5.6.3, guava 33.7.2-jre are the fixed releases in their
+advisory records, Jackson 2.23.0 is outside the nine affected ranges, and CI built and tested every module with them. Not measured:
+
+- **What the packaged images resolve.** No CI step keeps a dependency report, so no record shows that each of the
+  four services resolves every `com.fasterxml.jackson*` module to 2.23.0 (annotations 2.23) under the enforced
+  Quarkus BOM, or that no other dependency moved down. `./gradlew :spire-<service>:dependencyInsight
+  --configuration runtimeClasspath --dependency jackson` in CI would settle it.
+- **That the Trivy alerts close because the packages changed.** Scan and SARIF upload run on master pushes only. The
+  first master scan after the merge, read against the image digest it names, settles it.
+
 ## Model catalog from a public file (ADR-051, branch feat/ai-catalog, 2026-11-20)
 
 Built and tested in CI only; no live deployment has read the catalog yet.

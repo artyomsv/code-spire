@@ -15,9 +15,9 @@ repositories {
 }
 
 dependencies {
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.4")
-    implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.22.4")
-    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.22.4")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.23.0")
+    implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.23.0")
+    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.23.0")
 
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
