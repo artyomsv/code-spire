@@ -15,7 +15,7 @@ class InMemoryChecksWaits extends ChecksWaitStore {
     private static final String WAITING = "waiting";
     private static final String TIMED_OUT = "timed_out";
 
-    private record Row(ChecksWait wait, String state) {
+    private record Row(ChecksWait checksWait, String state) {
     }
 
     private final Map<String, Row> rows = new LinkedHashMap<>();
@@ -42,14 +42,14 @@ class InMemoryChecksWaits extends ChecksWaitStore {
     @Override
     public boolean markTimedOut(String reviewId, String head) {
         if (!isWaitingOn(reviewId, head)) return false;
-        rows.put(reviewId, new Row(rows.get(reviewId).wait(), TIMED_OUT));
+        rows.put(reviewId, new Row(rows.get(reviewId).checksWait(), TIMED_OUT));
         return true;
     }
 
     @Override
     public boolean startedUnfinished(String reviewId, String commit) {
         Row row = rows.get(reviewId);
-        return row != null && TIMED_OUT.equals(row.state()) && row.wait().head().equals(commit);
+        return row != null && TIMED_OUT.equals(row.state()) && row.checksWait().head().equals(commit);
     }
 
     @Override
@@ -61,9 +61,9 @@ class InMemoryChecksWaits extends ChecksWaitStore {
     @Override
     public List<ChecksWait> waitingOn(UUID repositoryId, String head) {
         return rows.values().stream()
-                .filter(row -> WAITING.equals(row.state()) && row.wait().head().equals(head)
-                        && row.wait().repositoryId().equals(repositoryId))
-                .map(Row::wait).toList();
+                .filter(row -> WAITING.equals(row.state()) && row.checksWait().head().equals(head)
+                        && row.checksWait().repositoryId().equals(repositoryId))
+                .map(Row::checksWait).toList();
     }
 
     @Override
@@ -76,11 +76,11 @@ class InMemoryChecksWaits extends ChecksWaitStore {
     /** The review's wait, or null. */
     ChecksWait waitOf(String reviewId) {
         Row row = rows.get(reviewId);
-        return row == null ? null : row.wait();
+        return row == null ? null : row.checksWait();
     }
 
     private boolean isWaitingOn(String reviewId, String head) {
         Row row = rows.get(reviewId);
-        return row != null && WAITING.equals(row.state()) && row.wait().head().equals(head);
+        return row != null && WAITING.equals(row.state()) && row.checksWait().head().equals(head);
     }
 }

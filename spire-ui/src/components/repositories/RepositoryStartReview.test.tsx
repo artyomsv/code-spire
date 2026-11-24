@@ -31,7 +31,7 @@ describe('Start review', () => {
     const onChange = vi.fn();
     render(<RepositorySwitches fields={fields('github')} onChange={onChange} />);
 
-    const setting = screen.getByLabelText('Start review');
+    const setting = screen.getByRole('combobox', { name: 'Start review' });
     expect(setting).toHaveValue('IMMEDIATELY');
     expect(screen.getByText(/a red build gets no review and no charge/)).toBeInTheDocument();
     fireEvent.change(setting, { target: { value: 'AFTER_CHECKS' } });
@@ -41,15 +41,15 @@ describe('Start review', () => {
   it.each(['gitlab', 'bitbucket'])('is hidden on a %s repository, which has no check read', scmType => {
     render(<RepositorySwitches fields={fields(scmType)} onChange={vi.fn()} />);
 
-    expect(screen.queryByLabelText('Start review')).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Start review' })).not.toBeInTheDocument();
   });
 
   it('is saved from the Settings tab; a repository from an older server reads as immediately', async () => {
     render(<RepositorySettings repository={github} providers={[]} hidden={false} onSaved={vi.fn()} onState={vi.fn()} />,
       { wrapper: queryWrapper() });
 
-    expect(screen.getByLabelText('Start review')).toHaveValue('IMMEDIATELY');
-    fireEvent.change(screen.getByLabelText('Start review'), { target: { value: 'AFTER_CHECKS' } });
+    expect(screen.getByRole('combobox', { name: 'Start review' })).toHaveValue('IMMEDIATELY');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Start review' }), { target: { value: 'AFTER_CHECKS' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(
