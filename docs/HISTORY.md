@@ -2585,3 +2585,16 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   note now names that origin and offers "Use https://…", which switches the origin and clears the selections. Plain
   http stays accepted: a self-hosted forge may serve it. RepositoryAccountSelects.test.tsx covers the switch, the
   matching origin and the unrelated-host note.
+
+- **Verdict labels (2026-11-24, branch `feat/verdict-labels`, V120, ADR-047 amended, Part of #391).** On the first
+  production review (code-spire PR #443) the bot approved and the pull request kept `review: requested`. A GitHub
+  repository may now turn on "Verdict labels" (Repository → Settings → Reviewing, off by default). After the native
+  review is posted, the worker sets `review: approved` or `review: changes-requested` from the decided verdict (an
+  approval posted as a Comment still labels approved), removes every other `review: ` label, keeps unrelated labels
+  and creates a missing one. Degraded, refused, failed and superseded reviews set none; a replay writes nothing new.
+  A failure is logged, rides on `CommentsPosted.labelFailure` and raises `REVIEW_LABEL_FAILED` (warning); the review
+  stays posted and is never retried for it, and the next report clears the row. New wire fields: `PostComments.
+  verdictLabels` and `CommentsPosted.labelFailure`, both nullable, so an older command or event reads as off and no
+  failure. Upgrading: V120 adds `repository.verdict_labels` (default false) and `review_status.label_failure`; roll
+  the orchestrator and the review worker together (an older worker ignores the setting, which sets no label). Not yet
+  run live: see the docs/UNVERIFIED.md entry.

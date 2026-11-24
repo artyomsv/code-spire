@@ -134,7 +134,10 @@ FK, account FK and one row per REVIEWER/FACTORY role. `review_status.repository_
 Three settings live on the repository row. V88 adds `reviewer_may_approve` (boolean, default true,
 ADR-047): off, every review there is posted as a Comment. V115 adds `block_approval_at` (text, not null,
 default `BLOCKER`, checked to `BLOCKER`, `MAJOR` or `MINOR`; ADR-047 as amended 2026-11-14): an open finding at
-or above it makes the review Request changes and holds a factory land. V105 adds nullable
+or above it makes the review Request changes and holds a factory land. V120 adds `verdict_labels` (boolean, not
+null, default false; ADR-047 as amended 2026-11-24): on, each posted review sets one `review: ` label from its
+decided verdict, and `review_status.label_failure` (text, nullable) holds why the last posted review's label call
+failed. V105 adds nullable
 `review_llm_provider_id` (FK to `llm_provider`, no ON DELETE action): the LLM provider the
 repository's reviews and replies use, null meaning the global default. Deleting a provider a
 repository names is refused (409); a switched-off one refuses the repository's reviews rather than

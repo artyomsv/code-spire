@@ -614,6 +614,18 @@ approve" off still wins. The land gate counts at the same level, and the review 
 An unknown repository counts at `BLOCKER`. The `ReviewVerdictDecided` timeline line keeps `open_blockers=N` at
 `BLOCKER` and names any other level (`open_at_or_above_major=N`, `no_open_at_or_above_minor`).
 
+**Amended 2026-11-24 — Verdict labels (V120;
+[the verdict labels design](superpowers/specs/2026-11-24-verdict-labels-design.md)).** On the first production review
+(code-spire PR #443) the bot approved and the pull request kept its `review: requested` label, so it still said it
+waited for a reviewer. Each repository now has "Verdict labels", off by default and offered on GitHub only. On, after
+the review is posted the worker sets one label from the decided verdict (the assessment, not the posted event: an
+approval posted as a Comment still labels `review: approved`; Request changes labels `review: changes-requested`),
+removes every other label starting `review: `, keeps unrelated labels and creates a missing label. A degraded,
+refused, failed or superseded review sets none. Labelling is best effort: a failure rides on `CommentsPosted` as
+`labelFailure`, raises a `REVIEW_LABEL_FAILED` warning and never fails, retries or re-posts the review; the next
+report clears it. The port capability is `CommentSink.setVerdictLabel`; GitLab and Bitbucket keep the default,
+"unsupported".
+
 ---
 
 ## ADR-046 — Verify runs the operator's checks on a clean copy of the checkpoint
