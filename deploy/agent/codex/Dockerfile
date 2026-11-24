@@ -9,7 +9,9 @@
 # This image holds NO credential. The model key is injected per run (OPENAI_API_KEY) and the git
 # token never enters this container at all — `docker image history` and `docker inspect` on a run's
 # agent container must show neither, and the runbook checks both.
-FROM node:22-bookworm-slim
+# Debian 13 (trixie), not 12 (bookworm): on 2026-11-24 Trivy reported about 120 HIGH and CRITICAL
+# findings in this image on bookworm packages with no fix released for bookworm.
+FROM node:22-trixie-slim
 
 # ca-certificates is NOT optional: without it every TLS call fails "invalid peer certificate:
 # UnknownIssuer", and Codex retries silently rather than saying why.

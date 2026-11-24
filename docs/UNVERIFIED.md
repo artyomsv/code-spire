@@ -33,6 +33,14 @@ evidence would settle it**.
 
 ---
 
+## Agent images on Debian trixie (2026-11-24)
+
+Built in CI only. Both agent images moved from `node:22-bookworm-slim` to `node:22-trixie-slim`.
+
+- **No live run on trixie.** No review, build or reply has run on either image since the move. A Codex review on a
+  seat and on a key, and a Claude Code review on a key (with the 3b canaries), on `spire-test` would close it.
+- **arm64 on trixie** is checked statically only, like the rest of the arm64 images.
+
 ## Model catalog from a public file (ADR-051, branch feat/ai-catalog, 2026-11-20)
 
 Built and tested in CI only; no live deployment has read the catalog yet.

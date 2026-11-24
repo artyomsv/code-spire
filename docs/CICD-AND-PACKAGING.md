@@ -322,7 +322,7 @@ names; before, a version pinned the four reviewer images and left the factory on
   `dev.codespire.agent.models` back from that amd64 image, and passes it to the multi-arch build as
   `AGENT_MODELS`. The trim logic stays in the script; the step runs before `setup-buildx` so the image is loaded.
 - **arm64, checked statically.** `eclipse-temurin:25-jre-alpine` (already released for arm64 by the four
-  services), `alpine:3.20` and `node:22-bookworm-slim` are multi-arch; `@openai/codex@0.156.1` and
+  services), `alpine:3.20` and `node:22-trixie-slim` (bookworm until 2026-11-24) are multi-arch; `@openai/codex@0.156.1` and
   `@anthropic-ai/claude-code@2.1.319` each ship a `linux-arm64` optional dependency on npm. No arm64 image has
   been run.
 - **The gate.** Its `.env` lacked `SPIRE_OIDC_RUN_WORKER_SECRET`, which `compose.ghcr.yml` requires with `:?`

@@ -77,7 +77,7 @@ export default {
       'The file names in `/handoff` are a contract with `spire-publisher` (sheet 06).',
       'The transcript format on stdout is a contract with the harness adapter in the run worker.',
       'The Claude Code flags were measured on CLI 2.1.319. A CLI upgrade must run the canary tests again.',
-      'Both images are built from `deploy/agent`, on `node:22-bookworm-slim`.',
+      'Both images are built from `deploy/agent`, on `node:22-trixie-slim`.',
     ] },
   ],
 };
