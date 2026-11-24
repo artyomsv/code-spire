@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.review.checks;
 
 import dev.codespire.orchestrator.review.checks.ChecksWait.Stage;
+import dev.codespire.orchestrator.review.checks.ChecksWaitStore.PendingAdmission;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -18,12 +19,14 @@ class InMemoryChecksWaits extends ChecksWaitStore {
 
     @Override
     public void startWaiting(ChecksWait wait) {
-        rows.put(wait.reviewId(), wait.at(Stage.WAITING));
+        ChecksWait row = rows.get(wait.reviewId());
+        if (row == null || row.round() < wait.round()) rows.put(wait.reviewId(), wait.at(Stage.WAITING));
     }
 
     @Override
-    public void clear(String reviewId) {
-        rows.remove(reviewId);
+    public void clearBefore(String reviewId, int round) {
+        ChecksWait row = rows.get(reviewId);
+        if (row != null && row.round() < round) rows.remove(reviewId);
     }
 
     @Override
@@ -43,9 +46,11 @@ class InMemoryChecksWaits extends ChecksWaitStore {
     }
 
     @Override
-    public void drop(ChecksWait wait) {
-        ChecksWait row = rows.get(wait.reviewId());
-        if (row != null && row.round() == wait.round()) rows.remove(wait.reviewId());
+    public void drop(ChecksWait observed) {
+        ChecksWait row = rows.get(observed.reviewId());
+        if (row != null && row.round() == observed.round() && row.stage() == observed.stage()) {
+            rows.remove(observed.reviewId());
+        }
     }
 
     @Override
@@ -72,6 +77,17 @@ class InMemoryChecksWaits extends ChecksWaitStore {
     @Override
     public List<ChecksWait> claimDue(int limit) {
         return rows.values().stream().filter(row -> row.stage() != Stage.TIMED_OUT).toList();
+    }
+
+    /** Admissions whose wait is not recorded; the tests name them. */
+    final List<PendingAdmission> pending = new java.util.ArrayList<>();
+
+    @Override
+    public List<PendingAdmission> pendingAdmissions(int limit) {
+        List<PendingAdmission> taken = pending.stream()
+                .filter(admission -> !rows.containsKey(admission.reviewId())).toList();
+        pending.clear();
+        return taken;
     }
 
     /** The review's row, or null. */

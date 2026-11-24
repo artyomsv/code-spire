@@ -17,8 +17,8 @@ import java.util.UUID;
  * outcome a process claimed and did not complete. The webhook only wakes; the read decides, so a forged or
  * out-of-order event cannot start or skip a review by itself.
  *
- * <p>A wait whose review moved on is dropped without a read: the aggregate no longer reviews that head (a close
- * cancelled it, a newer commit replaced it) or the review was archived.
+ * <p>A wait whose run is no longer the review's is dropped without a read: the aggregate no longer reviews that head
+ * in that round (a close cancelled it, a newer commit or a re-run replaced it) or the review was archived.
  */
 @ApplicationScoped
 public class ChecksWaitResolver {
@@ -51,10 +51,8 @@ public class ChecksWaitResolver {
     public void resume(ChecksWait wait) {
         switch (wait.stage()) {
             case WAITING -> resolve(wait);
-            case STARTING, STARTING_UNFINISHED -> {
-                if (stillCurrent(wait)) outcomes.dispatch(wait);
-                else drop(wait);
-            }
+            // Fenced by the run's round under the round lock in dispatch: an earlier run's claim never starts a later one.
+            case STARTING, STARTING_UNFINISHED -> outcomes.dispatch(wait);
             case SKIPPING -> outcomes.finishSkip(wait);
             case TIMED_OUT -> LOG.debugf("review %s: the timed-out hold on %s needs no sweep", wait.reviewId(), wait.head());
         }
@@ -74,6 +72,7 @@ public class ChecksWaitResolver {
         }
     }
 
+    /** Drops the row only as it was read: a claim another resolver made since is its recovery intent and stays. */
     private void drop(ChecksWait wait) {
         waits.drop(wait);
         LOG.infof("review %s: dropped the wait on %s; the review no longer waits on that head", wait.reviewId(),
@@ -83,6 +82,6 @@ public class ChecksWaitResolver {
     private boolean stillCurrent(ChecksWait wait) {
         if (projection.archived(wait.reviewId())) return false;
         ReviewState state = lifecycle.currentState(wait.reviewId());
-        return state.isReviewing() && wait.head().equals(state.currentCommit());
+        return state.isReviewing() && wait.head().equals(state.currentCommit()) && state.round() == wait.round();
     }
 }

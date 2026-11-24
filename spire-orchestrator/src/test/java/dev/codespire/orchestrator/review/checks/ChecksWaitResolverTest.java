@@ -84,11 +84,11 @@ class ChecksWaitResolverTest extends ChecksWaitFixture {
         verdict = red("TEST-build", "TEST-lint");
         wake(HEAD);
         assertTrue(fetches().isEmpty(), "no review runs, so nothing is charged");
-        assertEquals(new RecordCommand.SkipReview(HEAD, ChecksWaitStatus.CHECKS_FAILED), recorded.getLast());
+        assertEquals(new RecordCommand.SkipReview(HEAD, 1, ChecksWaitStatus.CHECKS_FAILED), recorded.getLast());
         assertEquals(ReviewState.Status.CANCELLED, state.status());
         ActionCommand.LabelChecksFailed label = labels().getFirst();
         assertEquals(HEAD, label.commit());
-        assertEquals(round, label.round());
+        assertEquals(round(), label.round());
         assertTrue(notes.getLast().contains("TEST-build, TEST-lint"), notes.toString());
         assertEquals(List.of("ChecksFailed"), history);
         assertNull(waits.rowOf(REVIEW_ID));

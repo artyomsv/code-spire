@@ -9,7 +9,6 @@ import dev.codespire.contract.lifecycle.ReviewState;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.TestRepositoryProjection;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
-import dev.codespire.orchestrator.llm.ReviewRuns;
 import dev.codespire.orchestrator.pipeline.CommandsEmitter;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
@@ -40,8 +39,10 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
     static final String NEXT_HEAD = "b".repeat(40);
 
     final InMemoryChecksWaits waits = new InMemoryChecksWaits();
-    ReviewState state = reviewing(HEAD);
-    int round = 1;
+    /** The aggregate: its head, status and round, folded by the real decider. */
+    ReviewState state = reviewing(HEAD, 1);
+    /** Reads of the aggregate that fail before it answers again, as a lost database would. */
+    int failingStateReads;
     StartReview setting = StartReview.AFTER_CHECKS;
     boolean checksReadable = true;
     ChecksVerdict verdict = ChecksVerdict.PENDING;
@@ -51,25 +52,34 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
     /** Runs once inside the next send, before it is acknowledged; it may throw, as a lost broker ack would. */
     Runnable duringSend;
 
-    static ReviewState reviewing(String head) {
-        return new ReviewState(REVIEW_ID, REPO, 7L, ReviewState.Status.REVIEWING, head, Set.of(), null, Map.of(), Set.of());
+    static ReviewState reviewing(String head, int round) {
+        return new ReviewState(REVIEW_ID, REPO, 7L, ReviewState.Status.REVIEWING, head, Set.of(), null, Map.of(), Set.of(),
+                round);
+    }
+
+    int round() {
+        return state.round();
     }
 
     static ActionCommand.FetchDiff fetch(String head) {
         return new ActionCommand.FetchDiff(REVIEW_ID, REPO, 7L, head, "TEST-packed-at-event", true);
     }
 
-    /** A wait of round {@link #round} on {@code head} that started {@code ageSeconds} ago. */
+    /** A wait of the current round on {@code head} that started {@code ageSeconds} ago. */
     ChecksWait waitOn(String head, long ageSeconds) {
-        return new ChecksWait(REVIEW_ID, REPOSITORY_ID, head, round, true, Instant.now().minusSeconds(ageSeconds),
+        return new ChecksWait(REVIEW_ID, REPOSITORY_ID, head, round(), true, Instant.now().minusSeconds(ageSeconds),
                 ChecksWait.Stage.WAITING, null);
     }
 
     /** A new commit or a re-run: the aggregate's next round, as the saga and the re-run service ask for it. */
     void requestRun(String head) {
-        round++;
-        state = reviewing(head);
+        admitRun(head);
         gate().begin(fetch(head));
+    }
+
+    /** Only the aggregate's half of {@link #requestRun}: the run is accepted, its wait not registered yet. */
+    void admitRun(String head) {
+        state = reviewing(head, round() + 1);
     }
 
     ReviewStartGate gate() {
@@ -84,7 +94,8 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
         gate.reader = reader();
         gate.waits = waits;
         gate.commands = commands();
-        gate.runs = runs();
+        gate.lifecycle = lifecycle();
+        gate.receipts = receipts();
         return gate;
     }
 
@@ -102,6 +113,7 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
         ChecksWaitSweep sweep = new ChecksWaitSweep();
         sweep.waits = waits;
         sweep.resolver = resolver();
+        sweep.gate = gate();
         return sweep;
     }
 
@@ -129,15 +141,20 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
                 return work.get();
             }
         };
-        outcomes.runs = runs();
+        outcomes.receipts = receipts();
         return outcomes;
     }
 
-    private ReviewRuns runs() {
-        return new ReviewRuns() {
+    private SkippedRunReceipts receipts() {
+        return new SkippedRunReceipts() {
             @Override
-            public int roundOrUnknown(String reviewId) {
-                return round;
+            public void open(ChecksWait wait) {
+                receiptLog.add("open " + wait.round());
+            }
+
+            @Override
+            public void supersede(String reviewId) {
+                receiptLog.add("supersede");
             }
         };
     }
@@ -171,6 +188,10 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
 
             @Override
             public ReviewState currentState(String reviewId) {
+                if (failingStateReads > 0) {
+                    failingStateReads--;
+                    throw new IllegalStateException("TEST-event-store-unavailable");
+                }
                 return state;
             }
         };

@@ -96,12 +96,48 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
     void aClaimedSkipNeverCancelsAReRunOfTheSameHead() {
         ChecksWait claimed = waiting(0).skipping("TEST-build");
         waits.claim(claimed);
-        round = 2;
-        state = reviewing(HEAD);
+        admitRun(HEAD);
         outcomes().finishSkip(claimed);
         assertEquals(0, skips());
         assertEquals(ReviewState.Status.REVIEWING, state.status());
         assertNull(waits.rowOf(REVIEW_ID), "the stale claim is dropped");
+    }
+
+    /**
+     * A late reader holding a waiting snapshot, while the winning skip is between ending the run and its label, drops
+     * nothing: the claim is the winner's recovery intent, and the sweep still finishes the skip after its crash.
+     */
+    @Test
+    void aLateReadersStaleSnapshotNeverDropsTheWinningClaim() {
+        verdictLabels = true;
+        ChecksWait stale = waiting(0);
+        verdict = red("TEST-build");
+        duringSend = () -> {
+            resolver().resolve(stale);
+            throw new IllegalStateException(LOST_ACK);
+        };
+        assertThrows(IllegalStateException.class, () -> resolver().resolve(stale));
+        assertEquals(Stage.SKIPPING, waits.rowOf(REVIEW_ID).stage(), "the stale snapshot did not drop the claim");
+        sweep().sweep();
+        assertEquals(1, labels().size());
+        assertNull(waits.rowOf(REVIEW_ID));
+    }
+
+    /** A recovered start of round 1, after a re-run of the same head installed round 2's wait, sends nothing. */
+    @Test
+    void aRecoveredStartOfAnEarlierRoundSendsNothing() {
+        for (Stage stage : List.of(Stage.STARTING, Stage.STARTING_UNFINISHED)) {
+            ChecksWait claimed = waiting(ChecksWaitDecision.TIMEOUT.toSeconds()).at(stage);
+            waits.claim(claimed);
+            requestRun(HEAD);
+            resolver().resume(claimed);
+            assertTrue(fetches().isEmpty(), stage.name());
+            ChecksWait newer = waits.rowOf(REVIEW_ID);
+            assertEquals(round(), newer.round(), stage.name());
+            assertEquals(Stage.WAITING, newer.stage(), "the re-run's own wait is unchanged");
+            assertTrue(!waits.startedUnfinished(REVIEW_ID, HEAD), "no earlier run's hold on the new run");
+            waits.clearBefore(REVIEW_ID, round() + 1);
+        }
     }
 
     /** A crash between the claim and the broker ack: the claim survives, and the sweep after a restart starts it. */

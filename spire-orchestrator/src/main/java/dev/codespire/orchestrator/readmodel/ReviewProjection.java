@@ -1417,7 +1417,7 @@ public class ReviewProjection {
      */
     private void deleteWorkerClaims(Connection c, String reviewId) throws SQLException {
         if (tableExists(c, "worker.comment_idempotency")) {
-            deleteBy(c, "DELETE FROM worker.comment_idempotency WHERE review_id = ?", reviewId);
+            deleteBy(c, "DELETE FROM worker.comment_idempotency WHERE review_id = ? AND anchor_key NOT LIKE 'CI\\_FAILED:%'", reviewId);
         }
         if (tableExists(c, "worker.context_blob")) {
             deleteBy(c, "DELETE FROM worker.context_blob WHERE review_id = ?", reviewId);

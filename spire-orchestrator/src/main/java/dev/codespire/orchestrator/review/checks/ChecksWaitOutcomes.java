@@ -5,7 +5,6 @@ import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.lifecycle.ReviewState;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
-import dev.codespire.orchestrator.llm.ReviewRuns;
 import dev.codespire.orchestrator.pipeline.CommandsEmitter;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
@@ -57,9 +56,7 @@ public class ChecksWaitOutcomes {
     ReviewRoundLock rounds;
 
     @Inject
-    ReviewRuns runs;
-
-    private enum SkipEnd { ENDED, SUPERSEDED, UNKNOWN }
+    SkippedRunReceipts receipts;
 
     /** Every check finished green, or the head has none: the review starts as it would have at once. */
     public void start(ChecksWait wait) {
@@ -78,16 +75,15 @@ public class ChecksWaitOutcomes {
     }
 
     /**
-     * Sends a claimed start's FetchDiff, then completes the claim. A failed send leaves the claim for the sweep; it is
-     * never restored to a waiting row, which could replace a newer head's wait.
+     * Sends a claimed start's FetchDiff, then completes the claim, under the review's round lock and only while the
+     * claimed run is still the review's current run: a re-run of the same head (admitted under the same lock) or a newer
+     * commit is never sent an earlier run's start, and the stale claim is dropped. A failed send leaves the claim for
+     * the sweep; it is never restored to a waiting row, which could replace a newer run's wait.
      */
     public void dispatch(ChecksWait claimed) {
         Optional<String> credential = credentialFor(claimed);
         if (credential.isEmpty()) return;
-        ReviewIds.Parsed review = ReviewIds.parse(claimed.reviewId());
-        commands.emit(new ActionCommand.FetchDiff(claimed.reviewId(), review.repo(), review.prId(), claimed.head(),
-                credential.orElseThrow(), claimed.untrusted()));
-        waits.finish(claimed);
+        if (!rounds.holding(claimed.reviewId(), () -> sendIfCurrent(claimed, credential.orElseThrow()))) return;
         StartNote note = StartNote.of(claimed);
         projection.updateStatus(claimed.reviewId(), "reviewing", ReviewProjection.STAGE_DIFF);
         projection.appendEvent(claimed.reviewId(), "integration", note.type(), note.detail());
@@ -100,12 +96,16 @@ public class ChecksWaitOutcomes {
      * or a newer commit is never cancelled, and this claim is dropped instead.
      */
     public void finishSkip(ChecksWait claimed) {
-        SkipEnd end = rounds.holding(claimed.reviewId(), () -> endRun(claimed));
-        if (end == SkipEnd.UNKNOWN) return;
-        if (end == SkipEnd.SUPERSEDED) {
+        if (!rounds.holding(claimed.reviewId(), () -> endRunAndMark(claimed))) {
             waits.drop(claimed);
             return;
         }
+        waits.finish(claimed);
+    }
+
+    /** Under the round lock: the run's end and its marks, so a re-run admitted next closes this run's label receipt. */
+    private boolean endRunAndMark(ChecksWait claimed) {
+        if (!endRun(claimed)) return false;
         String names = claimed.failedChecks() == null ? NO_NAMES : claimed.failedChecks();
         projection.setNote(claimed.reviewId(), "Checks failed on " + claimed.head() + ": " + names
                 + ". No review ran and nothing was charged; a new commit waits for its checks again.");
@@ -113,26 +113,37 @@ public class ChecksWaitOutcomes {
                 "failed on " + claimed.head() + ": " + names);
         LOG.infof("review %s: checks failed on %s (%s); the review is skipped", claimed.reviewId(), claimed.head(), names);
         if (repositories.verdictLabels(claimed.repositoryId()).orElse(false)) labelFailed(claimed);
-        waits.finish(claimed);
+        return true;
     }
 
-    /** Under the round lock: this run's end, which a restart may find already appended. */
-    private SkipEnd endRun(ChecksWait claimed) {
-        int current = runs.roundOrUnknown(claimed.reviewId());
-        if (current == ReviewRuns.UNKNOWN_RUN) return SkipEnd.UNKNOWN;
-        if (current != claimed.round()) return SkipEnd.SUPERSEDED;
-        boolean ended = !lifecycle.handle(claimed.reviewId(),
-                new RecordCommand.SkipReview(claimed.head(), ChecksWaitStatus.CHECKS_FAILED)).isEmpty();
-        return ended || alreadyEnded(claimed) ? SkipEnd.ENDED : SkipEnd.SUPERSEDED;
-    }
-
-    private boolean alreadyEnded(ChecksWait claimed) {
+    /** This run's end, which a restart may find already appended; false when a newer run is the review's. */
+    private boolean endRun(ChecksWait claimed) {
         ReviewState state = lifecycle.currentState(claimed.reviewId());
-        return state.status() == ReviewState.Status.CANCELLED && claimed.head().equals(state.currentCommit());
+        if (state.round() != claimed.round()) return false;
+        boolean ended = !lifecycle.handle(claimed.reviewId(), new RecordCommand.SkipReview(claimed.head(),
+                claimed.round(), ChecksWaitStatus.CHECKS_FAILED)).isEmpty();
+        return ended || state.status() == ReviewState.Status.CANCELLED && claimed.head().equals(state.currentCommit());
+    }
+
+    /** Under the round lock: the start is sent only to the run the claim was made for. */
+    private boolean sendIfCurrent(ChecksWait claimed, String credential) {
+        ReviewState state = lifecycle.currentState(claimed.reviewId());
+        if (!state.isReviewing() || !claimed.head().equals(state.currentCommit()) || state.round() != claimed.round()) {
+            waits.drop(claimed);
+            LOG.infof("review %s: no start for round %d on %s; a newer run is the review's", claimed.reviewId(),
+                    claimed.round(), claimed.head());
+            return false;
+        }
+        ReviewIds.Parsed review = ReviewIds.parse(claimed.reviewId());
+        commands.emit(new ActionCommand.FetchDiff(claimed.reviewId(), review.repo(), review.prId(), claimed.head(),
+                credential, claimed.untrusted()));
+        waits.finish(claimed);
+        return true;
     }
 
     private void labelFailed(ChecksWait claimed) {
         ReviewIds.Parsed review = ReviewIds.parse(claimed.reviewId());
+        receipts.open(claimed);
         credentialFor(claimed).ifPresent(credential -> commands.emit(new ActionCommand.LabelChecksFailed(
                 claimed.reviewId(), review.repo(), review.prId(), claimed.head(), claimed.round(), credential)));
     }

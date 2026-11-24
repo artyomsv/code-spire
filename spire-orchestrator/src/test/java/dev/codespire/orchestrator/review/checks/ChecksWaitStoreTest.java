@@ -79,8 +79,32 @@ class ChecksWaitStoreTest {
         store.finish(wait.at(Stage.STARTING_UNFINISHED));
         assertTrue(store.startedUnfinished(reviewId, HEAD));
         assertFalse(store.startedUnfinished(reviewId, NEXT_HEAD));
-        store.clear(reviewId);
-        assertFalse(store.startedUnfinished(reviewId, HEAD), "a start at once drops the hold");
+        store.clearBefore(reviewId, 1);
+        assertTrue(store.startedUnfinished(reviewId, HEAD), "only earlier runs are cleared");
+        store.clearBefore(reviewId, 2);
+        assertFalse(store.startedUnfinished(reviewId, HEAD), "a later run started at once drops the hold");
+    }
+
+    /** A late registration of an earlier run never replaces a later run's row. */
+    @Test
+    void aLateRegistrationOfAnEarlierRunIsRefused() {
+        store.startWaiting(wait(NEXT_HEAD, 3, Instant.now()));
+        store.startWaiting(wait(HEAD, 1, Instant.now()));
+        assertEquals(List.of(NEXT_HEAD), store.waitingOn(repositoryId, NEXT_HEAD).stream().map(ChecksWait::head).toList());
+        assertTrue(store.waitingOn(repositoryId, HEAD).isEmpty());
+    }
+
+    /** A reader's stale waiting snapshot drops nothing once another resolver claimed the run. */
+    @Test
+    void aStaleSnapshotNeverDropsAClaim() {
+        ChecksWait wait = wait(HEAD, 1, Instant.now());
+        store.startWaiting(wait);
+        assertTrue(store.claim(wait.skipping("TEST-build")));
+        store.drop(wait);
+        assertFalse(store.claim(wait.skipping("TEST-build")), "the claim is still there, not a fresh wait");
+        store.drop(wait.skipping("TEST-build"));
+        store.startWaiting(wait(HEAD, 1, Instant.now()));
+        assertTrue(store.isWaiting(reviewId), "the claim was dropped as observed");
     }
 
     /** Due after the grace period; the claim pushes the next read out, so a second sweep claims nothing. */
