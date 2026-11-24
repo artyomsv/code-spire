@@ -1,57 +1,68 @@
 # Review waits for CI
 
-Status: design, 2026-11-24. Part of #391.
+Status: design, 2026-11-24, operator decisions recorded the same day. Part of #391.
 
 ## Why
 
 On the first production reviews the bot reviewed the moment a pull request opened. On code-spire #444 it approved
 while CI was still running, and CI then failed. An approval on a red build is wrong, and a review of code CI rejects
-anyway spends money for nothing. The operator's workflow reviews a pull request whose checks have finished, and
-labels a passed review with failing CI `review: ci-failed`.
+anyway spends money for nothing.
 
 ## Goal
 
 A per-repository setting **"Start review"**: `immediately` (today's behaviour, the default) or `after checks
 finish`. With `after checks finish`, a review of a head commit starts only once every check on that commit has
-finished, and the verdict takes the CI result into account.
+finished green; a red build gets no review until a new commit (operator decision: option B, skip on red).
 
 ## Behaviour with "after checks finish"
 
-1. **Wait.** When a review would start for head H (opened, new commit, re-run), the orchestrator records it as
-   waiting for checks and starts nothing. A sweep reads H's checks (GitHub commit statuses and check runs, the same
-   reading the factory land path already does, `GitHubCheckReduction`) every 30 s.
-2. **No checks.** A commit with no statuses and no check runs at the first read is reviewed at once (a repository
-   without CI must not wait forever).
-3. **Finished.** When nothing is pending, the review starts as today, with the CI result attached.
-4. **Verdict with CI.**
-   - CI passed: the verdict is unchanged.
-   - CI failed and the review would approve: the review is posted as a Comment (never an Approve), the summary says
-     which checks failed, and with Verdict labels on the label is `review: ci-failed`.
-   - CI failed and the review requests changes: unchanged (`review: changes-requested`); the summary also names the
-     failed checks.
-5. **Superseded.** A new commit while waiting replaces the wait for the old head (the existing supersede rule).
-   A closed pull request stops the wait.
-6. **Timeout.** Checks still pending after 60 minutes: the review starts anyway, never approves (posted as Comment),
-   and says CI had not finished. The dashboard shows the review as "waiting for checks" with the time waited until
-   then.
+1. **Wait.** When a review would start for head H (opened, new commit, re-run), the orchestrator records the review
+   as waiting for checks on H and starts nothing.
+2. **Wake-up by webhook.** GitHub sends the repository webhook `check_suite` (action `completed`) and `status`
+   events. On either, for a head that has a waiting review, the orchestrator reads H's checks at once. The read is
+   the one the factory land path already does (commit statuses plus check runs, `GitHubCheckReduction`). The webhook
+   only wakes; the read decides, so a forged or out-of-order event cannot start or skip a review by itself.
+3. **Fallback polling.** A sweep reads every waiting head's checks every 5 minutes, so a lost or never-configured
+   webhook event only delays a review.
+4. **No checks.** A commit with no statuses and no check runs at the first read is reviewed at once (a repository
+   without CI must not wait forever). A short grace read (60 s after the wait starts) guards against checks that
+   register a few seconds late.
+5. **Green.** Nothing pending and nothing failed: the review starts as today.
+6. **Red.** Nothing pending and at least one check failed: no review runs and nothing is charged. The review is
+   recorded as `skipped: checks failed` with the failed check names (dashboard), and with Verdict labels on the pull
+   request gets `review: ci-failed`. No comment is posted. A new commit starts a new wait.
+7. **Superseded / closed.** A new commit while waiting replaces the wait for the old head (existing supersede rule);
+   a closed pull request ends the wait.
+8. **Timeout.** Checks still pending after 60 minutes: the review starts anyway, never approves (posted as a Comment),
+   and its summary says CI had not finished.
+
+## Webhook setup
+
+The Reviewer webhook gains two events: **Check suites** and **Statuses**. The dashboard's webhook instructions list
+them; an existing webhook without them still works through the fallback polling. Both are delivered to repository
+webhooks (`check_suite` only for `completed`, which is the one needed).
 
 ## Non-goals
 
-- GitLab and Bitbucket (GitHub first, as with labels; the setting is hidden for them).
-- Webhook-driven wake-up (`check_suite` events). Polling first; a webhook can shorten the wait later.
+- GitLab and Bitbucket (GitHub first; the setting is hidden for them).
 - Required versus optional checks: every check counts.
+- `workflow_run` events: `check_suite` already covers Actions and other check providers.
 
 ## Where
 
-- Orchestrator: the repository setting (next migration), the waiting state on the review, the sweep, and the CI
-  result carried to the decision (`ReviewVerdictDecision`).
+- Gateway: accept `check_suite` and `status` on the Reviewer webhook and publish a "checks changed for commit H"
+  integration event (repository + head SHA only).
+- Orchestrator: the repository setting (next migration), the waiting/skipped state on the review, the wake-up
+  handler, the 5-minute sweep, the 60-minute timeout, and the not-approving path for a timeout.
 - SCM port: a read of a commit's check summary for reviews, reusing the GitHub land reader.
-- Worker/labels: `review: ci-failed` joins the verdict labels.
-- UI: the setting beside "Verdict labels"; a "Waiting for checks" status in the review list and detail (status union
-  rule in CLAUDE.md).
+- Worker/labels: `review: ci-failed` joins the verdict labels; a skipped review sets it without posting anything.
+- UI: the setting beside "Verdict labels"; statuses "Waiting for checks" and "Skipped: checks failed" (status union
+  rule in CLAUDE.md); webhook instructions list the two new events.
 
 ## Tests (CI only)
 
-Wait then start on success; immediate start with no checks; failure turns an approve into a Comment with
-`review: ci-failed`; failure keeps request changes; supersede and close end the wait; timeout starts a non-approving
-review; `immediately` behaves exactly as today. Live proof on spired.dev with code-spire.
+Wait then start on green; webhook wake-up starts it without waiting for the sweep; sweep starts it when no webhook
+arrives; immediate start with no checks; red skips the review, charges nothing and sets `review: ci-failed`; a new
+commit after red waits again; supersede and close end the wait; timeout starts a non-approving review; `immediately`
+behaves exactly as today; an event for a head with no waiting review does nothing. Live proof on spired.dev with
+code-spire.
