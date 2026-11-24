@@ -20,6 +20,7 @@ import dev.codespire.contract.command.RecordCommand.RecordFailure;
 import dev.codespire.contract.command.RecordCommand.RecordFollowUp;
 import dev.codespire.contract.command.RecordCommand.RecordReviewOutcome;
 import dev.codespire.contract.command.RecordCommand.RequestReview;
+import dev.codespire.contract.command.RecordCommand.SkipReview;
 import dev.codespire.contract.lifecycle.ReviewState.Status;
 import dev.codespire.contract.lifecycle.ReviewState.ThreadState;
 
@@ -56,6 +57,8 @@ public final class ReviewLifecycle implements Decider<RecordCommand, ReviewState
             case CancelReview c -> state.isReviewing()
                     ? List.of(new ReviewCancelled(c.reason()))
                     : List.of(); // nothing in flight — no-op
+            // Checks failed (review waits for CI): the same terminal event as a cancel, for the current head only.
+            case SkipReview c -> currentRun(state, c.commit()) ? List.of(new ReviewCancelled(c.reason())) : List.of();
             case RecordReviewOutcome c -> currentRun(state, c.commit())
                     ? List.of(new ReviewOutcomeRecorded(c.commit(), c.findingsCount(), c.summaryDigest()))
                     : List.of();

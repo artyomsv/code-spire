@@ -9,6 +9,8 @@ public record VerdictLabel(String name, String prefix) {
     public static final String PREFIX = "review: ";
     public static final VerdictLabel APPROVED = new VerdictLabel(PREFIX + "approved", PREFIX);
     public static final VerdictLabel CHANGES_REQUESTED = new VerdictLabel(PREFIX + "changes-requested", PREFIX);
+    /** Review waits for CI: the checks failed, so no review ran (2026-11-24-review-waits-for-ci-design.md). */
+    public static final VerdictLabel CI_FAILED = new VerdictLabel(PREFIX + "ci-failed", PREFIX);
 
     public VerdictLabel {
         if (name == null || prefix == null || !name.startsWith(prefix)) {

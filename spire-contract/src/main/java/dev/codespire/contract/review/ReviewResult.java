@@ -52,6 +52,11 @@ public record ReviewResult(List<Finding> findings, String summary, ModelUsage us
         return new ReviewResult(findings, summary, usage, truncated, degraded);
     }
 
+    /** The same result with another summary — a review that started before CI finished says so in it. */
+    public ReviewResult withSummary(String summary) {
+        return new ReviewResult(findings, summary, usage, truncated, degraded);
+    }
+
     /** The same result over a different finding list — the reconcile path drops anchor collisions. */
     public ReviewResult withFindings(List<Finding> findings) {
         return new ReviewResult(findings, summary, usage, truncated, degraded);

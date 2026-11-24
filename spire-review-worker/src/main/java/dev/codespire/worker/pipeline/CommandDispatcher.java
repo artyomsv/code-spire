@@ -7,6 +7,7 @@ import dev.codespire.contract.command.ActionCommand.FetchDiff;
 import dev.codespire.contract.command.ActionCommand.FinishHarnessReview;
 import dev.codespire.contract.command.ActionCommand.GatherContext;
 import dev.codespire.contract.command.ActionCommand.GenerateReview;
+import dev.codespire.contract.command.ActionCommand.LabelChecksFailed;
 import dev.codespire.contract.command.ActionCommand.NotifyArchived;
 import dev.codespire.contract.command.ActionCommand.NotifyTurnCap;
 import dev.codespire.contract.command.ActionCommand.PostComments;
@@ -50,6 +51,9 @@ public class CommandDispatcher {
     @Inject
     FollowUpWorker followUpWorker;
 
+    @Inject
+    ChecksFailedLabel checksFailedLabel;
+
     @Incoming("commands-in")
     // ordered (default): redelivered/interleaved same-review commands must not
     // race each other (finding H3). Cross-PR concurrency comes from topic
@@ -78,6 +82,7 @@ public class CommandDispatcher {
                 case NotifyArchived c -> followUpWorker.notifyArchived(c);
                 case ConfirmFinding c -> followUpWorker.confirmFinding(c);
                 case RefuseFinding c -> followUpWorker.refuseFinding(c);
+                case LabelChecksFailed c -> checksFailedLabel.apply(c);
                 default -> LOG.debugf("No worker for %s", command.getClass().getSimpleName());
             }
         } finally {

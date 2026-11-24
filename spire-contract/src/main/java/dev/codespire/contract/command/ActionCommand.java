@@ -39,6 +39,7 @@ import java.util.Set;
         @JsonSubTypes.Type(value = ActionCommand.AnswerFollowUp.class, name = "AnswerFollowUp"),
         @JsonSubTypes.Type(value = ActionCommand.NotifyTurnCap.class, name = "NotifyTurnCap"),
         @JsonSubTypes.Type(value = ActionCommand.NotifyArchived.class, name = "NotifyArchived"),
+        @JsonSubTypes.Type(value = ActionCommand.LabelChecksFailed.class, name = "LabelChecksFailed"),
         @JsonSubTypes.Type(value = ActionCommand.ConfirmFinding.class, name = "ConfirmFinding"),
         @JsonSubTypes.Type(value = ActionCommand.RefuseFinding.class, name = "RefuseFinding"),
         @JsonSubTypes.Type(value = ActionCommand.PrepareHarnessReview.class, name = "PrepareHarnessReview"),
@@ -219,20 +220,10 @@ public sealed interface ActionCommand {
         }
 
         /**
-         * Same command, carrying how many findings a learned preference hid (P4 / ADR-027).
-         *
-         * <p>A wither rather than a re-listing at the call site, for the reason the 2026-08-28 work
-         * recorded: adding a component to a wire record compiles everywhere, because the shorter
-         * convenience constructors above stay valid, and the new field is silently dropped. The
-         * components are enumerated once, here, so there is one place to update.
-         *
-         * <p><b>The contract snapshot DID catch this component</b>, which is worth recording because
-         * the design predicted it would not: the golden file lists each command's own components, so
-         * adding one failed the gate until the snapshot was updated. What it cannot see is a change a
-         * level down — {@code Finding} gaining a component sits inside {@code ReviewResult} inside
-         * {@code ReviewGenerated}, and the golden never described that shape. Both halves of
-         * {@code techdebt/spire-contract/3-2} showed up in one milestone: the gate holding at the top
-         * level, and blind one level in.
+         * Same command, carrying how many findings a learned preference hid (P4 / ADR-027). A wither, because a
+         * component added to a wire record is silently dropped by every call site that re-lists them (2026-08-28).
+         * The contract snapshot sees this record's own components, but not a change a level down inside
+         * {@code ReviewResult} ({@code techdebt/spire-contract/3-2}).
          */
         public PostComments withSuppressedCount(int replacement) {
             return new PostComments(reviewId, repo, prId, commit, findings, scmCredential, verdicts,
@@ -348,6 +339,11 @@ public sealed interface ActionCommand {
      */
     record NotifyArchived(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
                           String scmCredential) implements ActionCommand {
+    }
+
+    /** Review waits for CI: the checks on {@code commit} failed, so no review runs; label the pull request only. */
+    record LabelChecksFailed(String reviewId, RepoRef repo, long prId, String commit, String scmCredential)
+            implements ActionCommand {
     }
 
     /**

@@ -209,6 +209,7 @@ public class RegistryWebhookEdge {
             case AuthorReplied p -> p.repo(); // every SCM emits comment replies
             case PushReceived p -> p.repo();  // future push hooks — scope-guard them too
             case IntegrationEvent.RepositoryActivity p -> p.repo();
+            case IntegrationEvent.ChecksChanged p -> p.repo(); // review waits for CI
             default -> null;
         };
     }

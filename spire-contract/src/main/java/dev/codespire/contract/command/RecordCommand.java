@@ -17,6 +17,14 @@ public sealed interface RecordCommand {
     record CancelReview(String reason) implements RecordCommand {
     }
 
+    /**
+     * Review waits for CI: the checks on {@code commit} failed, so its run ends without a review. Guarded by
+     * commit==currentCommit like {@link RecordFailure}, so a skip decided for a head a newer commit has since replaced
+     * is a no-op and never cancels the newer run.
+     */
+    record SkipReview(String commit, String reason) implements RecordCommand {
+    }
+
     record RecordReviewOutcome(String commit, int findingsCount, String summaryDigest) implements RecordCommand {
     }
 
