@@ -17,27 +17,41 @@ allprojects {
  * of them and hoping the combination was tested. Upstream already did that work and published it as
  * a platform release.
  *
- * Three have no such release yet. As of 2026-10-28 no Quarkus platform up to 3.40.1 carries any of
+ * These have no such release yet. As of 2026-10-28 no Quarkus platform up to 3.40.1 carries any of
  * these fixes (3.40.1 selects jackson 2.21.7, lz4-java 1.11.1, snappy-java 1.1.10.8):
  *
- *  - `com.fasterxml.jackson.core` 2.22.0 -> 2.22.4 (CVE-2026-54515, CVE-2026-59889, CVE-2026-19032,
+ *  - `com.fasterxml.jackson.core` 2.22.0 -> 2.22.4, now 2.23.0 (CVE-2026-54515, CVE-2026-59889, CVE-2026-19032,
  *    CVE-2026-68497, CVE-2026-83557, CVE-2026-89407, CVE-2026-89425, CVE-2026-91776, CVE-2026-91777)
  *  - `at.yawk.lz4:lz4-java` 1.10.1 -> 1.11.4 (CVE-2026-59949, CVE-2026-106449..106453)
  *  - `org.xerial.snappy:snappy-java` 1.1.10.8 -> 1.1.10.12 (CVE-2026-93451, CVE-2026-108106,
  *    CVE-2026-116590), pulled in by kafka-clients
+ *  - `org.bouncycastle` bc*-jdk18on 1.84 -> 1.85 (CVE-2026-8763, CVE-2026-13506), all three together
+ *  - `org.apache.httpcomponents.client5:httpclient5` 5.6.1 -> 5.6.3 (CVE-2026-64607), via docker-java
+ *  - `com.google.guava:guava` 33.6.0-jre -> 33.7.2-jre (CVE-2026-102554)
+ *    (these three were found by Trivy in the run-worker image on 2026-11-24)
  *
- * jackson-core moves with jackson-databind because a Jackson patch publishes them as a pair.
- * jackson-annotations does not: it versions only on a minor, and 2.22 is current.
+ * Jackson is aligned as a whole release, not per artifact: every `com.fasterxml.jackson*` module
+ * resolves to `jacksonRelease`, and jackson-annotations (which versions only on a minor) to
+ * `jacksonAnnotations`. Forcing only core and databind left the service BOM's jdk8, jsr310,
+ * parameter-names and yaml modules one minor behind databind.
+ * Dependabot does not edit these two values. A Jackson bump must change them together with every
+ * module declaration, or the force pins the module declarations back down (dependabot.yml groups them).
  *
  * Remove an entry once the platform catches up. A force does not go quiet when it becomes
  * unnecessary — it starts pinning the version DOWN. `./gradlew :spire-orchestrator:dependencyInsight
  * --configuration runtimeClasspath --dependency <name>` shows what actually resolved.
  */
+val jacksonRelease = "2.23.0"
+val jacksonAnnotations = "2.23"
+
 val advisoryOverrides = mapOf(
-    "com.fasterxml.jackson.core:jackson-core" to "2.22.4",
-    "com.fasterxml.jackson.core:jackson-databind" to "2.22.4",
     "at.yawk.lz4:lz4-java" to "1.11.4",
     "org.xerial.snappy:snappy-java" to "1.1.10.12",
+    "org.bouncycastle:bcprov-jdk18on" to "1.85",
+    "org.bouncycastle:bcpkix-jdk18on" to "1.85",
+    "org.bouncycastle:bcutil-jdk18on" to "1.85",
+    "org.apache.httpcomponents.client5:httpclient5" to "5.6.3",
+    "com.google.guava:guava" to "33.7.2-jre",
 )
 
 subprojects {
@@ -46,6 +60,10 @@ subprojects {
             advisoryOverrides["${requested.group}:${requested.name}"]?.let { fixed ->
                 useVersion(fixed)
                 because("published advisory against the version the Quarkus platform selects")
+            }
+            if (requested.group.startsWith("com.fasterxml.jackson")) {
+                useVersion(if (requested.name == "jackson-annotations") jacksonAnnotations else jacksonRelease)
+                because("one Jackson release across every module; the core pair carries published advisories")
             }
         }
     }
