@@ -172,6 +172,34 @@ class ReviewWorkerVerdictLabelTest {
         assertTrue(fx.idempotency.postedFor(REVIEW_ID, COMMIT).containsKey(VerdictLabels.CLAIM_KEY));
     }
 
+    /** Review of PR #444, M-2: the claim store is down after the review was posted. Unknown state: no label call. */
+    @Test
+    void aLabelClaimThatCannotBeReadSkipsTheLabelAndStillReportsTheReview() {
+        fx.idempotency.failLabelClaim = true;
+
+        worker.postComments(labelled(ReviewVerdict.APPROVE));
+
+        CommentsPosted posted = posted();
+        assertEquals("rv-100", posted.reviewRef(), "the posted review is still reported");
+        assertTrue(posted.labelFailure().startsWith("the label claim could not be read"), posted.labelFailure());
+        assertTrue(fx.sink.labelCalls.isEmpty(), "no label call while the run's own attempt is unknown");
+        assertTrue(fx.emitted.stream().noneMatch(ReviewFailed.class::isInstance), "the review does not fail");
+    }
+
+    /** The label is set but its outcome cannot be kept: the label stands, and the report says a replay may repeat it. */
+    @Test
+    void aLabelOutcomeThatCannotBeRecordedKeepsTheLabelAndStillReportsTheReview() {
+        fx.idempotency.failLabelMark = true;
+
+        worker.postComments(labelled(ReviewVerdict.APPROVE));
+
+        CommentsPosted posted = posted();
+        assertEquals("rv-100", posted.reviewRef());
+        assertEquals(Set.of(APPROVED), fx.sink.labels, "the label call happened");
+        assertTrue(posted.labelFailure().startsWith("the label outcome could not be recorded"), posted.labelFailure());
+        assertTrue(fx.emitted.stream().noneMatch(ReviewFailed.class::isInstance), "the review does not fail");
+    }
+
     /** GitLab and Bitbucket keep the port's default. */
     @Test
     void aForgeWithoutLabelsAnswersUnsupported() {

@@ -1626,7 +1626,7 @@ class ReviewWorkerTest {
     }
 
     /** In-memory mirror of the store's claim semantics. */
-    static final class InMemoryIdempotency extends CommentIdempotencyStore {
+    static class InMemoryIdempotency extends CommentIdempotencyStore {
 
         private final Map<String, String> slots = new HashMap<>(); // key -> the recorded ref, or null
 

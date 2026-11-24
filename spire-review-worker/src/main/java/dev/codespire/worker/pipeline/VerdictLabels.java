@@ -20,8 +20,10 @@ import org.jboss.logging.Logger;
  * <p><b>Once per review run.</b> The attempt is claimed under {@link #CLAIM_KEY} and its outcome, success or failure,
  * is recorded there. A redelivered PostComments that recovers the posted review reports the recorded outcome and
  * never calls the forge again, so it cannot overwrite a label someone set after the first attempt, and a failed
- * attempt is not retried. A re-run clears the worker's claims, so a new run labels anew. The one window left: a
- * worker that dies after the forge call and before the outcome is recorded calls the forge again on redelivery.
+ * attempt is not retried. A re-run clears the worker's claims, so a new run labels anew. The window left: a worker
+ * that dies after the forge call and before the outcome is recorded, or whose record cannot be written, calls the
+ * forge again on redelivery. A claim that cannot be read or a record that cannot be written is reported as the label
+ * failure, never as a failed review.
  */
 final class VerdictLabels {
 
@@ -41,19 +43,41 @@ final class VerdictLabels {
         this.sink = sink;
     }
 
-    /** @return why the label call failed, or null when it succeeded or had nothing to do */
+    /**
+     * Never throws: the review is already posted, so the claim store failing is reported like a forge failure (review of
+     * PR #444, M-2) and the caller still reports the posted review.
+     *
+     * @return why the label was not set or its outcome is uncertain, or null when it succeeded or had nothing to do
+     */
     String apply(PostComments command) {
         VerdictLabel label = labelFor(command);
         if (label == null) {
             return null;
         }
-        if (idempotency.claim(command.reviewId(), command.commit(), CLAIM_KEY)
-                instanceof CommentIdempotencyStore.Claim.AlreadyPosted recorded) {
+        CommentIdempotencyStore.Claim claim;
+        try {
+            claim = idempotency.claim(command.reviewId(), command.commit(), CLAIM_KEY);
+        } catch (RuntimeException e) {
+            // Unknown whether this run labelled already: calling the forge could overwrite a label set since.
+            LOG.warnf(e, "review %s: could not read the verdict label claim; no label call", command.reviewId());
+            return bounded("the label claim could not be read, so no label was set: " + reason(e));
+        }
+        if (claim instanceof CommentIdempotencyStore.Claim.AlreadyPosted recorded) {
             return failureOf(recorded.postedRef());
         }
-        String failure = attempt(command, label);
-        idempotency.markPosted(command.reviewId(), command.commit(), CLAIM_KEY, failure == null ? APPLIED : FAILED + failure);
-        return failure;
+        return record(command, attempt(command, label));
+    }
+
+    /** The outcome kept for a redelivery; when it cannot be kept, a redelivery labels again, and the report says so. */
+    private String record(PostComments command, String failure) {
+        try {
+            idempotency.markPosted(command.reviewId(), command.commit(), CLAIM_KEY, failure == null ? APPLIED : FAILED + failure);
+            return failure;
+        } catch (RuntimeException e) {
+            LOG.warnf(e, "review %s: could not record the verdict label outcome", command.reviewId());
+            String unrecorded = "the label outcome could not be recorded, so a redelivery may label again: " + reason(e);
+            return bounded(failure == null ? unrecorded : failure + "; " + unrecorded);
+        }
     }
 
     /** The label for this command, or null when the repository asked for none or the verdict names none. */
@@ -88,6 +112,10 @@ final class VerdictLabels {
         Throwable cause = WorkerFailures.unwrap(e);
         String message = cause.getMessage() == null || cause.getMessage().isBlank()
                 ? cause.getClass().getSimpleName() : cause.getMessage();
+        return bounded(message);
+    }
+
+    private static String bounded(String message) {
         return message.length() <= MAX_REASON ? message : message.substring(0, MAX_REASON);
     }
 }
