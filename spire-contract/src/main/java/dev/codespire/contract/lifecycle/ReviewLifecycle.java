@@ -57,8 +57,9 @@ public final class ReviewLifecycle implements Decider<RecordCommand, ReviewState
             case CancelReview c -> state.isReviewing()
                     ? List.of(new ReviewCancelled(c.reason()))
                     : List.of(); // nothing in flight — no-op
-            // Checks failed (review waits for CI): the same terminal event as a cancel, for the current head only.
-            case SkipReview c -> currentRun(state, c.commit()) ? List.of(new ReviewCancelled(c.reason())) : List.of();
+            // Checks failed (review waits for CI): the same terminal event as a cancel, for the current run only.
+            case SkipReview c -> currentRun(state, c.commit()) && state.round() == c.round()
+                    ? List.of(new ReviewCancelled(c.reason())) : List.of();
             case RecordReviewOutcome c -> currentRun(state, c.commit())
                     ? List.of(new ReviewOutcomeRecorded(c.commit(), c.findingsCount(), c.summaryDigest()))
                     : List.of();
@@ -110,7 +111,7 @@ public final class ReviewLifecycle implements Decider<RecordCommand, ReviewState
     public ReviewState evolve(ReviewState state, DomainEvent event) {
         return switch (event) {
             case ReviewRequested e -> with(state, Status.REVIEWING, e.commit(),
-                    state.reviewedCommits(), state.summaryCommentId(), state.threads());
+                    state.reviewedCommits(), state.summaryCommentId(), state.threads()).nextRound();
             case ReviewSuperseded e -> state; // the paired ReviewRequested carries the new commit
             case ReviewOutcomeRecorded e -> state;
             case ReviewCompleted e -> {
@@ -133,7 +134,7 @@ public final class ReviewLifecycle implements Decider<RecordCommand, ReviewState
                                     Set<String> reviewed, String summaryCommentId,
                                     Map<String, ThreadState> threads) {
         return new ReviewState(s.reviewId(), s.repo(), s.prId(), status, currentCommit,
-                reviewed, summaryCommentId, threads, s.raisedFindingComments());
+                reviewed, summaryCommentId, threads, s.raisedFindingComments(), s.round());
     }
 
     private static ReviewState withThread(ReviewState s, String key, ThreadState thread) {
@@ -153,6 +154,6 @@ public final class ReviewLifecycle implements Decider<RecordCommand, ReviewState
         Set<String> raised = new HashSet<>(s.raisedFindingComments());
         raised.add(commentId);
         return new ReviewState(s.reviewId(), s.repo(), s.prId(), s.status(), s.currentCommit(),
-                s.reviewedCommits(), s.summaryCommentId(), s.threads(), Set.copyOf(raised));
+                s.reviewedCommits(), s.summaryCommentId(), s.threads(), Set.copyOf(raised), s.round());
     }
 }
