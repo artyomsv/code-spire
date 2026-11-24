@@ -323,10 +323,14 @@ public sealed interface IntegrationEvent {
      * {@code postedVerdict}, {@code reviewRef} and {@code reviewUrl} are set only when a forge-native
      * review was posted (ADR-047): the verdict the forge holds, its review id, and the forge's own link
      * to it. Null on the legacy path and on every record from before the fields existed.
+     *
+     * <p>{@code labelFailure} is why the verdict label call failed (verdict labels, V120), or null when it did not run
+     * or succeeded. Labelling is best effort: a failure never fails the posted review, it only raises an attention row.
      */
     record CommentsPosted(String reviewId, long prId, String commit, String summaryThreadRef,
                           List<PostedInline> inline, List<ThreadOutcome> threadOutcomes,
-                          ReviewVerdict postedVerdict, String reviewRef, String reviewUrl) implements IntegrationEvent {
+                          ReviewVerdict postedVerdict, String reviewRef, String reviewUrl,
+                          String labelFailure) implements IntegrationEvent {
 
         public CommentsPosted {
             inline = inline == null ? null : List.copyOf(inline);
@@ -361,10 +365,23 @@ public sealed interface IntegrationEvent {
             this(reviewId, prId, commit, summaryThreadRef, inline, threadOutcomes, null, null, null);
         }
 
+        /** Call sites and records from before the label outcome existed (V120). */
+        public CommentsPosted(String reviewId, long prId, String commit, String summaryThreadRef,
+                              List<PostedInline> inline, List<ThreadOutcome> threadOutcomes,
+                              ReviewVerdict postedVerdict, String reviewRef, String reviewUrl) {
+            this(reviewId, prId, commit, summaryThreadRef, inline, threadOutcomes, postedVerdict, reviewRef, reviewUrl, null);
+        }
+
         /** What the forge now holds, enumerated once, next to the record. */
         public CommentsPosted withPostedReview(ReviewVerdict postedVerdict, String reviewRef, String reviewUrl) {
             return new CommentsPosted(reviewId, prId, commit, summaryThreadRef, inline, threadOutcomes,
-                    postedVerdict, reviewRef, reviewUrl);
+                    postedVerdict, reviewRef, reviewUrl, labelFailure);
+        }
+
+        /** Why the verdict label call failed, or null; every other component carried over. */
+        public CommentsPosted withLabelFailure(String replacement) {
+            return new CommentsPosted(reviewId, prId, commit, summaryThreadRef, inline, threadOutcomes,
+                    postedVerdict, reviewRef, reviewUrl, replacement);
         }
     }
 

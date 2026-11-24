@@ -44,11 +44,14 @@ class ResultSagaVerdictFixture {
     final List<ActionCommand> emitted = new ArrayList<>();
     final List<String> timelineLines = new ArrayList<>();
     final List<String> recordedVerdicts = new ArrayList<>();
+    /** Each label outcome the saga recorded, as {@code commit:reason}; a null reason is a clear. */
+    final List<String> recordedLabelFailures = new ArrayList<>();
     int openBlockers;
     /** A review whose only open finding is a MAJOR: blocking at MAJOR and MINOR, not at BLOCKER. */
     boolean majorOnly;
     Optional<BlockApprovalAt> level = Optional.of(BlockApprovalAt.BLOCKER);
     Optional<Boolean> setting = Optional.of(true);
+    Optional<Boolean> labels = Optional.of(false);
     boolean identityKnown = true;
 
     static ReviewGenerated generated() {
@@ -162,6 +165,11 @@ class ResultSagaVerdictFixture {
             public void recordPostedVerdict(String reviewId, String commit, ReviewVerdict verdict, String reviewRef, String reviewUrl) {
                 recordedVerdicts.add(verdict + ":" + reviewRef + ":" + commit + ":" + reviewUrl);
             }
+
+            @Override
+            public void recordLabelFailure(String reviewId, String commit, String reason) {
+                recordedLabelFailures.add(commit + ":" + reason);
+            }
         };
         saga.repositories = new dev.codespire.orchestrator.repository.RepositoryRegistry() {
             @Override
@@ -172,6 +180,11 @@ class ResultSagaVerdictFixture {
             @Override
             public Optional<BlockApprovalAt> blockApprovalAt(UUID id) {
                 return level;
+            }
+
+            @Override
+            public Optional<Boolean> verdictLabels(UUID id) {
+                return labels;
             }
         };
         saga.repositoryAccounts = new dev.codespire.orchestrator.repository.RepositoryAccounts() {

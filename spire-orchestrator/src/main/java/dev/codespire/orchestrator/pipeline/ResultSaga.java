@@ -346,6 +346,7 @@ public class ResultSaga {
                 if (e.postedVerdict() != null) {
                     projection.recordPostedVerdict(e.reviewId(), e.commit(), e.postedVerdict(), e.reviewRef(), e.reviewUrl());
                 }
+                projection.recordLabelFailure(e.reviewId(), e.commit(), e.labelFailure());
             }
             case FollowUpGenerated e -> {
                 projection.appendEvent(e.reviewId(), "result", "FollowUpGenerated",
@@ -504,7 +505,13 @@ public class ResultSaga {
                 e.reviewId(), repo, e.prId(), e.commit(), visible, cred,
                 e.verdicts(), priorSummaryRef, filtered.suppressedCount())
                 .withVerdict(decision.assessment(), decision.verdict(), decision.mayApprove())
-                .withRunToken(runToken));
+                .withRunToken(runToken)
+                .withVerdictLabels(verdictLabels(e.reviewId())));
+    }
+
+    /** The repository's "Verdict labels" (V120); off for an unknown repository. A lambda for the reason decideVerdict gives. */
+    private boolean verdictLabels(String reviewId) {
+        return projection.repositoryIdOf(reviewId).flatMap(id -> repositories.verdictLabels(id)).orElse(false);
     }
 
     /**

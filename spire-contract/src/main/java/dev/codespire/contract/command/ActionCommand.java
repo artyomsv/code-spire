@@ -165,12 +165,16 @@ public sealed interface ActionCommand {
      * {@code reviewerMayApprove} the repository setting the orchestrator applied: {@code verdict} is
      * always {@code reviewerMayApprove ? assessment : COMMENT}. All three null means "post as before"
      * (D10) — a command recorded before the fields existed, or a forge with no native review.
+     *
+     * <p>{@code verdictLabels} is the repository's "Verdict labels" setting (V120): when true, after the native
+     * review is posted the worker sets one {@code review: } label from {@code assessment}. Null (a command recorded
+     * before the field existed) is off.
      */
     record PostComments(String reviewId, RepoRef repo, long prId, String commit,
                         ReviewResult findings, String scmCredential,
                         List<FindingVerdict> verdicts, String priorSummaryRef,
                         int suppressedCount, ReviewVerdict assessment, ReviewVerdict verdict,
-                        Boolean reviewerMayApprove, String runToken) implements ActionCommand {
+                        Boolean reviewerMayApprove, String runToken, Boolean verdictLabels) implements ActionCommand {
 
         public PostComments {
             verdicts = verdicts == null ? List.of() : List.copyOf(verdicts);
@@ -204,6 +208,16 @@ public sealed interface ActionCommand {
                     suppressedCount, assessment, verdict, reviewerMayApprove, null);
         }
 
+        /** Records from before "Verdict labels" existed (V120): no label is set. */
+        public PostComments(String reviewId, RepoRef repo, long prId, String commit,
+                            ReviewResult findings, String scmCredential,
+                            List<FindingVerdict> verdicts, String priorSummaryRef, int suppressedCount,
+                            ReviewVerdict assessment, ReviewVerdict verdict, Boolean reviewerMayApprove,
+                            String runToken) {
+            this(reviewId, repo, prId, commit, findings, scmCredential, verdicts, priorSummaryRef,
+                    suppressedCount, assessment, verdict, reviewerMayApprove, runToken, null);
+        }
+
         /**
          * Same command, carrying how many findings a learned preference hid (P4 / ADR-027).
          *
@@ -222,13 +236,13 @@ public sealed interface ActionCommand {
          */
         public PostComments withSuppressedCount(int replacement) {
             return new PostComments(reviewId, repo, prId, commit, findings, scmCredential, verdicts,
-                    priorSummaryRef, replacement, assessment, verdict, reviewerMayApprove, runToken);
+                    priorSummaryRef, replacement, assessment, verdict, reviewerMayApprove, runToken, verdictLabels);
         }
 
         /** The orchestrator's decision (ADR-047 D4), enumerated once, next to the record. */
         public PostComments withVerdict(ReviewVerdict assessment, ReviewVerdict verdict, boolean reviewerMayApprove) {
             return new PostComments(reviewId, repo, prId, commit, findings, scmCredential, verdicts,
-                    priorSummaryRef, suppressedCount, assessment, verdict, reviewerMayApprove, runToken);
+                    priorSummaryRef, suppressedCount, assessment, verdict, reviewerMayApprove, runToken, verdictLabels);
         }
 
         /**
@@ -239,7 +253,13 @@ public sealed interface ActionCommand {
          */
         public PostComments withRunToken(String runToken) {
             return new PostComments(reviewId, repo, prId, commit, findings, scmCredential, verdicts,
-                    priorSummaryRef, suppressedCount, assessment, verdict, reviewerMayApprove, runToken);
+                    priorSummaryRef, suppressedCount, assessment, verdict, reviewerMayApprove, runToken, verdictLabels);
+        }
+
+        /** The repository's "Verdict labels" setting (V120), enumerated once, next to the record. */
+        public PostComments withVerdictLabels(boolean replacement) {
+            return new PostComments(reviewId, repo, prId, commit, findings, scmCredential, verdicts,
+                    priorSummaryRef, suppressedCount, assessment, verdict, reviewerMayApprove, runToken, replacement);
         }
     }
 

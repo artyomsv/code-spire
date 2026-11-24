@@ -136,4 +136,8 @@ class HarnessSagaProjection extends TestRepositoryProjection {
     public void recordPostedVerdict(String reviewId, String commit, ReviewVerdict verdict, String reviewRef,
                                     String reviewUrl) {
     }
+
+    @Override
+    public void recordLabelFailure(String reviewId, String commit, String reason) {
+    }
 }

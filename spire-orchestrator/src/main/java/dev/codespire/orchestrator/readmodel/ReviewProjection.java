@@ -556,6 +556,20 @@ public class ReviewProjection {
         });
     }
 
+    /**
+     * Why the posted review's verdict label call failed, or null (verdict labels, V120): every CommentsPosted writes it,
+     * so a later success or the setting turned off clears the attention row a failure raised. Same commit guard as
+     * {@link #recordPosted}: a superseded run's report cannot speak for the newer head.
+     */
+    public void recordLabelFailure(String reviewId, String commit, String reason) {
+        update("UPDATE review_status SET label_failure = ? WHERE review_id = ? AND commit_sha = ?", ps -> {
+            ps.setString(1, reason);
+            ps.setString(2, reviewId);
+            ps.setString(3, commit);
+        });
+        attention.refresh();
+    }
+
     /** The open BLOCKER count: {@link #openBlocking} at {@code BLOCKER}, the rule before V115 (ADR-047 D1, D4). */
     public int openBlockers(String reviewId) {
         return openBlocking(reviewId, BlockApprovalAt.BLOCKER);

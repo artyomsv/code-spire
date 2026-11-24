@@ -95,6 +95,7 @@ public class AttentionQueries {
             reviewRows(c, rows);
             degradedReviewRows(c, rows);
             HarnessRefusalAttentionRows.collect(c, rows);
+            LabelFailureAttentionRows.collect(c, rows);
             runRows.collect(c, rows);
             credentialRows(c, rows);
             costRows(c, rows);

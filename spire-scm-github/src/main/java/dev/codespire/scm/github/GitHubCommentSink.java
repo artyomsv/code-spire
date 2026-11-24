@@ -61,6 +61,7 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
     private final GitHubClient client;
     private final String brokeredBotLogin;
     private final GitHubReviewApi reviews;
+    private final GitHubLabelApi labels;
 
     private static boolean isReviewRef(ThreadRef thread) {
         return thread.value().startsWith(REVIEW_REF_PREFIX);
@@ -79,6 +80,7 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
         this.client = client;
         this.brokeredBotLogin = botLogin;
         this.reviews = new GitHubReviewApi(client);
+        this.labels = new GitHubLabelApi(client);
     }
 
     @Override
@@ -99,6 +101,11 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
     @Override
     public Optional<String> dismissOwnChangesRequested(RepoRef repo, long prId, String message) {
         return reviews.dismissChangesRequested(repo, prId, botLogin(), message);
+    }
+
+    @Override
+    public LabelOutcome setVerdictLabel(RepoRef repo, long prId, String label, String prefix) {
+        return labels.set(repo, prId, label, prefix);
     }
 
     /** A login mention: GitHub and GitLab link {@code @login} and notify that account. */

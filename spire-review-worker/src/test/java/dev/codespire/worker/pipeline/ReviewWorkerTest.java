@@ -1487,8 +1487,12 @@ class ReviewWorkerTest {
         String foundReviewBody;
         final List<String> updatedReviewBodies = new ArrayList<>();
         final List<String> dismissals = new ArrayList<>();
-        /** Every native-path call in order: review, inline, body, dismiss. */
+        /** Every native-path call in order: review, inline, body, dismiss, label. */
         final List<String> calls = new ArrayList<>();
+        /** Each verdict label asked for, as {@code label|prefix}. */
+        final List<String> labelCalls = new ArrayList<>();
+        /** Thrown by setVerdictLabel when set. */
+        RuntimeException labelFailure;
 
         @Override
         public ScmType type() {
@@ -1533,6 +1537,16 @@ class ReviewWorkerTest {
             calls.add("dismiss");
             dismissals.add(message);
             return Optional.of("rv-old");
+        }
+
+        @Override
+        public CommentSink.LabelOutcome setVerdictLabel(RepoRef repo, long prId, String label, String prefix) {
+            calls.add("label");
+            labelCalls.add(label + "|" + prefix);
+            if (labelFailure != null) {
+                throw labelFailure;
+            }
+            return CommentSink.LabelOutcome.APPLIED;
         }
 
         @Override

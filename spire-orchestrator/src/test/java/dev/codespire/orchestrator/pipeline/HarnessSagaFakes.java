@@ -138,6 +138,12 @@ final class HarnessSagaFakes {
             public Optional<dev.codespire.orchestrator.repository.BlockApprovalAt> blockApprovalAt(UUID id) {
                 return Optional.of(dev.codespire.orchestrator.repository.BlockApprovalAt.BLOCKER);
             }
+
+            // Read on every ReviewGenerated that posts; the real one opens a database.
+            @Override
+            public Optional<Boolean> verdictLabels(UUID id) {
+                return Optional.of(false);
+            }
         };
         saga.repositoryAccounts = new RepositoryAccounts() {
             @Override

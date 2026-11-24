@@ -104,6 +104,19 @@ public interface CommentSink {
         return Optional.empty();
     }
 
+    /** What {@link #setVerdictLabel} did. */
+    enum LabelOutcome { APPLIED, ALREADY_SET, UNSUPPORTED }
+
+    /**
+     * Leaves {@code label} as the pull request's only label starting {@code prefix} (verdict labels, V120): every
+     * other such label is removed, unrelated labels stay, and the label is created in the repository when it does not
+     * exist yet. Idempotent: a repeat finds the label alone and answers {@link LabelOutcome#ALREADY_SET}. The default
+     * is "this forge has no labels here"; the caller then sets nothing.
+     */
+    default LabelOutcome setVerdictLabel(RepoRef repo, long prId, String label, String prefix) {
+        return LabelOutcome.UNSUPPORTED;
+    }
+
     /** The forge refused the asked verdict on this pull request (GitHub: one's own pull request). */
     class ReviewVerdictRefused extends RuntimeException {
         public ReviewVerdictRefused(String message, Throwable cause) {

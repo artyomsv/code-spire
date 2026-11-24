@@ -390,9 +390,13 @@ public class ReviewWorker {
                     NativeReviewPost.Outcome outcome = nativeOutcome.orElseThrow();
                     List<CommentsPosted.PostedInline> posted = new ArrayList<>(outcome.inline());
                     recoverPreviouslyPosted(previouslyPosted, posted);
+                    // Best effort, after the review is on the forge: the outcome rides on the report, so a later
+                    // success clears the attention row a failure raised (verdict labels, V120).
+                    String labelFailure = VerdictLabels.apply(commentSink, command);
                     results.emit(new CommentsPosted(command.reviewId(), command.prId(), command.commit(),
                             NativeReviewPost.REF_PREFIX + outcome.reviewRef(), posted, outcomes)
-                            .withPostedReview(outcome.postedVerdict(), outcome.reviewRef(), outcome.reviewUrl()));
+                            .withPostedReview(outcome.postedVerdict(), outcome.reviewRef(), outcome.reviewUrl())
+                            .withLabelFailure(labelFailure));
                     return;
                 }
             }
