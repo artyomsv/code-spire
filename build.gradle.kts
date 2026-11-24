@@ -17,7 +17,7 @@ allprojects {
  * of them and hoping the combination was tested. Upstream already did that work and published it as
  * a platform release.
  *
- * Three have no such release yet. As of 2026-10-28 no Quarkus platform up to 3.40.1 carries any of
+ * These have no such release yet. As of 2026-10-28 no Quarkus platform up to 3.40.1 carries any of
  * these fixes (3.40.1 selects jackson 2.21.7, lz4-java 1.11.1, snappy-java 1.1.10.8):
  *
  *  - `com.fasterxml.jackson.core` 2.22.0 -> 2.22.4, now 2.23.0 (CVE-2026-54515, CVE-2026-59889, CVE-2026-19032,
@@ -25,6 +25,10 @@ allprojects {
  *  - `at.yawk.lz4:lz4-java` 1.10.1 -> 1.11.4 (CVE-2026-59949, CVE-2026-106449..106453)
  *  - `org.xerial.snappy:snappy-java` 1.1.10.8 -> 1.1.10.12 (CVE-2026-93451, CVE-2026-108106,
  *    CVE-2026-116590), pulled in by kafka-clients
+ *  - `org.bouncycastle` bc*-jdk18on 1.84 -> 1.85 (CVE-2026-8763, CVE-2026-13506), all three together
+ *  - `org.apache.httpcomponents.client5:httpclient5` 5.6.1 -> 5.6.3 (CVE-2026-64607), via docker-java
+ *  - `com.google.guava:guava` 33.6.0-jre -> 33.7.2-jre (CVE-2026-102554)
+ *    (these three were found by Trivy in the run-worker image on 2026-11-24)
  *
  * jackson-core moves with jackson-databind because a Jackson patch publishes them as a pair.
  * jackson-annotations does not: it versions only on a minor, and 2.23 is current.
@@ -40,6 +44,11 @@ val advisoryOverrides = mapOf(
     "com.fasterxml.jackson.core:jackson-databind" to "2.23.0",
     "at.yawk.lz4:lz4-java" to "1.11.4",
     "org.xerial.snappy:snappy-java" to "1.1.10.12",
+    "org.bouncycastle:bcprov-jdk18on" to "1.85",
+    "org.bouncycastle:bcpkix-jdk18on" to "1.85",
+    "org.bouncycastle:bcutil-jdk18on" to "1.85",
+    "org.apache.httpcomponents.client5:httpclient5" to "5.6.3",
+    "com.google.guava:guava" to "33.7.2-jre",
 )
 
 subprojects {
