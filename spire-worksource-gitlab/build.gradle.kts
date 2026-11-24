@@ -7,11 +7,11 @@ dependencies {
     implementation(project(":spire-context-gitlab"))
     implementation(project(":spire-scm-gitlab"))
     implementation(project(":spire-http"))
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.4")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.23.0")
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testImplementation("org.wiremock:wiremock:3.13.2")
-    testImplementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.22.4")
+    testImplementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.23.0")
 }
 tasks.test { useJUnitPlatform() }
