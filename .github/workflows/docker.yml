@@ -191,9 +191,6 @@ jobs:
           output: trivy-${{ matrix.name }}.sarif
           exit-code: '0'
           severity: HIGH,CRITICAL
-          # Without this the SARIF output ignores `severity` and carries every level: 995 alerts on
-          # 2026-11-24, 736 of them low, medium or note.
-          limit-severities-for-sarif: true
       - name: Report
         if: github.event_name == 'push'
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
@@ -268,9 +265,6 @@ jobs:
           output: trivy-${{ matrix.name }}.sarif
           exit-code: '0'
           severity: HIGH,CRITICAL
-          # Without this the SARIF output ignores `severity` and carries every level: 995 alerts on
-          # 2026-11-24, 736 of them low, medium or note.
-          limit-severities-for-sarif: true
       - name: Report
         if: github.event_name == 'push'
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3

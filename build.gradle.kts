@@ -30,18 +30,21 @@ allprojects {
  *  - `com.google.guava:guava` 33.6.0-jre -> 33.7.2-jre (CVE-2026-102554)
  *    (these three were found by Trivy in the run-worker image on 2026-11-24)
  *
- * jackson-core moves with jackson-databind because a Jackson patch publishes them as a pair.
- * jackson-annotations does not: it versions only on a minor, and 2.23 is current.
- * Dependabot does not edit this map. A Jackson bump must change it together with every module
- * declaration, or the force pins the module declarations back down (dependabot.yml groups them).
+ * Jackson is aligned as a whole release, not per artifact: every `com.fasterxml.jackson*` module
+ * resolves to `jacksonRelease`, and jackson-annotations (which versions only on a minor) to
+ * `jacksonAnnotations`. Forcing only core and databind left the service BOM's jdk8, jsr310,
+ * parameter-names and yaml modules one minor behind databind.
+ * Dependabot does not edit these two values. A Jackson bump must change them together with every
+ * module declaration, or the force pins the module declarations back down (dependabot.yml groups them).
  *
  * Remove an entry once the platform catches up. A force does not go quiet when it becomes
  * unnecessary — it starts pinning the version DOWN. `./gradlew :spire-orchestrator:dependencyInsight
  * --configuration runtimeClasspath --dependency <name>` shows what actually resolved.
  */
+val jacksonRelease = "2.23.0"
+val jacksonAnnotations = "2.23"
+
 val advisoryOverrides = mapOf(
-    "com.fasterxml.jackson.core:jackson-core" to "2.23.0",
-    "com.fasterxml.jackson.core:jackson-databind" to "2.23.0",
     "at.yawk.lz4:lz4-java" to "1.11.4",
     "org.xerial.snappy:snappy-java" to "1.1.10.12",
     "org.bouncycastle:bcprov-jdk18on" to "1.85",
@@ -57,6 +60,10 @@ subprojects {
             advisoryOverrides["${requested.group}:${requested.name}"]?.let { fixed ->
                 useVersion(fixed)
                 because("published advisory against the version the Quarkus platform selects")
+            }
+            if (requested.group.startsWith("com.fasterxml.jackson")) {
+                useVersion(if (requested.name == "jackson-annotations") jacksonAnnotations else jacksonRelease)
+                because("one Jackson release across every module; the core pair carries published advisories")
             }
         }
     }
