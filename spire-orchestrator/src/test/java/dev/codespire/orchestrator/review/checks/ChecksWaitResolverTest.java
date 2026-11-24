@@ -72,8 +72,9 @@ class ChecksWaitResolverTest extends ChecksWaitFixture {
         waits.startWaiting(waitOn(HEAD, 5));
         resolver().resolve(waits.rowOf(REVIEW_ID));
         assertTrue(emitted.isEmpty(), "checks may still register within the grace period");
-        waits.startWaiting(waitOn(HEAD, ChecksWaitDecision.GRACE.toSeconds()));
-        resolver().resolve(waits.rowOf(REVIEW_ID));
+        // The same run read again once its grace has passed. Registering the run a second time would be refused: a
+        // registration never replaces a row of the same or a later round, so the row keeps its own start.
+        resolver().resolve(waitOn(HEAD, ChecksWaitDecision.GRACE.toSeconds()));
         assertEquals(1, fetches().size());
     }
 
