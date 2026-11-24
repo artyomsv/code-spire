@@ -2577,3 +2577,11 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   catalog and default-model reads are shown with a retry; the new model controls use `SettingField`, and the settings
   contract now counts the shared Select; a byte-cap test proves the read stops at the cap; and the new code moved out
   of classes over the size limit. Each guard is paired with its test in the commit that added it.
+
+- **A typed http forge origin offers the accounts' https one (2026-11-24, Part of #391).** On the first production
+  install the Register repository form took `http://api.github.com` while both accounts were on
+  `https://api.github.com`, so the reviewer and factory selects were empty and the note only said to add an account.
+  When no account matches the typed origin but this forge's accounts sit on the same host under another scheme, the
+  note now names that origin and offers "Use https://…", which switches the origin and clears the selections. Plain
+  http stays accepted: a self-hosted forge may serve it. RepositoryAccountSelects.test.tsx covers the switch, the
+  matching origin and the unrelated-host note.
