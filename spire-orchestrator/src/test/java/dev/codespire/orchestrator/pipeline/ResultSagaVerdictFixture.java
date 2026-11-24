@@ -53,6 +53,8 @@ class ResultSagaVerdictFixture {
     Optional<Boolean> setting = Optional.of(true);
     Optional<Boolean> labels = Optional.of(false);
     boolean identityKnown = true;
+    /** The commit whose review started on the check timeout (V121); none by default. */
+    String unfinishedChecksOn = "TEST-no-such-commit";
 
     static ReviewGenerated generated() {
         return new ReviewGenerated(REVIEW_ID, 412L, COMMIT, new ReviewResult(List.of(), "s", ModelUsage.of(null, 0, 0)));
@@ -172,6 +174,7 @@ class ResultSagaVerdictFixture {
                 recordedLabelFailures.add(commit + ":" + reason);
             }
         };
+        saga.checksWaits = SagaRepositoryFakes.startedUnfinishedOn(unfinishedChecksOn);
         saga.repositories = new dev.codespire.orchestrator.repository.RepositoryRegistry() {
             @Override
             public Optional<Boolean> reviewerMayApprove(UUID id) {

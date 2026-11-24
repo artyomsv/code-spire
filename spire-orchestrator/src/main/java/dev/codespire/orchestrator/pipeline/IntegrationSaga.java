@@ -94,6 +94,8 @@ public class IntegrationSaga {
     @Inject
     dev.codespire.orchestrator.review.run.ReviewRunCancellation reviewRunCancellation;
 
+    @Inject dev.codespire.orchestrator.review.checks.ReviewStartGate reviewStart; // at once, or after checks (V121)
+
     @Incoming("integration-in")
     @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
     public void on(IntegrationEvent event) {
@@ -699,10 +701,7 @@ public class IntegrationSaga {
         String reviewId = ReviewIds.reviewId(e.repo(), e.prId());
         String commit = e.headCommit();
 
-        // Only PRs from a registered provider are reviewed. Resolve by (type,
-        // workspace) when the event names its SCM — a GitHub org and a Bitbucket
-        // workspace can share a name; fall back to workspace alone for events
-        // serialized before providerType existed (or the dev simulator).
+        // Only PRs from a registered provider are reviewed, resolved through the review's repository mapping.
         Optional<ScmProvider> provider = reviewProviders.resolveForReview(reviewId);
         if (provider.isEmpty()) {
             timeline.record("integration", "PullRequestSkipped", reviewId,
@@ -771,7 +770,7 @@ public class IntegrationSaga {
             return;
         }
 
-        commands.emit(new ActionCommand.FetchDiff(reviewId, e.repo(), e.prId(), commit,
+        reviewStart.begin(new ActionCommand.FetchDiff(reviewId, e.repo(), e.prId(), commit,
                 workerCredentials.pack(provider.get(), e.repo().workspace()), !Boolean.FALSE.equals(e.fromFork())));
     }
 

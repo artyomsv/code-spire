@@ -79,11 +79,11 @@ class ReviewRerunRoundLockTest {
         service.projection = projection();
         service.lifecycle = lifecycle();
         service.rounds = roundLock();
-        service.commands = new CommandsEmitter() {
+        service.reviewStart = new dev.codespire.orchestrator.review.checks.ReviewStartGate() {
             @Override
-            public void emit(ActionCommand command) {
+            public void begin(ActionCommand.FetchDiff fetch) {
                 steps.add("fetch");
-                fetches.add((ActionCommand.FetchDiff) command);
+                fetches.add(fetch);
             }
         };
         service.workerCredentials = new WorkerCredentials() {

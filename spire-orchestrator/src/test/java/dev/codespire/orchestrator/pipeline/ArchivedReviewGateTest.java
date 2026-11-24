@@ -77,9 +77,9 @@ class ArchivedReviewGateTest {
         ReviewRerunService service = new ReviewRerunService();
         service.projection = fakeArchivedProjection(clearedClaims);
         service.lifecycle = fakeLifecycleThatStartsARun();
-        service.commands = new CommandsEmitter() {
+        service.reviewStart = new dev.codespire.orchestrator.review.checks.ReviewStartGate() {
             @Override
-            public void emit(ActionCommand command) {
+            public void begin(ActionCommand.FetchDiff fetch) {
                 throw new AssertionError("an archived rerun must never dispatch a command");
             }
         };

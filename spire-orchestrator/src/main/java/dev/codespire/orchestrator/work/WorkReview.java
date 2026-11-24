@@ -15,6 +15,8 @@ import java.util.*;
 /** Observe the existing reviewer at the delivered head. This does not supply a verifier or a merge capability. */
 @ApplicationScoped
 public class WorkReview {
+    /** A review on its way: received, running, or waiting for its head's checks (V121). */
+    private static final Set<String> UNDER_WAY=Set.of("received","reviewing",dev.codespire.orchestrator.review.checks.ChecksWaitStatus.WAITING);
     @Inject DataSource dataSource;
     @Inject WorkItemStore store;
     @Inject WorkItemTransitions transitions;
@@ -126,7 +128,7 @@ public class WorkReview {
         try(PreparedStatement ps=c.prepareStatement("SELECT commit_sha,status FROM review_status WHERE repository_id=? AND pr_id=?")) {
             ps.setObject(1,item.repositoryId());ps.setLong(2,execution.pullRequest().number());
             try(ResultSet rs=ps.executeQuery()) {
-                return rs.next() && execution.head().equals(rs.getString("commit_sha")) && !Set.of("received","reviewing").contains(rs.getString("status"));
+                return rs.next() && execution.head().equals(rs.getString("commit_sha")) && !UNDER_WAY.contains(rs.getString("status"));
             }
         }
     }
@@ -164,7 +166,7 @@ public class WorkReview {
                 else if("failed".equals(status))reason="review_failed";
                 // Only a review on its way is in progress. Refused, cancelled, superseded and observed reviews are
                 // over, and saying "reviewing now" about them for ever is what item #41 set out to stop.
-                else if(Set.of("received","reviewing").contains(status))reason="review_in_progress";
+                else if(UNDER_WAY.contains(status))reason="review_in_progress";
                 else if(!"completed".equals(status))reason="review_"+status;
                 else if(!execution.head().equals(rs.getString("last_posted_commit")))reason="review_head_not_observed";
                 else if(rs.getBoolean("degraded"))reason="review_result_pending";

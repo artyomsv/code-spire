@@ -3,6 +3,8 @@ package dev.codespire.orchestrator.pipeline;
 import dev.codespire.contract.event.DomainEvent;
 import dev.codespire.contract.event.EventEnvelope;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
+import dev.codespire.orchestrator.review.checks.ChecksWaitStatus;
+import dev.codespire.orchestrator.review.checks.ChecksWaitStore;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import io.smallrye.reactive.messaging.annotations.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -23,6 +25,10 @@ public class DomainEventSink {
 
     @Inject
     ReviewProjection projection;
+
+    /** Review waits for CI: a superseded head whose successor waits for checks keeps "Waiting for checks". */
+    @Inject
+    ChecksWaitStore checksWaits;
 
     @Incoming("events-in")
     @Blocking
@@ -53,8 +59,13 @@ public class DomainEventSink {
             // Not updateStatus: a cap refusal is terminal through this same event, and 'refused' is a
             // read-model refinement of it that must not be coarsened back (see projectTerminalFailure).
             case DomainEvent.ReviewFailedTerminally ignored -> projection.projectTerminalFailure(reviewId);
-            case DomainEvent.ReviewCancelled ignored -> projection.updateStatus(reviewId, "cancelled");
-            case DomainEvent.ReviewSuperseded ignored -> projection.updateStatus(reviewId, "superseded");
+            // A skip for failed checks (review waits for CI) ends the run through the same event as a close.
+            case DomainEvent.ReviewCancelled e -> projection.updateStatus(reviewId,
+                    ChecksWaitStatus.CHECKS_FAILED.equals(e.reason()) ? ChecksWaitStatus.SKIPPED : "cancelled");
+            // The new head's run starts in the same step; when it waits for checks, that is what the review shows.
+            case DomainEvent.ReviewSuperseded ignored -> {
+                if (!checksWaits.isWaiting(reviewId)) projection.updateStatus(reviewId, "superseded");
+            }
             default -> { /* non-terminal: event already appended above */ }
         }
     }

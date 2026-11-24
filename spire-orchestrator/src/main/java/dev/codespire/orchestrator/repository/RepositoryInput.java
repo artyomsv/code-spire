@@ -17,11 +17,23 @@ import java.util.UUID;
  *                            {@link BlockApprovalAt#parse}, where the JSON reader would refuse it without one
  * @param verdictLabels       "Verdict labels" (V120): each posted review sets one {@code review: } label from its
  *                            decided verdict. Null on create means off; null on update keeps the stored value
+ * @param startReview         "Start review" (V121): {@code IMMEDIATELY} or {@code AFTER_CHECKS}, as sent. Null on create
+ *                            means {@code IMMEDIATELY}; null on update keeps the stored value
  */
 public record RepositoryInput(String scmType, String forgeOrigin, String workspace, String slug,
                               Boolean enabled, UUID reviewerAccountId, UUID factoryAccountId,
                               Boolean reviewerMayApprove, UUID reviewLlmProviderId, String reviewLlmModel,
-                              ReviewHarness reviewHarness, String blockApprovalAt, Boolean verdictLabels) {
+                              ReviewHarness reviewHarness, String blockApprovalAt, Boolean verdictLabels,
+                              String startReview) {
+    /** Call sites from before "Start review" existed (V121); null means at once on create and unchanged on update. */
+    public RepositoryInput(String scmType, String forgeOrigin, String workspace, String slug,
+                           Boolean enabled, UUID reviewerAccountId, UUID factoryAccountId,
+                           Boolean reviewerMayApprove, UUID reviewLlmProviderId, String reviewLlmModel,
+                           ReviewHarness reviewHarness, String blockApprovalAt, Boolean verdictLabels) {
+        this(scmType, forgeOrigin, workspace, slug, enabled, reviewerAccountId, factoryAccountId, reviewerMayApprove,
+                reviewLlmProviderId, reviewLlmModel, reviewHarness, blockApprovalAt, verdictLabels, null);
+    }
+
     /** Call sites from before "Verdict labels" existed (V120); null means off on create and unchanged on update. */
     public RepositoryInput(String scmType, String forgeOrigin, String workspace, String slug,
                            Boolean enabled, UUID reviewerAccountId, UUID factoryAccountId,
@@ -46,7 +58,7 @@ public record RepositoryInput(String scmType, String forgeOrigin, String workspa
      */
     public RepositoryInput withReviewLlm(UUID providerId, String model) {
         return new RepositoryInput(scmType, forgeOrigin, workspace, slug, enabled, reviewerAccountId, factoryAccountId,
-                reviewerMayApprove, providerId, model, reviewHarness, blockApprovalAt, verdictLabels);
+                reviewerMayApprove, providerId, model, reviewHarness, blockApprovalAt, verdictLabels, startReview);
     }
 
     /** Call sites from before "Block approval at" existed; null means {@code BLOCKER}. */

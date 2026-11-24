@@ -581,6 +581,8 @@ spire:
     review:
       # Tests exercise the active pipeline — seed active (prod/dev seed observe in code).
       mode: active
+      # Review waits for CI: tests drive the sweep by hand, so a background claim never races them.
+      checks-sweep-interval: "off"
     security:
       allow-insecure-provider-urls: true   # tests register providers against http://localhost WireMocks
     encryption:

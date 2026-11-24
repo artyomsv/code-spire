@@ -17,6 +17,7 @@ class RepositoryIngressRoutingTest {
     private final List<IntegrationEvent> reviews = new ArrayList<>();
     private final List<RepositoryDelivery> activities = new ArrayList<>();
     private final List<RepositoryDelivery> missing = new ArrayList<>();
+    private final List<String> wakes = new ArrayList<>();
 
     @Test void factoryActivityNeverEntersTheReviewLifecycle() {
         RepositoryDelivery reviewer = delivery(id, RepositoryEventKind.REVIEWER, opened());
@@ -27,6 +28,14 @@ class RepositoryIngressRoutingTest {
         consumer().accept(activity);
         assertEquals(List.of(activity), activities);
         assertTrue(reviews.isEmpty());
+    }
+
+    /** Review waits for CI: a checks wake-up reaches the waits of its repository, never the review lifecycle. */
+    @Test void aChecksWakeUpReachesTheWaitsOnly() {
+        var checks = new IntegrationEvent.ChecksChanged(repo, "a".repeat(40));
+        consumer().accept(delivery(id, RepositoryEventKind.REVIEWER, checks));
+        assertEquals(List.of(id + ":" + checks.headCommit()), wakes);
+        assertTrue(reviews.isEmpty()); assertTrue(activities.isEmpty());
     }
 
     @Test void aDisabledRepositoryCannotProcessAnAlreadyVerifiedDelivery() {
@@ -92,6 +101,11 @@ class RepositoryIngressRoutingTest {
         consumer.reviews = new IntegrationSaga() {
             @Override public void onRepository(IntegrationEvent event, UUID repository) {
                 assertEquals(id, repository); reviews.add(event);
+            }
+        };
+        consumer.checksWaits = new dev.codespire.orchestrator.review.checks.ChecksWaitResolver() {
+            @Override public void wake(UUID repository, IntegrationEvent.ChecksChanged event) {
+                wakes.add(repository + ":" + event.headCommit());
             }
         };
         consumer.unregistered = new UnregisteredRepositoryEvents() {

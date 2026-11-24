@@ -50,13 +50,11 @@ import java.util.OptionalLong;
 import java.util.Set;
 
 /**
- * Reacts to worker results (cs.results): issues the next Action command and
- * the matching Record command (CONTRACT §5).
+ * Reacts to worker results (cs.results): issues the next Action command and the matching Record command (CONTRACT §5).
  *
- * <p>Post-split home of the ADR-013 stale-run guard: the orchestrator owns the
- * aggregate, so results belonging to a superseded/cancelled run are dropped
- * HERE, before the next (possibly expensive) command is ever emitted. The
- * worker keeps only the PR-head re-check for its own visible actions.
+ * <p>Post-split home of the ADR-013 stale-run guard: the orchestrator owns the aggregate, so results belonging to a
+ * superseded/cancelled run are dropped HERE, before the next (possibly expensive) command is ever emitted. The worker
+ * keeps only the PR-head re-check for its own visible actions.
  */
 @ApplicationScoped
 public class ResultSaga {
@@ -85,6 +83,7 @@ public class ResultSaga {
     /** Why the posted review's verdict label failed (V120), for the attention row. */
     @Inject
     dev.codespire.orchestrator.attention.LabelFailures labelFailures;
+    @Inject dev.codespire.orchestrator.review.checks.ChecksWaitStore checksWaits; // a review started before CI finished
 
     @Inject
     dev.codespire.orchestrator.readmodel.FindingProjection findings;
@@ -499,14 +498,15 @@ public class ResultSaga {
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
                 e.commit(), visible.findings().size(),
                 Integer.toHexString(visible.summary().hashCode())));
-        ReviewPostSettings settings = new ReviewPostSettings(projection, repositories, repositoryAccounts);
-        ReviewVerdictDecision.Decision decision = settings.decide(e.reviewId(), visible);
+        ReviewPostSettings settings = new ReviewPostSettings(
+                new ReviewPostSettings.Sources(projection, repositories, repositoryAccounts, checksWaits));
+        ReviewVerdictDecision.Decision decision = settings.decide(e, visible);
         projection.appendEvent(e.reviewId(), "result", "ReviewVerdictDecided", decision.detail());
         // The run's token travels with the command: the worker marks this run's review with it, so a
         // re-run on the same head posts beside the earlier run's review instead of reusing it.
         String runToken = projection.runTokenOf(e.reviewId()).orElse(null);
         emitWithCredential(e.reviewId(), "PostComments", cred -> new ActionCommand.PostComments(
-                e.reviewId(), repo, e.prId(), e.commit(), visible, cred,
+                e.reviewId(), repo, e.prId(), e.commit(), settings.posted(e, visible), cred,
                 e.verdicts(), priorSummaryRef, filtered.suppressedCount())
                 .withVerdict(decision.assessment(), decision.verdict(), decision.mayApprove())
                 .withRunToken(runToken)

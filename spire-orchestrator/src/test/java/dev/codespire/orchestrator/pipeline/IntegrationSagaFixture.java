@@ -224,6 +224,13 @@ abstract class IntegrationSagaFixture {
             }
         };
         saga.policy = policy;
+        // The repository starts reviews at once: the run's first command is sent as before (V121).
+        saga.reviewStart = new dev.codespire.orchestrator.review.checks.ReviewStartGate() {
+            @Override
+            public void begin(ActionCommand.FetchDiff fetch) {
+                emitted.add(fetch);
+            }
+        };
         saga.rerunService = new ReviewRerunService() {
             @Override
             public boolean rerun(String workspace, String slug, long pr) {

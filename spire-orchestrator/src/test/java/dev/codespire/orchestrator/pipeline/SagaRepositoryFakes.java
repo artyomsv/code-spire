@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.pipeline;
 import dev.codespire.orchestrator.attention.LabelFailures;
 import dev.codespire.orchestrator.repository.BlockApprovalAt;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
+import dev.codespire.orchestrator.review.checks.ChecksWaitStore;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -32,6 +33,21 @@ final class SagaRepositoryFakes {
             @Override
             public Optional<Boolean> verdictLabels(UUID id) {
                 return Optional.of(false);
+            }
+        };
+    }
+
+    /** No review started on the check timeout (V121): the decision reads this for every generated review. */
+    static ChecksWaitStore noUnfinishedChecks() {
+        return startedUnfinishedOn("TEST-no-such-commit");
+    }
+
+    /** The review of {@code commit} started before its checks finished, so it must not approve. */
+    static ChecksWaitStore startedUnfinishedOn(String commit) {
+        return new ChecksWaitStore() {
+            @Override
+            public boolean startedUnfinished(String reviewId, String reviewed) {
+                return commit.equals(reviewed);
             }
         };
     }

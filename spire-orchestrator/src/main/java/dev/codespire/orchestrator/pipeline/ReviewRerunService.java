@@ -41,9 +41,6 @@ public class ReviewRerunService {
     ReviewLifecycleService lifecycle;
 
     @Inject
-    CommandsEmitter commands;
-
-    @Inject
     WorkerCredentials workerCredentials;
 
     @Inject
@@ -52,6 +49,10 @@ public class ReviewRerunService {
     /** Step 8b: an untrusted pull request's worker also reads its comments for link authors. */
     @Inject
     dev.codespire.orchestrator.factory.FixTargets targets;
+
+    /** A re-run waits for the head's checks too when the repository says so (V121). */
+    @Inject
+    dev.codespire.orchestrator.review.checks.ReviewStartGate reviewStart;
 
     /**
      * @return true if the run was (re)started; false if the aggregate declined it (should not happen
@@ -83,7 +84,7 @@ public class ReviewRerunService {
         if (!started) {
             return false;
         }
-        commands.emit(new ActionCommand.FetchDiff(reviewId, repo, pr, commit, scmCredential,
+        reviewStart.begin(new ActionCommand.FetchDiff(reviewId, repo, pr, commit, scmCredential,
                 targets.isUntrustedReview(reviewId)));
         LOG.infof("Re-run requested for %s on commit %s", reviewId, commit);
         return true;

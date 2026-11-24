@@ -17,6 +17,7 @@ public final class ReviewVerdictDecision {
     public static final String REASON_SETTING_OFF = "setting_off";
     public static final String REASON_REPOSITORY_UNKNOWN = "repository_unknown";
     public static final String REASON_IDENTITY_UNKNOWN = "reviewer_identity_unknown";
+    public static final String REASON_CHECKS_UNFINISHED = "checks_unfinished";
 
     public record Decision(ReviewVerdict assessment, ReviewVerdict verdict, boolean mayApprove, String reason) {
         /** The timeline line: what is posted, what the findings said, and why they differ when they do. */
@@ -69,6 +70,15 @@ public final class ReviewVerdictDecision {
         }
         String counted = "open_at_or_above_" + level.name().toLowerCase(Locale.ROOT);
         return facts.openBlocking() > 0 ? counted + "=" + facts.openBlocking() : "no_" + counted;
+    }
+
+    /**
+     * A review that started before its checks finished (review waits for CI, the 60-minute timeout) never approves: it
+     * is posted as a Comment whatever the findings say, as with "Reviewer may approve" off. The assessment is kept.
+     */
+    public static Decision holdForUnfinishedChecks(Decision decision) {
+        return new Decision(decision.assessment(), ReviewVerdict.COMMENT, false,
+                decision.reason() + " · " + REASON_CHECKS_UNFINISHED);
     }
 
     /** Why the bot may not change merge state here; null when it may. */
