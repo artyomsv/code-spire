@@ -345,7 +345,7 @@ jobs:
       # on renamed or removed inputs, which only a real invocation surfaces. Skipping it would report
       # success for a step that was never called. `draft: true` keeps it out of the public releases
       # list and creates no git tag — a draft's tag_name is only realised when it is published.
-      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ env.DRY_RUN == 'true' && format('dry-run-{0}', github.sha) || github.ref_name }}
           draft: ${{ env.DRY_RUN == 'true' }}
