@@ -33,7 +33,6 @@ import dev.codespire.orchestrator.llm.ChargeKind;
 import dev.codespire.orchestrator.llm.ChargeLine;
 import dev.codespire.orchestrator.llm.DefaultLlm;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
-import dev.codespire.orchestrator.repository.BlockApprovalAt;
 import dev.codespire.orchestrator.review.run.HarnessReviewStart;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import io.smallrye.reactive.messaging.annotations.Blocking;
@@ -82,6 +81,10 @@ public class ResultSaga {
 
     @Inject
     dev.codespire.orchestrator.repository.RepositoryAccounts repositoryAccounts;
+
+    /** Why the posted review's verdict label failed (V120), for the attention row. */
+    @Inject
+    dev.codespire.orchestrator.attention.LabelFailures labelFailures;
 
     @Inject
     dev.codespire.orchestrator.readmodel.FindingProjection findings;
@@ -346,7 +349,7 @@ public class ResultSaga {
                 if (e.postedVerdict() != null) {
                     projection.recordPostedVerdict(e.reviewId(), e.commit(), e.postedVerdict(), e.reviewRef(), e.reviewUrl());
                 }
-                projection.recordLabelFailure(e.reviewId(), e.commit(), e.labelFailure());
+                labelFailures.record(e.reviewId(), e.commit(), e.labelFailure());
             }
             case FollowUpGenerated e -> {
                 projection.appendEvent(e.reviewId(), "result", "FollowUpGenerated",
@@ -496,7 +499,8 @@ public class ResultSaga {
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
                 e.commit(), visible.findings().size(),
                 Integer.toHexString(visible.summary().hashCode())));
-        ReviewVerdictDecision.Decision decision = decideVerdict(e.reviewId(), visible);
+        ReviewPostSettings settings = new ReviewPostSettings(projection, repositories, repositoryAccounts);
+        ReviewVerdictDecision.Decision decision = settings.decide(e.reviewId(), visible);
         projection.appendEvent(e.reviewId(), "result", "ReviewVerdictDecided", decision.detail());
         // The run's token travels with the command: the worker marks this run's review with it, so a
         // re-run on the same head posts beside the earlier run's review instead of reusing it.
@@ -506,30 +510,7 @@ public class ResultSaga {
                 e.verdicts(), priorSummaryRef, filtered.suppressedCount())
                 .withVerdict(decision.assessment(), decision.verdict(), decision.mayApprove())
                 .withRunToken(runToken)
-                .withVerdictLabels(verdictLabels(e.reviewId())));
-    }
-
-    /** The repository's "Verdict labels" (V120); off for an unknown repository. A lambda for the reason decideVerdict gives. */
-    private boolean verdictLabels(String reviewId) {
-        return projection.repositoryIdOf(reviewId).flatMap(id -> repositories.verdictLabels(id)).orElse(false);
-    }
-
-    /**
-     * ADR-047 D4: decided here because the projection's open count at the repository's "Block approval at"
-     * (V115) is what the land gate reads, and it is already right at this point (recordOpenFindings ran above).
-     * An unknown repository counts at BLOCKER.
-     */
-    private ReviewVerdictDecision.Decision decideVerdict(String reviewId, ReviewResult visible) {
-        java.util.Optional<java.util.UUID> repositoryId = projection.repositoryIdOf(reviewId);
-        // Lambdas, not method references: a method reference dereferences its receiver when it is
-        // built, so an empty repository id would still touch the registries (and a test fake that
-        // never set them would throw before the decision ran).
-        Boolean setting = repositoryId.flatMap(id -> repositories.reviewerMayApprove(id)).orElse(null);
-        BlockApprovalAt level = repositoryId.flatMap(id -> repositories.blockApprovalAt(id))
-                .orElse(BlockApprovalAt.DEFAULT);
-        boolean identityKnown = repositoryId.map(id -> repositoryAccounts.reviewerIdentityKnown(id)).orElse(false);
-        return ReviewVerdictDecision.decide(new ReviewVerdictDecision.VerdictFacts(visible.degraded(),
-                projection.openBlocking(reviewId, level), level, setting, identityKnown));
+                .withVerdictLabels(settings.verdictLabels(e.reviewId())));
     }
 
     /**

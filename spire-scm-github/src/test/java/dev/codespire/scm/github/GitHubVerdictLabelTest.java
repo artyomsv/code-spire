@@ -5,6 +5,7 @@ import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import dev.codespire.contract.port.CommentSink.LabelOutcome;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.VerdictLabel;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,8 +29,7 @@ class GitHubVerdictLabelTest {
     private static final RepoRef REPO = new RepoRef("TEST-owner", "TEST-repo");
     private static final String LABELS = "/repos/TEST-owner/TEST-repo/issues/42/labels";
     private static final String REPO_LABELS = "/repos/TEST-owner/TEST-repo/labels";
-    private static final String PREFIX = "review: ";
-    private static final String APPROVED = "review: approved";
+    private static final VerdictLabel APPROVED = VerdictLabel.APPROVED;
     private static final String REQUESTED_PATH = LABELS + "/review%3A%20requested";
     private static final String CHANGES_PATH = LABELS + "/review%3A%20changes-requested";
 
@@ -60,7 +60,7 @@ class GitHubVerdictLabelTest {
         currentLabels("[{\"name\":\"review: requested\"},{\"name\":\"bug\"},{\"name\":\"review: changes-requested\"},"
                 + "{\"name\":\"reviewed\"}]");
 
-        assertEquals(LabelOutcome.APPLIED, sink.setVerdictLabel(REPO, 42, APPROVED, PREFIX));
+        assertEquals(LabelOutcome.APPLIED, sink.setVerdictLabel(REPO, 42, APPROVED));
 
         server.verify(1, deleteRequestedFor(urlEqualTo(REQUESTED_PATH)));
         server.verify(1, deleteRequestedFor(urlEqualTo(CHANGES_PATH)));
@@ -74,7 +74,7 @@ class GitHubVerdictLabelTest {
     void doesNothingWhenTheLabelIsAlreadyTheOnlyReviewLabel() {
         currentLabels("[{\"name\":\"review: approved\"},{\"name\":\"bug\"}]");
 
-        assertEquals(LabelOutcome.ALREADY_SET, sink.setVerdictLabel(REPO, 42, APPROVED, PREFIX));
+        assertEquals(LabelOutcome.ALREADY_SET, sink.setVerdictLabel(REPO, 42, APPROVED));
 
         server.verify(0, deleteRequestedFor(anyUrl()));
         server.verify(0, postRequestedFor(anyUrl()));
@@ -84,7 +84,7 @@ class GitHubVerdictLabelTest {
     void keepsTheTargetAndRemovesOnlyTheOthers() {
         currentLabels("[{\"name\":\"review: approved\"},{\"name\":\"review: requested\"}]");
 
-        assertEquals(LabelOutcome.APPLIED, sink.setVerdictLabel(REPO, 42, APPROVED, PREFIX));
+        assertEquals(LabelOutcome.APPLIED, sink.setVerdictLabel(REPO, 42, APPROVED));
 
         server.verify(1, deleteRequestedFor(urlEqualTo(REQUESTED_PATH)));
         server.verify(1, deleteRequestedFor(anyUrl()));
@@ -101,7 +101,7 @@ class GitHubVerdictLabelTest {
                 .willReturn(okJson("[{\"name\":\"review: approved\"}]")));
         server.stubFor(post(urlEqualTo(REPO_LABELS)).willReturn(aResponse().withStatus(201).withBody("{}")));
 
-        assertEquals(LabelOutcome.APPLIED, sink.setVerdictLabel(REPO, 42, APPROVED, PREFIX));
+        assertEquals(LabelOutcome.APPLIED, sink.setVerdictLabel(REPO, 42, APPROVED));
 
         server.verify(1, postRequestedFor(urlEqualTo(REPO_LABELS))
                 .withRequestBody(equalToJson("{\"name\":\"review: approved\",\"color\":\"0e8a16\"}")));
@@ -118,7 +118,7 @@ class GitHubVerdictLabelTest {
                 .willReturn(okJson("[]")));
         server.stubFor(post(urlEqualTo(REPO_LABELS)).willReturn(aResponse().withStatus(422).withBody("{}")));
 
-        assertEquals(LabelOutcome.APPLIED, sink.setVerdictLabel(REPO, 42, APPROVED, PREFIX));
+        assertEquals(LabelOutcome.APPLIED, sink.setVerdictLabel(REPO, 42, APPROVED));
     }
 
     /** A label someone removed after the read is already gone. */
@@ -127,7 +127,7 @@ class GitHubVerdictLabelTest {
         currentLabels("[{\"name\":\"review: requested\"}]");
         server.stubFor(delete(urlEqualTo(REQUESTED_PATH)).willReturn(aResponse().withStatus(404).withBody("{}")));
 
-        assertEquals(LabelOutcome.APPLIED, sink.setVerdictLabel(REPO, 42, APPROVED, PREFIX));
+        assertEquals(LabelOutcome.APPLIED, sink.setVerdictLabel(REPO, 42, APPROVED));
     }
 
     @Test
@@ -136,7 +136,7 @@ class GitHubVerdictLabelTest {
         server.stubFor(post(urlEqualTo(LABELS)).willReturn(aResponse().withStatus(403).withBody("{}")));
 
         GitHubApiException failure = assertThrows(GitHubApiException.class,
-                () -> sink.setVerdictLabel(REPO, 42, APPROVED, PREFIX));
+                () -> sink.setVerdictLabel(REPO, 42, APPROVED));
 
         assertEquals(403, failure.status());
         server.verify(0, postRequestedFor(urlEqualTo(REPO_LABELS)));

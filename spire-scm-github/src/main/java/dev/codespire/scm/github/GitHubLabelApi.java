@@ -3,6 +3,7 @@ package dev.codespire.scm.github;
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.codespire.contract.port.CommentSink.LabelOutcome;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.VerdictLabel;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -32,17 +33,17 @@ final class GitHubLabelApi {
         this.client = client;
     }
 
-    LabelOutcome set(RepoRef repo, long prId, String label, String prefix) {
+    LabelOutcome set(RepoRef repo, long prId, VerdictLabel label) {
         List<String> current = current(repo, prId);
         boolean changed = false;
         for (String name : current) {
-            if (name.startsWith(prefix) && !name.equals(label)) {
+            if (label.replaces(name)) {
                 remove(repo, prId, name);
                 changed = true;
             }
         }
-        if (!current.contains(label)) {
-            add(repo, prId, label);
+        if (!current.contains(label.name())) {
+            add(repo, prId, label.name());
             changed = true;
         }
         return changed ? LabelOutcome.APPLIED : LabelOutcome.ALREADY_SET;

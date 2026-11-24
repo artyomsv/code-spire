@@ -158,10 +158,6 @@ class ResultSagaRetryTest {
             }
 
             @Override
-            public void recordLabelFailure(String reviewId, String commit, String reason) {
-            }
-
-            @Override
             public void recordReconciliation(String reviewId,
                     List<dev.codespire.contract.review.FindingVerdict> verdicts,
                     List<dev.codespire.contract.review.PriorFinding> priorFindings) {
@@ -298,12 +294,8 @@ class ResultSagaRetryTest {
             @Override
             public void recordPosted(String reviewId, String commit, String summaryCommentId) {
             }
-
-            // Every CommentsPosted writes the label outcome; the real one opens a database.
-            @Override
-            public void recordLabelFailure(String reviewId, String commit, String reason) {
-            }
         };
+        saga.labelFailures = SagaRepositoryFakes.silentLabelFailures();
 
         saga.on(new dev.codespire.contract.event.IntegrationEvent.CommentsPosted(
                 REVIEW_ID, 412L, COMMIT, "summary-1",
@@ -514,22 +506,7 @@ class ResultSagaRetryTest {
             }
         };
         // Both read a database the decision reaches through the fixture's repository id.
-        saga.repositories = new dev.codespire.orchestrator.repository.RepositoryRegistry() {
-            @Override
-            public Optional<Boolean> reviewerMayApprove(java.util.UUID id) {
-                return Optional.of(true);
-            }
-
-            @Override
-            public Optional<dev.codespire.orchestrator.repository.BlockApprovalAt> blockApprovalAt(java.util.UUID id) {
-                return Optional.of(dev.codespire.orchestrator.repository.BlockApprovalAt.BLOCKER);
-            }
-
-            @Override
-            public Optional<Boolean> verdictLabels(java.util.UUID id) {
-                return Optional.of(false);
-            }
-        };
+        saga.repositories = SagaRepositoryFakes.approvingRepository();
         saga.repositoryAccounts = new dev.codespire.orchestrator.repository.RepositoryAccounts() {
             @Override
             public boolean reviewerIdentityKnown(java.util.UUID repositoryId) {

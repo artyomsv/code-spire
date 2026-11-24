@@ -165,9 +165,10 @@ class ResultSagaVerdictFixture {
             public void recordPostedVerdict(String reviewId, String commit, ReviewVerdict verdict, String reviewRef, String reviewUrl) {
                 recordedVerdicts.add(verdict + ":" + reviewRef + ":" + commit + ":" + reviewUrl);
             }
-
+        };
+        saga.labelFailures = new dev.codespire.orchestrator.attention.LabelFailures() {
             @Override
-            public void recordLabelFailure(String reviewId, String commit, String reason) {
+            public void record(String reviewId, String commit, String reason) {
                 recordedLabelFailures.add(commit + ":" + reason);
             }
         };

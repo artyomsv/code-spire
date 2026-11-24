@@ -32,10 +32,13 @@ class AttentionLabelFailedTest {
     @Inject
     ReviewProjection projection;
 
+    @Inject
+    LabelFailures labelFailures;
+
     @Test
     void aLabelFailureRaisesAWarningNamingTheRepositoryAndTheReason() {
         long pr = reviewing();
-        projection.recordLabelFailure(ReviewFixtures.reviewIdFor(pr), head(pr), "TEST-HTTP-403");
+        labelFailures.record(ReviewFixtures.reviewIdFor(pr), head(pr), "TEST-HTTP-403");
 
         List<AttentionView> rows = rowsFor(pr);
 
@@ -51,10 +54,10 @@ class AttentionLabelFailedTest {
     void theNextReportWithoutAFailureClearsIt() {
         long pr = reviewing();
         String reviewId = ReviewFixtures.reviewIdFor(pr);
-        projection.recordLabelFailure(reviewId, head(pr), "TEST-HTTP-403");
+        labelFailures.record(reviewId, head(pr), "TEST-HTTP-403");
         assertEquals(1, rowsFor(pr).size(), "raised");
 
-        projection.recordLabelFailure(reviewId, head(pr), null);
+        labelFailures.record(reviewId, head(pr), null);
 
         assertTrue(rowsFor(pr).isEmpty());
     }
@@ -63,7 +66,7 @@ class AttentionLabelFailedTest {
     void aSupersededRunsReportWritesNothing() {
         long pr = reviewing();
 
-        projection.recordLabelFailure(ReviewFixtures.reviewIdFor(pr), "TEST-OLD-HEAD", "TEST-HTTP-403");
+        labelFailures.record(ReviewFixtures.reviewIdFor(pr), "TEST-OLD-HEAD", "TEST-HTTP-403");
 
         assertTrue(rowsFor(pr).isEmpty());
     }
@@ -74,7 +77,7 @@ class AttentionLabelFailedTest {
         String reviewId = ReviewFixtures.reviewIdFor(pr);
         // A label failure belongs to a posted review, and a review still reviewing cannot be archived.
         projection.updateStatus(reviewId, "completed", ReviewProjection.STAGE_DONE);
-        projection.recordLabelFailure(reviewId, head(pr), "TEST-HTTP-403");
+        labelFailures.record(reviewId, head(pr), "TEST-HTTP-403");
         assertEquals(1, rowsFor(pr).size(), "raised while live");
 
         assertEquals(ArchiveOutcome.ARCHIVED, projection.archiveReview(WS, REPO, pr));
