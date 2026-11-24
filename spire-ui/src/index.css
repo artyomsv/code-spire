@@ -414,6 +414,9 @@
   .pill.failed { --st: var(--crit); --st-soft: var(--crit-soft); }
   .pill.cancelled { --st: var(--muted); --st-soft: var(--muted-soft); }
   .pill.superseded { --st: var(--muted); --st-soft: var(--muted-soft); }
+  /* Review waits for CI (V121): waiting is in flight, like reviewing; skipped waits on the author's red build. */
+  .pill.waiting_for_checks { --st: var(--iris); --st-soft: var(--iris-soft); }
+  .pill.skipped { --st: var(--warn); --st-soft: var(--warn-soft); }
   /* Warn, not crit and not muted: a cap refusal is a decision the operator can reverse, so it must
      not read as an outage (crit, like failed) nor as nothing-to-do (muted, like cancelled). Same
      token as .rate-unset, which marks the other "someone has to choose something" state. */

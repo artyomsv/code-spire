@@ -31,7 +31,7 @@ function inputOf(repository: Repository): RepositoryInput {
     scmType: repository.scmType, forgeOrigin: repository.forgeOrigin, workspace: repository.workspace, slug: repository.slug,
     enabled: repository.enabled, reviewerAccountId: repository.reviewer?.id ?? null, factoryAccountId: repository.factory?.id ?? null,
     reviewerMayApprove: repository.reviewerMayApprove, blockApprovalAt: repository.blockApprovalAt ?? 'BLOCKER',
-    verdictLabels: repository.verdictLabels ?? false,
+    verdictLabels: repository.verdictLabels ?? false, startReview: repository.startReview ?? 'IMMEDIATELY',
     reviewLlmProviderId: repository.reviewLlmProviderId ?? null,
     reviewLlmModel: repository.reviewLlmModel ?? null,
     reviewHarness: repository.reviewHarness ?? null,

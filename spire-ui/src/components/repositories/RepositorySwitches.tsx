@@ -1,6 +1,7 @@
 import { BLOCK_APPROVAL_AT_LABEL, type BlockApprovalAt } from '../../api';
 import SettingField from '../SettingField';
 import type { RepositoryInput } from './repositoriesApi';
+import RepositoryStartReview from './RepositoryStartReview';
 
 interface Props {
   fields: RepositoryInput;
@@ -9,7 +10,10 @@ interface Props {
 
 const LEVELS: BlockApprovalAt[] = ['BLOCKER', 'MAJOR', 'MINOR'];
 
-/** Only the GitHub adapter can set a pull request's labels (V120); the setting is hidden for the other forges. */
+/**
+ * Only the GitHub adapter can set a pull request's labels (V120) and read its checks (V121); both settings are hidden
+ * for the other forges.
+ */
 const LABEL_FORGES = new Set(['github']);
 
 /**
@@ -31,6 +35,7 @@ export default function RepositorySwitches({ fields, onChange }: Props) {
     {LABEL_FORGES.has(fields.scmType) && <>
       <label className="field-check"><input type="checkbox" checked={fields.verdictLabels} onChange={e => onChange({ verdictLabels: e.target.checked })} /><span>Verdict labels</span></label>
       <p className="prov-sub">Sets review: approved or review: changes-requested after each review and removes other review: labels.</p>
+      <RepositoryStartReview fields={fields} onChange={onChange} />
     </>}
   </>;
 }

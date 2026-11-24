@@ -68,6 +68,8 @@ const OFFERS_RERUN: Record<ReviewStatus, boolean> = {
   cancelled: false,
   superseded: false,
   observed: false,
+  waiting_for_checks: false,
+  skipped: true,
 };
 
 describe('ReviewActions — which statuses offer Re-run', () => {

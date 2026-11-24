@@ -28,6 +28,8 @@ export interface Repository {
   blockApprovalAt: BlockApprovalAt;
   // Each posted review sets one `review: ` label from its decided verdict (V120). GitHub only; off by default.
   verdictLabels: boolean;
+  // When a review of a new head starts (V121). GitHub only; absent from an older server, which means IMMEDIATELY.
+  startReview?: StartReview;
   // The LLM provider this repository's reviews and replies use; null means the global default.
   reviewLlmProviderId: string | null;
   // The model used with reviewLlmProviderId; null exactly when that is null.
@@ -35,6 +37,9 @@ export interface Repository {
   // The harness this repository's reviews run on (harness reviews, step 5); null means the API.
   reviewHarness: ReviewHarness | null;
 }
+/** "Start review" (V121): at once, or once every check on the head finished green. */
+export type StartReview = 'IMMEDIATELY' | 'AFTER_CHECKS';
+
 /** The harness half of "Review with": never set beside an API provider. */
 export interface ReviewHarness {
   harness: string;
@@ -54,6 +59,7 @@ export interface RepositoryInput {
   reviewerMayApprove: boolean;
   blockApprovalAt: BlockApprovalAt;
   verdictLabels: boolean;
+  startReview?: StartReview;
   reviewLlmProviderId: string | null;
   reviewLlmModel: string | null;
   reviewHarness: ReviewHarness | null;
