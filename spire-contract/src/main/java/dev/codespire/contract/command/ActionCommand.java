@@ -341,8 +341,8 @@ public sealed interface ActionCommand {
                           String scmCredential) implements ActionCommand {
     }
 
-    /** Review waits for CI: the checks on {@code commit} failed, so no review runs; label the pull request only. */
-    record LabelChecksFailed(String reviewId, RepoRef repo, long prId, String commit, String scmCredential)
+    /** Review waits for CI: the checks on {@code commit} failed in run {@code round}, so no review ran; label only. */
+    record LabelChecksFailed(String reviewId, RepoRef repo, long prId, String commit, int round, String scmCredential)
             implements ActionCommand {
     }
 
