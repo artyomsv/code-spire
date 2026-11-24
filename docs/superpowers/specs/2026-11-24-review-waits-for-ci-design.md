@@ -39,7 +39,10 @@ finished green; a red build gets no review until a new commit (operator decision
 9. **One resolver per run.** Webhook and sweep may read one wait at once. Claiming the waiting row, keyed by the run's
    round, is the permit to start or skip; a skip ends the run under the review's round lock and only while its round is
    the review's, so it never cancels a started run or a re-run of the same head. A claim survives a crash and the
-   sweep finishes it (a FetchDiff or label may be sent twice, never zero times).
+   sweep finishes it (a FetchDiff or label may be sent twice, never zero times). The run is identified once, at
+   admission, by the aggregate's round read with its head in one fold; every later write to the wait compares that
+   round and the stage it observed. A run whose identity cannot be read stays waiting and is admitted again by the
+   sweep, never started at once.
 
 ## Webhook setup
 

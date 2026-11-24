@@ -486,7 +486,7 @@ Every event (integration or domain) is wrapped:
 |---|---|
 | `RequestReview{commit,trigger,force}` | new commit → `ReviewRequested`; if newer run active → also `ReviewSuperseded`; `force=true` bypasses the reviewed-commit idempotency (FR-12) |
 | `CancelReview{reason}` | REVIEWING → `ReviewCancelled` (from `PullRequestClosed` or an operator action) |
-| `SkipReview{commit,reason}` | commit==current → `ReviewCancelled{reason}` (review waits for CI: the head's checks failed; reason `CHECKS_FAILED`, projected as `skipped`; a skip for a replaced head → no-op) |
+| `SkipReview{commit,round,reason}` | commit==current AND round==the current round → `ReviewCancelled{reason}` (review waits for CI: the head's checks failed; reason `CHECKS_FAILED`, projected as `skipped`; a skip for a replaced head → no-op) |
 | `RecordReviewOutcome{commit,findingsCount,summaryDigest}` | commit==current → `ReviewOutcomeRecorded` (aggregate keeps only a digest, not the findings) |
 | `RecordCommentsPosted{commit,summaryCommentId,count}` | commit==current → `ReviewCompleted` |
 | `RecordFailure{commit,phase,retryable}` | commit==current AND !retryable → `ReviewFailedTerminally` (stale failure from a superseded run → no-op) |
@@ -527,7 +527,7 @@ raisedFindingComments: Set<commentId>  // idempotency for /finding, same shape a
 | `REVIEWING` | `RecordFailure{c,retryable=false}` | **`c == currentCommit`** (stale failure from a superseded run → no-op) | `ReviewFailedTerminally` | FAILED |
 | `REVIEWING` | `CancelReview{reason}` | — | `ReviewCancelled{reason}` | CANCELLED |
 | `IDLE/COMPLETED/FAILED/CANCELLED` | `CancelReview` | — | `[]` (nothing in flight — no-op) | — |
-| `REVIEWING` | `SkipReview{c,reason}` | **`c == currentCommit`** (a skip decided for a head a newer commit replaced → no-op) | `ReviewCancelled{reason}` | CANCELLED (a redelivered event for `c` stays a no-op; a new commit requests afresh) |
+| `REVIEWING` | `SkipReview{c,r,reason}` | **`c == currentCommit` and `r == round`** (`round` counts the `ReviewRequested` folded; a skip decided for a run a newer commit or a re-run of the same head replaced → no-op) | `ReviewCancelled{reason}` | CANCELLED (a redelivered event for `c` stays a no-op; a new commit requests afresh) |
 | any | `OpenThread` / `RecordFollowUp` | — | `ThreadOpened` / `FollowUpRecorded` | threads updated |
 | any | `RaiseConversationFinding{threadRef,path,line,severity,message,triggeringCommentId}` | `triggeringCommentId ∉ raisedFindingComments` | `ConversationFindingRaised` (redelivered comment id → `[]`, idempotent no-op) | +raisedFindingComments |
 

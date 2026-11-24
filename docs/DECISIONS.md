@@ -638,8 +638,9 @@ the 60-minute check timeout ("Start review: after checks finish", checks still p
 withheld because CI had not finished must not reach the label. A blocking assessment still labels
 `review: changes-requested`. This exception is the CI hold's alone: a review held by "Reviewer may approve" off
 still labels from its assessment as above. A head whose checks failed gets no review and `review: ci-failed`, set
-once per skipped run by `LabelChecksFailed`, never on a head the pull request moved past, and never after a later
-review of the same head set its verdict label.
+once per skipped run by `LabelChecksFailed`, never on a head the pull request moved past, never after a later
+review of the same head set its verdict label, and never for a run a newer run (a re-run of the same head included)
+replaced: the orchestrator opens the run's `CI_FAILED:<round>` receipt and closes every open one at the next admission.
 
 ---
 
