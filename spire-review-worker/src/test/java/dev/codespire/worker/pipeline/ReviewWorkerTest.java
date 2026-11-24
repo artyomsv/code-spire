@@ -1457,7 +1457,7 @@ class ReviewWorkerTest {
         }
     }
 
-    static final class RecordingSink implements CommentSink, ThreadSource {
+    static class RecordingSink implements CommentSink, ThreadSource {
 
         final List<String> repliedThreads = new ArrayList<>();
         final List<String> resolvedThreads = new ArrayList<>();
@@ -1626,7 +1626,7 @@ class ReviewWorkerTest {
     }
 
     /** In-memory mirror of the store's claim semantics. */
-    static final class InMemoryIdempotency extends CommentIdempotencyStore {
+    static class InMemoryIdempotency extends CommentIdempotencyStore {
 
         private final Map<String, String> slots = new HashMap<>(); // key -> the recorded ref, or null
 

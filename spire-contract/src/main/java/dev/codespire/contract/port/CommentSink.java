@@ -7,6 +7,7 @@ import dev.codespire.contract.scm.PostedReview;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ReviewSubmission;
 import dev.codespire.contract.scm.ThreadRef;
+import dev.codespire.contract.scm.VerdictLabel;
 
 import java.util.Optional;
 
@@ -102,6 +103,19 @@ public interface CommentSink {
      */
     default Optional<String> dismissOwnChangesRequested(RepoRef repo, long prId, String message) {
         return Optional.empty();
+    }
+
+    /** What {@link #setVerdictLabel} did. */
+    enum LabelOutcome { APPLIED, ALREADY_SET, UNSUPPORTED }
+
+    /**
+     * Leaves {@code label} as the pull request's only label of its family (verdict labels, V120): every
+     * other such label is removed, unrelated labels stay, and the label is created in the repository when it does not
+     * exist yet. Idempotent: a repeat finds the label alone and answers {@link LabelOutcome#ALREADY_SET}. The default
+     * is "this forge has no labels here"; the caller then sets nothing.
+     */
+    default LabelOutcome setVerdictLabel(RepoRef repo, long prId, VerdictLabel label) {
+        return LabelOutcome.UNSUPPORTED;
     }
 
     /** The forge refused the asked verdict on this pull request (GitHub: one's own pull request). */

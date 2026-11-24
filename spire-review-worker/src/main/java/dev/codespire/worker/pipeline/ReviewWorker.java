@@ -64,7 +64,7 @@ import java.util.Optional;
 public class ReviewWorker {
 
     private static final Logger LOG = Logger.getLogger(ReviewWorker.class);
-    private static final String SUMMARY_KEY = "SUMMARY";
+    static final String SUMMARY_KEY = "SUMMARY";
 
     @Inject
     WorkerScmClients scm;
@@ -106,7 +106,7 @@ public class ReviewWorker {
     long rateLimitBudgetSeconds;
 
     /** Idempotency slot for the paid LLM call itself (finding H4). */
-    private static final String LLM_KEY = "LLM";
+    static final String LLM_KEY = "LLM";
 
     /** Idempotency slot for the reconcile call (ADR-019) — same keyspace, its own claim. */
     static final String RECONCILE_KEY = "LLM:reconcile";
@@ -389,10 +389,11 @@ public class ReviewWorker {
                 if (nativeOutcome.isPresent()) {
                     NativeReviewPost.Outcome outcome = nativeOutcome.orElseThrow();
                     List<CommentsPosted.PostedInline> posted = new ArrayList<>(outcome.inline());
-                    recoverPreviouslyPosted(previouslyPosted, posted);
+                    InlineRecovery.recover(previouslyPosted, posted);
                     results.emit(new CommentsPosted(command.reviewId(), command.prId(), command.commit(),
                             NativeReviewPost.REF_PREFIX + outcome.reviewRef(), posted, outcomes)
-                            .withPostedReview(outcome.postedVerdict(), outcome.reviewRef(), outcome.reviewUrl()));
+                            .withPostedReview(outcome.postedVerdict(), outcome.reviewRef(), outcome.reviewUrl())
+                            .withLabelFailure(new VerdictLabels(idempotency, commentSink).apply(command)));
                     return;
                 }
             }
@@ -408,7 +409,7 @@ public class ReviewWorker {
             if (summaryThreadRef == null) {
                 return; // summary failure already emitted ReviewFailed
             }
-            recoverPreviouslyPosted(previouslyPosted, posted);
+            InlineRecovery.recover(previouslyPosted, posted);
             results.emit(new CommentsPosted(command.reviewId(), command.prId(), command.commit(),
                     summaryThreadRef, posted, outcomes));
         } catch (RuntimeException e) {
@@ -423,22 +424,6 @@ public class ReviewWorker {
         results.emit(new ReviewFailed(command.reviewId(), command.commit(), "post-comments",
                 cause.getMessage(), WorkerFailures.isRetryable(cause), 1,
                 WorkerFailures.isCredentialRejected(cause)));
-    }
-
-    /**
-     * Recover inline comment ids from a previous partially-completed attempt. Skip the non-inline claims
-     * (SUMMARY, REVIEW, LLM[:reconcile], reply:, resolve:, harness:) — none of those are posted inline comments, so
-     * they must never leak into the inline list.
-     */
-    private static void recoverPreviouslyPosted(Map<String, String> previouslyPosted, List<CommentsPosted.PostedInline> posted) {
-        previouslyPosted.forEach((key, ref) -> {
-            if (!SUMMARY_KEY.equals(key) && !NativeReviewPost.REVIEW_KEY.equals(key) && !LLM_KEY.equals(key)
-                    && !RECONCILE_KEY.equals(key) && !key.startsWith("reply:") && !key.startsWith("resolve:")
-                    && !key.startsWith(HarnessReviewWorker.CLAIM_PREFIX)
-                    && posted.stream().noneMatch(p -> p.threadRef().equals(ref))) {
-                posted.add(new CommentsPosted.PostedInline(ref, key, 0));
-            }
-        });
     }
 
     // --- reconciliation thread actions (ADR-019) ---

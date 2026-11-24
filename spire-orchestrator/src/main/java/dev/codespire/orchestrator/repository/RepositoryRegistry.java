@@ -95,7 +95,8 @@ public class RepositoryRegistry {
         try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement("""
                 UPDATE repository SET enabled=?, reviewer_may_approve=?, review_llm_provider_id=?, review_llm_model=?,
                        review_harness=?, review_harness_model=?, review_harness_effort=?, review_harness_pay_with=?,
-                       block_approval_at=COALESCE(?, block_approval_at), revision=revision+1
+                       block_approval_at=COALESCE(?, block_approval_at), verdict_labels=COALESCE(?, verdict_labels),
+                       revision=revision+1
                 WHERE id=? AND revision=? AND scm_type=? AND forge_origin=? AND workspace=? AND slug=?
                 """)) {
             statement.setBoolean(1, input.enabled());
@@ -104,12 +105,13 @@ public class RepositoryRegistry {
             statement.setString(4, input.reviewLlmModel());
             setReviewHarness(statement, 5, input.reviewHarness());
             statement.setString(9, raw.blockApprovalAt() == null ? null : input.blockApprovalAt()); // null: keep the stored level
-            statement.setObject(10, id);
-            statement.setLong(11, expectedRevision);
-            statement.setString(12, input.scmType());
-            statement.setString(13, input.forgeOrigin());
-            statement.setString(14, input.workspace());
-            statement.setString(15, input.slug());
+            statement.setObject(10, input.verdictLabels(), Types.BOOLEAN); // null: keep the stored setting
+            statement.setObject(11, id);
+            statement.setLong(12, expectedRevision);
+            statement.setString(13, input.scmType());
+            statement.setString(14, input.forgeOrigin());
+            statement.setString(15, input.workspace());
+            statement.setString(16, input.slug());
             if (statement.executeUpdate() != 1) throw new AccountConflict("Repository changed or its coordinates differ; reload before saving");
             bindings.replace(connection, id, input);
         } catch (SQLException failure) { throw referenceGone(failure); }
@@ -120,8 +122,8 @@ public class RepositoryRegistry {
         try (PreparedStatement statement = connection.prepareStatement(
                 "INSERT INTO repository (id,scm_type,forge_origin,workspace,slug,enabled,reviewer_may_approve,review_llm_provider_id,"
                         + "review_llm_model,review_harness,review_harness_model,review_harness_effort,review_harness_pay_with,"
-                        + "block_approval_at)"
-                        + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                        + "block_approval_at,verdict_labels)"
+                        + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             statement.setObject(1, id);
             statement.setString(2, input.scmType());
             statement.setString(3, input.forgeOrigin());
@@ -133,6 +135,7 @@ public class RepositoryRegistry {
             statement.setString(9, input.reviewLlmModel());
             setReviewHarness(statement, 10, input.reviewHarness());
             statement.setString(14, input.blockApprovalAt());
+            statement.setBoolean(15, Boolean.TRUE.equals(input.verdictLabels())); // null: off (V120)
             statement.executeUpdate();
         }
     }
@@ -154,7 +157,7 @@ public class RepositoryRegistry {
                 input.enabled() == null || input.enabled(), input.reviewerAccountId(), input.factoryAccountId(),
                 input.reviewerMayApprove() == null || input.reviewerMayApprove(), input.reviewLlmProviderId(),
                 strip(input.reviewLlmModel()), normalizeHarness(input.reviewHarness()),
-                BlockApprovalAt.parse(input.blockApprovalAt()).name());
+                BlockApprovalAt.parse(input.blockApprovalAt()).name(), input.verdictLabels());
     }
 
     /** Stripped, the level and the payment in their stored forms; an unknown payment or a malformed level is refused. */
@@ -224,6 +227,15 @@ public class RepositoryRegistry {
         } catch (SQLException failure) { throw database(failure); }
     }
 
+    /** Whether the worker labels each posted review from its verdict (V120); empty when the row is missing. */
+    public Optional<Boolean> verdictLabels(UUID repositoryId) {
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(
+                "SELECT verdict_labels FROM repository WHERE id=?")) {
+            statement.setObject(1, repositoryId);
+            try (ResultSet rows = statement.executeQuery()) { return rows.next() ? Optional.of(rows.getBoolean(1)) : Optional.empty(); }
+        } catch (SQLException failure) { throw database(failure); }
+    }
+
     /** The level for the verdict rule and the land gate (V115); empty when the row is missing, never a default. */
     public Optional<BlockApprovalAt> blockApprovalAt(UUID repositoryId) {
         try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(
@@ -250,7 +262,7 @@ public class RepositoryRegistry {
                 rows.getString("workspace"), rows.getString("slug"), rows.getBoolean("enabled"), rows.getLong("revision"),
                 account(rows, "reviewer"), account(rows, "factory"), rows.getBoolean("reviewer_may_approve"),
                 rows.getObject("review_llm_provider_id", UUID.class), rows.getString("review_llm_model"), harnessOf(rows),
-                BlockApprovalAt.valueOf(rows.getString("block_approval_at")));
+                BlockApprovalAt.valueOf(rows.getString("block_approval_at")), rows.getBoolean("verdict_labels"));
     }
 
     private RepositoryView.Account account(ResultSet rows, String role) throws SQLException {

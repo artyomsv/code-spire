@@ -34,6 +34,7 @@ class PostCommentsWireCompatibilityTest {
         old.remove("verdict");
         old.remove("reviewerMayApprove");
         old.remove("runToken");
+        old.remove("verdictLabels");
         assertFalse(old.has("verdict"), "the payload under test predates the field");
 
         PostComments back = assertInstanceOf(PostComments.class, MAPPER.treeToValue(old, ActionCommand.class));
@@ -41,6 +42,7 @@ class PostCommentsWireCompatibilityTest {
         assertNull(back.verdict());
         assertNull(back.reviewerMayApprove());
         assertNull(back.runToken());
+        assertNull(back.verdictLabels(), "null is off: a command from before V120 sets no label");
     }
 
     @Test
@@ -105,12 +107,38 @@ class PostCommentsWireCompatibilityTest {
         old.remove("postedVerdict");
         old.remove("reviewRef");
         old.remove("reviewUrl");
+        old.remove("labelFailure");
 
         CommentsPosted back = assertInstanceOf(CommentsPosted.class,
                 MAPPER.treeToValue(old, IntegrationEvent.class));
         assertNull(back.postedVerdict());
         assertNull(back.reviewRef());
         assertNull(back.reviewUrl());
+        assertNull(back.labelFailure());
         assertEquals("review:TEST-ref", back.summaryThreadRef());
+    }
+
+    /** Every wither must carry "Verdict labels" (V120): set first, then every other wither, then read back. */
+    @Test
+    void verdictLabelsSurviveTheOtherWithers() {
+        PostComments current = new PostComments("review::TEST-ws/TEST-repo#1", REPO, 1, "TEST-commit",
+                new ReviewResult(List.of(), "TEST", ModelUsage.of("TEST-MODEL", 1, 1)), null)
+                .withVerdictLabels(true)
+                .withVerdict(ReviewVerdict.APPROVE, ReviewVerdict.APPROVE, true)
+                .withRunToken("TEST-run-7")
+                .withSuppressedCount(1);
+        assertEquals(Boolean.TRUE, current.verdictLabels());
+        assertEquals("TEST-run-7", current.runToken(), "withVerdictLabels keeps the run token");
+    }
+
+    /** The label failure survives withPostedReview, which the worker applies first. */
+    @Test
+    void theLabelFailureSurvivesThePostedReviewWither() {
+        CommentsPosted current = new CommentsPosted("review::TEST-ws/TEST-repo#1", 1, "TEST-commit",
+                "review:TEST-ref", List.of())
+                .withLabelFailure("TEST-forbidden")
+                .withPostedReview(ReviewVerdict.APPROVE, "TEST-ref", "https://forge.example.test/TEST");
+        assertEquals("TEST-forbidden", current.labelFailure());
+        assertEquals("TEST-ref", current.reviewRef());
     }
 }

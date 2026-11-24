@@ -74,4 +74,33 @@ class ResultSagaVerdictTest {
         fx.saga().on(new CommentsPosted(REVIEW_ID, 412L, COMMIT, "sum-1", List.of(), List.of()));
         assertTrue(fx.recordedVerdicts.isEmpty());
     }
+
+    /** V120: the repository's "Verdict labels" rides on the command; the worker labels only when it is true. */
+    @Test
+    void theCommandCarriesVerdictLabelsWhenTheRepositoryTurnedThemOn() {
+        fx.labels = Optional.of(true);
+        fx.saga().on(generated());
+        assertEquals(Boolean.TRUE, assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast()).verdictLabels());
+    }
+
+    @Test
+    void verdictLabelsAreOffByDefaultAndForAnUnknownRepository() {
+        fx.saga().on(generated());
+        assertEquals(Boolean.FALSE, assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast()).verdictLabels());
+        fx.labels = Optional.empty();
+        fx.saga().on(generated());
+        assertEquals(Boolean.FALSE, assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast()).verdictLabels());
+    }
+
+    /** The failure raises REVIEW_LABEL_FAILED; the next report without one clears it, so both are written. */
+    @Test
+    void commentsPostedRecordsTheLabelFailureAndItsClear() {
+        ResultSaga saga = fx.saga();
+        saga.on(new CommentsPosted(REVIEW_ID, 412L, COMMIT, "review:501", List.of(), List.of())
+                .withPostedReview(ReviewVerdict.APPROVE, "501", "https://forge.example.test/TEST/501")
+                .withLabelFailure("TEST-forbidden"));
+        saga.on(new CommentsPosted(REVIEW_ID, 412L, COMMIT, "review:501", List.of(), List.of())
+                .withPostedReview(ReviewVerdict.APPROVE, "501", "https://forge.example.test/TEST/501"));
+        assertEquals(List.of(COMMIT + ":TEST-forbidden", COMMIT + ":null"), fx.recordedLabelFailures);
+    }
 }

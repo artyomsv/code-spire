@@ -29,7 +29,6 @@ import dev.codespire.orchestrator.readmodel.FindingProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
 import dev.codespire.orchestrator.readmodel.SuppressionBatch;
 import dev.codespire.orchestrator.repository.RepositoryAccounts;
-import dev.codespire.orchestrator.repository.RepositoryRegistry;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 
 import java.util.List;
@@ -128,17 +127,7 @@ final class HarnessSagaFakes {
 
     /** A repository whose reviewer may approve and is known, reviewed through a usable account. */
     static void wireRepository(ResultSaga saga) {
-        saga.repositories = new RepositoryRegistry() {
-            @Override
-            public Optional<Boolean> reviewerMayApprove(UUID id) {
-                return Optional.of(true);
-            }
-
-            @Override
-            public Optional<dev.codespire.orchestrator.repository.BlockApprovalAt> blockApprovalAt(UUID id) {
-                return Optional.of(dev.codespire.orchestrator.repository.BlockApprovalAt.BLOCKER);
-            }
-        };
+        saga.repositories = SagaRepositoryFakes.approvingRepository();
         saga.repositoryAccounts = new RepositoryAccounts() {
             @Override
             public boolean reviewerIdentityKnown(UUID repositoryId) {

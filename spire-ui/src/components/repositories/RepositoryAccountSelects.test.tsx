@@ -11,7 +11,7 @@ const account = (id: string, baseUrl: string, type = 'github'): ProviderView => 
 });
 const fields = (forgeOrigin: string): RepositoryInput => ({
   scmType: 'github', forgeOrigin, workspace: 'TEST-owner', slug: 'TEST-repo', enabled: true,
-  reviewerAccountId: null, factoryAccountId: null, reviewerMayApprove: true, blockApprovalAt: 'BLOCKER',
+  reviewerAccountId: null, factoryAccountId: null, reviewerMayApprove: true, blockApprovalAt: 'BLOCKER', verdictLabels: false,
   reviewLlmProviderId: null, reviewLlmModel: null, reviewHarness: null,
 });
 

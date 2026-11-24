@@ -9,9 +9,12 @@ interface Props {
 
 const LEVELS: BlockApprovalAt[] = ['BLOCKER', 'MAJOR', 'MINOR'];
 
+/** Only the GitHub adapter can set a pull request's labels (V120); the setting is hidden for the other forges. */
+const LABEL_FORGES = new Set(['github']);
+
 /**
  * Whether the repository is served at all, whether the reviewer may change a pull request's merge state, and which
- * open findings block approval (V115).
+ * open findings block approval (V115), and on GitHub whether each review leaves a verdict label (V120).
  */
 export default function RepositorySwitches({ fields, onChange }: Props) {
   return <>
@@ -25,5 +28,9 @@ export default function RepositorySwitches({ fields, onChange }: Props) {
         {LEVELS.map(level => <option key={level} value={level}>{BLOCK_APPROVAL_AT_LABEL[level]}</option>)}
       </select></SettingField>
     <p className="prov-sub">Open findings at this level or higher make the review Request changes and hold a factory land. Info and nits never block.</p>
+    {LABEL_FORGES.has(fields.scmType) && <>
+      <label className="field-check"><input type="checkbox" checked={fields.verdictLabels} onChange={e => onChange({ verdictLabels: e.target.checked })} /><span>Verdict labels</span></label>
+      <p className="prov-sub">Sets review: approved or review: changes-requested after each review and removes other review: labels.</p>
+    </>}
   </>;
 }

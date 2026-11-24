@@ -94,6 +94,7 @@ export default function RepositoryDetail({ repository, hooks, onHooksChanged }: 
       <RepositoryAccountsCell repository={repository} />
       <p className="prov-sub">Reviewer may approve: {repository.reviewerMayApprove ? 'on' : 'off'}</p>
       <p className="prov-sub">Block approval at: {BLOCK_APPROVAL_AT_LABEL[repository.blockApprovalAt ?? 'BLOCKER']}</p>
+      {repository.scmType === 'github' && <p className="prov-sub">Verdict labels: {repository.verdictLabels ? 'on' : 'off'}</p>}
       {repository.reviewer && <div className="prov-actions"><button className="btn-ghost" disabled={busy} onClick={() => void verify()}>Verify reviewer access</button></div>}
       {verification && <p role="status">{verification}</p>}
     </section>
