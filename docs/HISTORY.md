@@ -2622,7 +2622,8 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   wakes, and the reviewer account's own read (the land path's `GitHubCheckReduction`) decides. Green starts the review;
   a head with no checks starts after the 60 s grace read; red skips it: no review, no charge, status `skipped` with
   the failed check names, and no label (a `review: ci-failed` label was built and removed before release by operator
-  decision, 2026-11-25; it comes back as its own change). Checks still
+  decision, 2026-11-25; it comes back as its own change). A skipped head is reviewed only after a new commit or a
+  dashboard Re-run: re-running CI to green alone starts nothing. Checks still
   pending at the first read after 60 minutes start a review that never approves (posted as a Comment, its summary
   opening with "CI had not finished", and no `review: approved` label; the hold is that run's alone, by round, and a round that cannot be read never
   approves; a blocking one still labels
@@ -2648,7 +2649,25 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   (never on another table's snapshot): a caller that paused while the sweep readied and skipped its run, or while the
   repository switched to "Immediately" and the same head re-ran, never replaces that status, posted verdict or token. New wire
   type: `IntegrationEvent.ChecksChanged` (repository and head sha only). Interleavings are proven single-threaded against
-  fakes only (docs/UNVERIFIED.md). Upgrading: V121 adds `repository.start_review` (default `IMMEDIATELY`) and the
-  `review_checks_wait` table. Add the **Check suites** and **Statuses** events to each GitHub Reviewer webhook (an
-  existing webhook without them still works through the 5-minute sweep). Roll the gateway and the orchestrator
-  together: an older gateway drops the two events (the sweep still reads). V121 also adds `review_status.run_round`. Not yet run live: see the docs/UNVERIFIED.md entry.
+  fakes only (docs/UNVERIFIED.md). A check read that fails (an HTTP status kept on the wait) raises
+  `REVIEW_CHECKS_UNREADABLE` at once, and a review that then starts on the timeout says its checks could not be read.
+  `REVIEW_STUCK` treats `skipped` as finished and a review `waiting_for_checks` as stalled only 65 minutes past the
+  stuck limit; a waiting review cannot be archived.
+
+  **Upgrading to V121.** The migration is additive: `repository.start_review` (default `IMMEDIATELY`, so nothing
+  changes until a repository asks), `review_status.run_round` and the `review_checks_wait` table.
+  1. Roll the orchestrator first, then the gateway. A new gateway publishes `ChecksChanged` on the repository topic;
+     an older orchestrator cannot read it, so every check event would land in `cs.dlq`. An older gateway beside a new
+     orchestrator only drops the check events, and the 5-minute sweep still reads every wait.
+  2. Give the reviewer account read access to checks: a fine-grained token needs **Checks: read** and **Commit
+     statuses: read** (with Pull requests: read), a GitHub App the `checks` and `statuses` read permissions, a
+     classic token `repo`. Without them every read fails and `REVIEW_CHECKS_UNREADABLE` says so.
+  3. Add the **Check suites** and **Statuses** events to each GitHub Reviewer webhook. Without them a wait still ends
+     through the sweep, up to 5 minutes late.
+  4. Then set "Start review" to "After checks finish" on the repositories that want it.
+
+  **Rolling back.** The columns and the table can stay (an older orchestrator ignores them), but an older orchestrator
+  has no sweep, so a review left in `waiting_for_checks` would wait for ever. Before rolling back, set every
+  repository's "Start review" to "Immediately" and press Re-run on each review still "Waiting for checks" (a re-run on
+  "Immediately" starts at once), or let the waits end (at most 65 minutes). Not yet run live: see the
+  docs/UNVERIFIED.md entry.

@@ -24,13 +24,14 @@ finished green; a red build gets no review until a new commit (operator decision
    only wakes; the read decides, so a forged or out-of-order event cannot start or skip a review by itself.
 3. **Fallback polling.** A sweep reads every waiting head's checks every 5 minutes, so a lost or never-configured
    webhook event only delays a review.
-4. **No checks.** A commit with no statuses and no check runs at the first read is reviewed at once (a repository
-   without CI must not wait forever). A short grace read (60 s after the wait starts) guards against checks that
-   register a few seconds late.
+4. **No checks.** A commit with no statuses and no check runs is reviewed at the grace read, 60 s after the wait
+   starts (a repository without CI must not wait forever; the grace guards against checks that register a few seconds
+   late).
 5. **Green.** Nothing pending and nothing failed: the review starts as today.
 6. **Red.** Nothing pending and at least one check failed: no review runs and nothing is charged. The review is
    recorded as `skipped: checks failed` with the failed check names (dashboard). No comment is posted and no label is
-   set. A new commit starts a new wait. (A `review: ci-failed` label was built and removed by operator decision on
+   set. A new commit starts a new wait; re-running CI to green on the same commit starts nothing, so a skipped head is
+   reviewed only after a new commit or a dashboard Re-run. (A `review: ci-failed` label was built and removed by operator decision on
    2026-11-25: a skipped run's label has no posted review to tie it to, so a late one could stand beside a newer run's
    verdict. It comes back as its own change with a simpler design; ADR-047.)
 7. **Superseded / closed.** A new commit while waiting replaces the wait for the old head (existing supersede rule);

@@ -260,6 +260,16 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   Minor and above; info and nits never block. Live on `spire-test` #106: Major and above posted Request changes,
   Blocker posted Approve, on the same MAJOR finding. The land gate at another level is proven by tests only.
 
+- **Review waits for CI** (PR #453, V121, ADR-047 amended 2026-11-24; built, not yet live-proven). A GitHub repository
+  may set "Start review" to "After checks finish" ("Immediately" stays the default and behaves as before). A review of
+  a new head waits as `waiting_for_checks`; a `check_suite` or `status` webhook wakes it and a 5-minute sweep is the
+  fallback. Green starts it, no checks start it after a 60 s grace read, red skips it (`skipped`, no review, no charge,
+  no label; a new commit or a Re-run reviews it again), and checks pending after 60 minutes start a review that never
+  approves. A failed check read raises `REVIEW_CHECKS_UNREADABLE`. Each run's header is written once per round
+  (`review_status.run_round`). The `review: ci-failed` label was removed by operator decision and comes back on its
+  own. Roll the orchestrator before the gateway (docs/HISTORY.md); interleavings are proven against fakes and two-connection
+  database tests only (docs/UNVERIFIED.md).
+
 **Limits that remain:**
 
 - **The model catalog and the provider/model split are on branch `feat/ai-catalog` (PR #442), not on master.**
