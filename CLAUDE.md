@@ -270,6 +270,14 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   own. Roll the orchestrator before the gateway (docs/HISTORY.md); interleavings are proven against fakes and two-connection
   database tests only (docs/UNVERIFIED.md).
 
+- **Review input limit** (branch `feat/review-input-limit`, built, not yet live-proven). An API review and its reconcile
+  send the whole diff when the review model's catalog window holds it (`DiffBudget`: 75% of window minus output cap,
+  less the rest of the prompt; today's 24,000/12,000 are the floor and the budget for an unknown window). The
+  Review diff limit (Settings → General, `review.diff-limit-tokens`) caps it; skipped files are named in the posted
+  note (`ReviewResult.omittedFiles`), and a finding on a file a clipped reconcile missed stays UNCHANGED. Worker
+  defaults: LLM timeout 600 s, ack age 1,800,000 ms; a timed-out large call is not retried. Long-context price tiers
+  are not charged (docs/UNVERIFIED.md).
+
 **Limits that remain:**
 
 - **The model catalog and the provider/model split are on branch `feat/ai-catalog` (PR #442), not on master.**

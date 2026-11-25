@@ -33,6 +33,40 @@ evidence would settle it**.
 
 ---
 
+## Review input limit: the whole diff up to the model's window (2026-11-26, Part of #391)
+
+Built, not yet live-proven. CI runs the unit and service tests; no review has sent a large diff to a real model.
+Design: docs/superpowers/specs/2026-11-26-review-input-limit-design.md.
+
+- **Long-context price tiers are not charged.** The catalog prices one tier per token type. A review may now send
+  more than OpenAI's 272K-input threshold or Claude Haiku 5.5's 100,000-token threshold, and such a call is
+  charged at the short-context rate, so the ledger and the fleet spend caps read low for it. The operator chose
+  "whole diff" over clamping to the tier; the Review diff limit (for example 90,000) keeps a review below them until
+  the catalog can price tiers. The setting's help text says so.
+- **The 25% margin is a guess at the estimator's error.** `TokenBudget.estimateTokens` is `chars / 3.2`. Dense text
+  (lock files, minified code, non-Latin text) has fewer characters per token, so a prompt sized to 75% of the window
+  by estimate may still exceed the window. No real tokenizer has measured a corpus of diffs against it. A provider
+  "prompt too long" refusal is a failed review with the provider's message and no smaller retry.
+- **A real large call's time and charge are unmeasured.** The 600 s default timeout and the 1,800,000 ms ack
+  threshold are sized by arithmetic (two calls at 600 s plus 300 s of other work, one record in flight), not by a
+  measured 500K-token call. Whether such a call returns inside 600 s on any provider is unknown.
+- **A large call's timeout is not retried, proven against fakes only.** `ReviewWorkerTest` fails a fake provider
+  with LangChain4j's `TimeoutException` (by reflection). Which exception a real provider timeout arrives as through
+  LangChain4j 1.23 (its own `TimeoutException`, an `HttpTimeoutException`, a `SocketTimeoutException`) is matched by
+  `LlmFailures.isTimeout` from reading, not from a real timeout.
+- **Which files a clipped RECONCILE missed is recovered from text.** A compare diff is parsed with
+  `UnifiedDiffParser`; the last file the cut reaches counts as not seen even when the cut fell exactly at its end,
+  and a cut section the parser cannot read moves that mark one file early (so a finding on a seen file can be kept
+  UNCHANGED). The rendered full-diff fallback is measured exactly. Tests only.
+- **A manual model has no window,** so its reviews keep today's 24,000 / 12,000 budgets whatever its real window;
+  no live review has run on one since this change. Neither has a rate-limited key on a large prompt.
+- **The prompt preview does not size the diff.** Settings → Prompts' preview (`PromptSampleRenderer`) still clips at
+  the palette's fixed budget, so it shows a clip a real review on a large window no longer makes.
+- **Live proof pending** (dev stack, `spire-test`): a PR well above 24,000 estimated tokens of diff reviewed on a
+  catalog model with the setting empty (no "Partial review"; record the call time and the charge); the same PR with
+  the setting at 24,000 ("Partial review" naming the files left out); a re-review after a large new commit with the
+  setting at 24,000 (the note appears, and no finding on an omitted file is resolved).
+
 ## Agent images on Debian trixie (2026-11-24)
 
 Built in CI only. Both agent images moved from `node:22-bookworm-slim` to `node:22-trixie-slim`.

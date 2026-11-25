@@ -2671,3 +2671,33 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   repository's "Start review" to "Immediately" and press Re-run on each review still "Waiting for checks" (a re-run on
   "Immediately" starts at once), or let the waits end (at most 65 minutes). Not yet run live: see the
   docs/UNVERIFIED.md entry.
+
+- **Review input limit: the whole diff up to the model's window (2026-11-26, branch `feat/review-input-limit`, Part
+  of #391).** An API review sent at most 24,000 estimated tokens of diff (12,000 on a re-review's reconcile) and
+  posted the rest as a "Partial review", while the catalog's models take about a million tokens; the operator asked
+  for the whole diff. The orchestrator now packs two nullable limits on the `LlmCredential`: `maxInputTokens`, the
+  model's catalog `contextWindow` minus the output cap the call really sends (the provider's max tokens, else
+  `ModelParams.DEFAULT_MAX_OUTPUT_TOKENS`, 16,384, moved there from `LangChain4jLlmProvider`), null for a manual or
+  unknown model; and `diffTokenCap`, the new **Review diff limit** (Settings → General, admin only, app setting
+  `review.diff-limit-tokens`, 24,000 to 2,000,000, empty means as much as the window allows). The worker sizes the
+  diff with one pure function (`DiffBudget`): an unknown window keeps today's budgets; a known one gives the diff 75%
+  of the input limit less the rest of the prompt (split per use of `{{diff}}`), never less than today's budget unless
+  the window cannot hold that, and the setting lowers it but never under today's budget. A window with no room fails
+  the review, by name, with no call. A REVIEW diff is cut at file boundaries: a file that does not fit is skipped and
+  later files still go in, and only when no whole file fits is the first clipped inside. A RECONCILE keeps line
+  clipping, recovers the files the cut reached from the diff text, and keeps every finding on such a file UNCHANGED.
+  `ReviewResult` gains `omittedFiles` (with a wither), the posted "Partial review" note and the dashboard note list up
+  to 20 of them and count the rest, and a clipped reconcile now marks the review partial too (it did not before).
+  `PromptRenderer` reports which variables were clipped, so a clipped context alone names no files. A model call's
+  timeout is now 600 s by default, and a timeout of a call that sent more diff than today's budget is not retried
+  (each attempt re-sends the whole prompt and may be billed); a small call's still is. FOLLOWUP replies and harness
+  reviews are unchanged. Long-context price tiers are not modelled, so a call above them is under-charged
+  (docs/UNVERIFIED.md). Built, not yet live-proven.
+
+  **Upgrading.** No migration, and any order is safe: an older worker ignores the two credential fields and keeps
+  today's budgets, a newer worker reads a credential without them as today's budgets, and `omittedFiles` is ignored
+  by an older reader and read as empty from an older result. The review worker's defaults change:
+  `SPIRE_LLM_TIMEOUT_SECONDS` 180 → 600 and `SPIRE_KAFKA_ACK_MAX_AGE_MS` 900000 → 1800000, so `LlmTimeoutBudget`
+  still passes (two calls of 600 s plus 300 s of other work). A deployment that set either by hand keeps its value;
+  one that set the timeout to 600 must raise the ack threshold above 1,500,000 too, or the worker refuses to start.
+  To stay below the long-context price tiers until they are priced, set the Review diff limit to about 90,000.
