@@ -12,10 +12,7 @@ import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.pipeline.CommandsEmitter;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
-import dev.codespire.orchestrator.repository.RepositoryRegistry;
 import dev.codespire.orchestrator.repository.StartReview;
-import dev.codespire.orchestrator.review.labels.DesiredLabels;
-import dev.codespire.orchestrator.review.labels.RunLabels;
 import dev.codespire.orchestrator.review.run.ReviewRoundLock;
 
 import java.time.Instant;
@@ -49,12 +46,9 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
     ReviewState state = reviewing(HEAD, 1);
     /** How many critical sections took the review's round lock. */
     int lockedSections;
-    /** Fails the next admission after the aggregate accepted its run, as a lost database would. */
-    RuntimeException admissionFailure;
     StartReview setting = StartReview.AFTER_CHECKS;
     boolean checksReadable = true;
     ChecksVerdict verdict = ChecksVerdict.PENDING;
-    boolean verdictLabels;
     /** Runs once inside the next read, before it answers. */
     Runnable duringRead;
     /** Runs once inside the next send, before it is acknowledged; it may throw, as a lost broker ack would. */
@@ -107,7 +101,6 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
         gate.waits = waits;
         gate.commands = commands();
         gate.lifecycle = lifecycle();
-        gate.labels = runLabels();
         gate.rounds = roundLock();
         return gate;
     }
@@ -141,14 +134,7 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
                 return Optional.of("TEST-packed-at-start");
             }
         };
-        outcomes.repositories = new RepositoryRegistry() {
-            @Override
-            public Optional<Boolean> verdictLabels(UUID repositoryId) {
-                return Optional.of(verdictLabels);
-            }
-        };
         outcomes.rounds = roundLock();
-        outcomes.desiredLabels = desiredLabels();
         return outcomes;
     }
 
@@ -158,35 +144,6 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
             public <T> T holding(String reviewId, Supplier<T> work) {
                 lockedSections++;
                 return work.get();
-            }
-        };
-    }
-
-    /** A newly admitted run's label reset, as {@code new <round>} or {@code quiet <round>}; may fail an admission. */
-    private RunLabels runLabels() {
-        return new RunLabels() {
-            @Override
-            public void newRun(String reviewId, int round) {
-                labelLog.add("new " + round);
-                if (admissionFailure == null) return;
-                RuntimeException failure = admissionFailure;
-                admissionFailure = null;
-                throw failure;
-            }
-
-            @Override
-            public void newRunQuietly(String reviewId, int round) {
-                labelLog.add("quiet " + round);
-            }
-        };
-    }
-
-    /** A decided desired label, as {@code desire <round> <label>}. */
-    private DesiredLabels desiredLabels() {
-        return new DesiredLabels() {
-            @Override
-            public void record(DesiredLabel desired) {
-                labelLog.add("desire " + desired.round() + " " + desired.label());
             }
         };
     }

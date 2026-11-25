@@ -17,17 +17,10 @@ abstract class ChecksWaitFakes {
     final List<String> history = new ArrayList<>();
     final List<String> reads = new ArrayList<>();
     final List<String> notes = new ArrayList<>();
-    /** The desired-label writes, as RunLabels and DesiredLabels were asked them. */
-    final List<String> labelLog = new ArrayList<>();
 
     List<ActionCommand.FetchDiff> fetches() {
         return emitted.stream().filter(ActionCommand.FetchDiff.class::isInstance)
                 .map(ActionCommand.FetchDiff.class::cast).toList();
-    }
-
-    List<ActionCommand.LabelChecksFailed> labels() {
-        return emitted.stream().filter(ActionCommand.LabelChecksFailed.class::isInstance)
-                .map(ActionCommand.LabelChecksFailed.class::cast).toList();
     }
 
     long skips() {

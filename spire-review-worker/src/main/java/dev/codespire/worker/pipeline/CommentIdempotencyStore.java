@@ -10,7 +10,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Optional;
 
 /**
  * Insert-before-post idempotency for comment posting (ADR-013), owned by the
@@ -94,26 +93,6 @@ public class CommentIdempotencyStore {
         } catch (SQLException e) {
             throw new IllegalStateException("comment_idempotency update failed", e);
         }
-    }
-
-    /**
-     * The desired verdict label of the review's current run (V6, written by the orchestrator), or empty when none was
-     * recorded. Read fresh on every call: it is the state a label command converges to (LabelReconciler).
-     */
-    public Optional<DesiredLabel> desiredLabel(String reviewId) {
-        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
-                "SELECT round, label FROM review_label_desired WHERE review_id = ?")) {
-            ps.setString(1, reviewId);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(new DesiredLabel(rs.getInt(1), rs.getString(2))) : Optional.empty();
-            }
-        } catch (SQLException e) {
-            throw new IllegalStateException("review_label_desired read failed", e);
-        }
-    }
-
-    /** A run's desired verdict label: {@code label} null means no bot verdict label at all. */
-    public record DesiredLabel(int round, String label) {
     }
 
     /** anchorKey -> what that slot recorded, for every completed slot of this run (redelivery

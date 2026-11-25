@@ -5,7 +5,6 @@ import dev.codespire.contract.review.ReviewVerdict;
 import dev.codespire.orchestrator.llm.ReviewRuns;
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
 import java.util.Optional;
 
 import static dev.codespire.orchestrator.pipeline.ResultSagaVerdictFixture.COMMIT;
@@ -61,7 +60,6 @@ class ResultSagaChecksTimeoutTest {
         assertEquals(ReviewVerdict.APPROVE, post.verdict());
         assertEquals("s", post.findings().summary());
         assertEquals(Boolean.TRUE, post.verdictLabels());
-        assertEquals(List.of("2:review: approved"), fx.desiredLabels);
     }
 
     /**
@@ -77,21 +75,19 @@ class ResultSagaChecksTimeoutTest {
         ActionCommand.PostComments post = assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast());
         assertEquals(ReviewVerdict.APPROVE, post.assessment());
         assertEquals(ReviewVerdict.COMMENT, post.verdict());
-        assertEquals(Boolean.FALSE, post.verdictLabels(), "no run identity, no label command");
-        assertTrue(fx.desiredLabels.isEmpty());
+        assertEquals(Boolean.FALSE, post.verdictLabels());
         assertTrue(post.findings().summary().startsWith(ReviewPostSettings.CHECKS_UNCONFIRMED_NOTICE));
         assertTrue(fx.timelineLines.contains("ReviewVerdictDecided verdict:COMMENT · assessment:APPROVE · "
                 + "no_open_blockers · checks_unconfirmed"), fx.timelineLines.toString());
     }
 
-    /** With Verdict labels on, an approval the timeout held back wants no verdict label: no stale one survives. */
+    /** With Verdict labels on, an approval the timeout held back never reaches the label either. */
     @Test
-    void aTimedOutApprovalWantsNoVerdictLabel() {
+    void aTimedOutApprovalSetsNoApprovedLabel() {
         fx.unfinishedChecksOn = COMMIT;
         fx.labels = Optional.of(true);
         fx.saga().on(generated());
-        assertEquals(Boolean.TRUE, assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast()).verdictLabels());
-        assertEquals(List.of("1:null"), fx.desiredLabels);
+        assertEquals(Boolean.FALSE, assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast()).verdictLabels());
     }
 
     /** Blocking findings still label changes-requested: an unfinished build does not weaken them. */
@@ -102,7 +98,6 @@ class ResultSagaChecksTimeoutTest {
         fx.openBlockers = 1;
         fx.saga().on(generated());
         assertEquals(Boolean.TRUE, assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast()).verdictLabels());
-        assertEquals(List.of("1:review: changes-requested"), fx.desiredLabels);
     }
 
     /** "Reviewer may approve" off keeps ADR-047's assessment-based label: only the CI hold suppresses approved. */
@@ -112,7 +107,6 @@ class ResultSagaChecksTimeoutTest {
         fx.labels = Optional.of(true);
         fx.saga().on(generated());
         assertEquals(Boolean.TRUE, assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast()).verdictLabels());
-        assertEquals(List.of("1:review: approved"), fx.desiredLabels);
     }
 
     /** A decision with no reason of its own gets the hold's reason alone, never "null · checks_unfinished". */

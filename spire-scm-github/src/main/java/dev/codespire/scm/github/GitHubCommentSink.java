@@ -25,10 +25,12 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * GitHub write adapter (SCM-MAPPING §4-§6). On the legacy path the PR summary is an ISSUE comment; on the native path
- * it is the body of a pull request review (ADR-047, {@link GitHubReviewApi}). Inline review comments go on the pulls
- * endpoint and require {@code commit_id} (the head SHA), {@code path}, {@code line} and {@code side} (RIGHT = NEW,
- * LEFT = OLD). {@link ThreadRef} carries the review-comment id — replies POST to {@code .../comments/{id}/replies}.
+ * GitHub write adapter (SCM-MAPPING §4-§6). On the legacy path the PR summary is an ISSUE comment; on
+ * the native path it is the body of a pull request review (ADR-047, {@link GitHubReviewApi}).
+ * Inline review comments go on the pulls endpoint and require {@code commit_id}
+ * (the head SHA), {@code path}, {@code line} and {@code side} (RIGHT = NEW,
+ * LEFT = OLD). {@link ThreadRef} carries the review-comment id — replies POST to
+ * {@code .../comments/{id}/replies}.
  */
 public class GitHubCommentSink implements CommentSink, ThreadSource {
 
@@ -37,6 +39,7 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
             java.util.regex.Pattern.compile("[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?");
 
     private static final System.Logger LOG = System.getLogger(GitHubCommentSink.class.getName());
+
     // Bounds thread re-fetch on a pathological PR (100 comments/page × pages).
     private static final int MAX_THREAD_PAGES = 20;
 
@@ -48,6 +51,7 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
     private final GitHubReviewApi reviews;
     private final GitHubLabelApi labels;
     private final GitHubThreadResolver threads;
+
     private static boolean isReviewRef(ThreadRef thread) {
         return thread.value().startsWith(REVIEW_REF_PREFIX);
     }
@@ -57,8 +61,9 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
     }
 
     /**
-     * @param botLogin the registry's bot username — GitHub exposes a comment's author as a login, so this is what
-     *                 attributes the bot's own turns without a live {@code GET /user} per fetch. Null: that lookup.
+     * @param botLogin the registry's bot username — GitHub exposes a comment's author as a login, so
+     *                 this is what attributes the bot's own turns without a live {@code GET /user} per
+     *                 fetch. Null falls back to that lookup.
      */
     public GitHubCommentSink(GitHubClient client, String botLogin) {
         this.client = client;
@@ -91,11 +96,6 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
     @Override
     public LabelOutcome setVerdictLabel(RepoRef repo, long prId, VerdictLabel label) {
         return labels.set(repo, prId, label);
-    }
-
-    @Override
-    public LabelOutcome removeVerdictLabel(RepoRef repo, long prId, VerdictLabel label) {
-        return labels.remove(repo, prId, label);
     }
 
     /** A login mention: GitHub and GitLab link {@code @login} and notify that account. */

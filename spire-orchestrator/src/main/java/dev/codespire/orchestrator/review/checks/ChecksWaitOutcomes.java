@@ -8,11 +8,8 @@ import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.pipeline.CommandsEmitter;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
-import dev.codespire.orchestrator.repository.RepositoryRegistry;
 import dev.codespire.orchestrator.review.checks.ChecksWait.Stage;
-import dev.codespire.orchestrator.review.labels.DesiredLabels;
 import dev.codespire.orchestrator.review.run.ReviewRoundLock;
-import dev.codespire.contract.scm.VerdictLabel;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -27,9 +24,9 @@ import java.util.Optional;
  * resolvers (a webhook and the sweep, two webhooks) never both start, never both skip, and a skip never cancels a run
  * another resolver started. The claimed row is the recoverable intent: the effects follow, and the row is completed
  * last, so a process that dies in between leaves the claim for the sweep, which finishes it ({@link #dispatch},
- * {@link #finishSkip}). A restart can therefore send a run's FetchDiff or its label twice, never zero times; both are
- * idempotent downstream (the stale-run guard and the worker's claims; a label command only converges to the
- * current run's desired label).
+ * {@link #finishSkip}). A restart can therefore send a run's FetchDiff twice, never zero times; the stale-run
+ * guard and the worker's claims make that idempotent downstream. A skip sets no label: the dashboard shows it as
+ * "Skipped: checks failed" with the failed checks' names.
  */
 @ApplicationScoped
 public class ChecksWaitOutcomes {
@@ -53,14 +50,7 @@ public class ChecksWaitOutcomes {
     WorkerCredentials credentials;
 
     @Inject
-    RepositoryRegistry repositories;
-
-    @Inject
     ReviewRoundLock rounds;
-
-    /** The skipped run's desired verdict label, which its label command converges to (V121). */
-    @Inject
-    DesiredLabels desiredLabels;
 
     /** Every check finished green, or the head has none: the review starts as it would have at once. */
     public void start(ChecksWait wait) {
@@ -95,7 +85,7 @@ public class ChecksWaitOutcomes {
     }
 
     /**
-     * Ends a claimed skip's run, notes and labels it, then completes the claim. The run is ended under the review's
+     * Ends a claimed skip's run and notes it, then completes the claim. The run is ended under the review's
      * round lock and only while its round is still the review's: a re-run on the same head (which takes the same lock)
      * or a newer commit is never cancelled, and this claim is dropped instead.
      */
@@ -107,7 +97,7 @@ public class ChecksWaitOutcomes {
         waits.finish(claimed);
     }
 
-    /** Under the round lock: the run's end and its marks, so a re-run admitted next replaces this run's desired label. */
+    /** Under the round lock: the run's end and its note, so a re-run admitted next is never cancelled. */
     private boolean endRunAndMark(ChecksWait claimed) {
         if (!endRun(claimed)) return false;
         String names = claimed.failedChecks() == null ? NO_NAMES : claimed.failedChecks();
@@ -116,7 +106,6 @@ public class ChecksWaitOutcomes {
         projection.appendEvent(claimed.reviewId(), "integration", "ChecksFailed",
                 "failed on " + claimed.head() + ": " + names);
         LOG.infof("review %s: checks failed on %s (%s); the review is skipped", claimed.reviewId(), claimed.head(), names);
-        if (repositories.verdictLabels(claimed.repositoryId()).orElse(false)) labelFailed(claimed);
         return true;
     }
 
@@ -143,14 +132,6 @@ public class ChecksWaitOutcomes {
                 credential, claimed.untrusted()));
         waits.finish(claimed);
         return true;
-    }
-
-    private void labelFailed(ChecksWait claimed) {
-        ReviewIds.Parsed review = ReviewIds.parse(claimed.reviewId());
-        desiredLabels.record(new DesiredLabels.DesiredLabel(claimed.reviewId(), claimed.round(),
-                VerdictLabel.CI_FAILED.name()));
-        credentialFor(claimed).ifPresent(credential -> commands.emit(new ActionCommand.LabelChecksFailed(
-                claimed.reviewId(), review.repo(), review.prId(), claimed.head(), claimed.round(), credential)));
     }
 
     private Optional<String> credentialFor(ChecksWait wait) {

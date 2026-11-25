@@ -31,17 +31,16 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
         };
     }
 
-    /** Two red readers: one claims the skip; the run is ended, noted and labelled once. */
+    /** Two red readers: one claims the skip; the run is ended and noted once, and nothing is sent. */
     @Test
     void twoRedReadersSkipOnce() {
-        verdictLabels = true;
         ChecksWait wait = waiting(0);
         verdict = red("TEST-build");
         duringRead = () -> resolver().resolve(wait);
         resolver().resolve(wait);
         assertEquals(1, skips());
         assertEquals(1, notes.size());
-        assertEquals(1, labels().size());
+        assertTrue(emitted.isEmpty(), emitted.toString());
         assertEquals(Stage.SKIPPED, waits.rowOf(REVIEW_ID).stage());
     }
 
@@ -109,7 +108,6 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
      */
     @Test
     void aLateReadersStaleSnapshotNeverDropsTheWinningClaim() {
-        verdictLabels = true;
         ChecksWait stale = waiting(0);
         verdict = red("TEST-build");
         duringSend = () -> {
@@ -119,7 +117,7 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
         assertThrows(IllegalStateException.class, () -> resolver().resolve(stale));
         assertEquals(Stage.SKIPPING, waits.rowOf(REVIEW_ID).stage(), "the stale snapshot did not drop the claim");
         sweep().sweep();
-        assertEquals(1, labels().size());
+        assertEquals(1, notes.size());
         assertEquals(Stage.SKIPPED, waits.rowOf(REVIEW_ID).stage());
     }
 
@@ -164,10 +162,9 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
         assertEquals(Stage.TIMED_OUT, waits.rowOf(REVIEW_ID).stage());
     }
 
-    /** A crash after the run ended but before its label: the sweep finishes the skip, labelling it once. */
+    /** A crash after the run ended but before the claim completed: the sweep finishes the skip. */
     @Test
-    void aSkipLostBeforeItsLabelIsFinishedByTheSweep() {
-        verdictLabels = true;
+    void aSkipLostBeforeItCompletedIsFinishedByTheSweep() {
         ChecksWait wait = waiting(0);
         verdict = red("TEST-build");
         duringSend = lostAck();
@@ -175,7 +172,7 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
         assertEquals(Stage.SKIPPING, waits.rowOf(REVIEW_ID).stage());
         assertEquals(ReviewState.Status.CANCELLED, state.status());
         sweep().sweep();
-        assertEquals(1, labels().size());
+        assertEquals(1, skips());
         assertTrue(notes.getLast().contains("TEST-build"), "the failed checks survive the restart in the row");
         assertEquals(Stage.SKIPPED, waits.rowOf(REVIEW_ID).stage());
     }

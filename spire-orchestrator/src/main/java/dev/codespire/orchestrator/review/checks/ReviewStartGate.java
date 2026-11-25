@@ -22,11 +22,11 @@ import java.util.UUID;
  *
  * <p>A repository that starts at once is admitted as before V121. For one that waits, {@link #admit} is one
  * critical section under the review's round lock: the aggregate accepts the run, the round it accepted (folded from the
- * history the append was made on) is recorded ADMITTED, and its desired verdict label is reset to none. A
- * failure there fails the admission, so its event is redelivered, and a redelivery that finds the run accepted but
- * unrecorded records it. The caller then sets up the review header (status, run token), and {@link #begin} makes that
- * round readable and shows it waiting, so no start or skip lands before the header write that would undo it. Nothing
- * re-reads a "current" round, so a late caller never takes a newer run's identity.
+ * history the append was made on) is recorded ADMITTED. A failure there fails the admission, so its event is
+ * redelivered, and a redelivery that finds the run accepted but unrecorded records it. The caller then sets up the
+ * review header for that round (status, run token, {@code run_round}), and {@link #begin} makes the round readable and
+ * shows it waiting, so no start or skip lands before the header write that would undo it. Every accepted run, one
+ * started at once included, carries its round to its header write, which never replaces a later round's header.
  */
 @ApplicationScoped
 public class ReviewStartGate {
@@ -39,7 +39,6 @@ public class ReviewStartGate {
     @Inject ChecksWaitStore waits;
     @Inject CommandsEmitter commands;
     @Inject ReviewLifecycleService lifecycle;
-    @Inject dev.codespire.orchestrator.review.labels.RunLabels labels;
     @Inject ReviewRoundLock rounds;
 
     /** A run to admit: its request, and the fork flag its review's start sends. */
@@ -50,12 +49,9 @@ public class ReviewStartGate {
     public record AcceptedRun(int round, boolean waits) {
     }
 
-    /** A run that starts at once; it has no round of its own here, since nothing fences on it. */
-    static final AcceptedRun AT_ONCE = new AcceptedRun(0, false);
-
     /**
      * Admits the run; empty when the aggregate declined it. A repository that starts reviews at once (or a forge with no
-     * check read) takes exactly the path it took before V121: the aggregate alone, no lock, no row, one quiet label reset.
+     * check read) takes the path it took before V121: the aggregate alone, no lock and no row.
      */
     public Optional<AcceptedRun> admit(Admission admission) {
         Optional<UUID> waiting = waitingRepository(admission.reviewId());
@@ -87,18 +83,16 @@ public class ReviewStartGate {
         LOG.infof("review %s: waiting for the checks on %s before reviewing", fetch.reviewId(), fetch.commit());
     }
 
-    /** The pre-V121 admission (the aggregate accepts the run, the caller starts it), plus its label's quiet reset. */
+    /** The pre-V121 admission: the aggregate accepts the run, and the caller writes its header and starts it. */
     private Optional<AcceptedRun> startsAtOnce(Admission admission) {
         ReviewLifecycleService.Requested requested = lifecycle.request(admission.reviewId(), admission.request());
-        if (!requested.accepted()) return Optional.empty();
-        labels.newRunQuietly(admission.reviewId(), requested.state().round());
-        return Optional.of(AT_ONCE);
+        return requested.accepted() ? Optional.of(new AcceptedRun(requested.state().round(), false)) : Optional.empty();
     }
 
     /**
      * Under the round lock: the aggregate accepts the run, its accepted round is recorded ADMITTED (no reader acts on it
-     * until {@link #begin} makes it ready), and its desired verdict label is reset. A failure after the
-     * acceptance fails the admission; the redelivered event then records the accepted but unrecorded run.
+     * until {@link #begin} makes it ready). A failure after the acceptance fails the admission; the redelivered event
+     * then records the accepted but unrecorded run.
      */
     private Optional<AcceptedRun> admitWaiting(Admission admission, UUID repositoryId) {
         ReviewLifecycleService.Requested requested = lifecycle.request(admission.reviewId(), admission.request());
@@ -111,7 +105,6 @@ public class ReviewStartGate {
     }
 
     private void record(ChecksWait row) {
-        labels.newRun(row.reviewId(), row.round());
         waits.register(row);
     }
 

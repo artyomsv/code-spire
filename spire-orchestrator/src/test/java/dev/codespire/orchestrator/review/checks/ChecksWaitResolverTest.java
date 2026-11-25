@@ -78,30 +78,17 @@ class ChecksWaitResolverTest extends ChecksWaitFixture {
     }
 
     @Test
-    void redSkipsTheReviewChargesNothingAndLabelsItsRun() {
-        verdictLabels = true;
+    void redSkipsTheReviewChargesNothingAndSendsNothing() {
         waiting();
         verdict = red("TEST-build", "TEST-lint");
         wake(HEAD);
         assertTrue(fetches().isEmpty(), "no review runs, so nothing is charged");
         assertEquals(new RecordCommand.SkipReview(HEAD, round(), ChecksWaitStatus.CHECKS_FAILED), recorded.getLast());
         assertEquals(ReviewState.Status.CANCELLED, state.status());
-        ActionCommand.LabelChecksFailed label = labels().getFirst();
-        assertEquals(HEAD, label.commit());
-        assertEquals(round(), label.round());
-        assertTrue(labelLog.contains("desire " + round() + " review: ci-failed"), labelLog.toString());
+        assertTrue(emitted.isEmpty(), "no label either: the ci-failed label is deferred");
         assertTrue(notes.getLast().contains("TEST-build, TEST-lint"), notes.toString());
         assertEquals(List.of("ChecksFailed"), history);
         assertEquals(ChecksWait.Stage.SKIPPED, waits.rowOf(REVIEW_ID).stage());
-    }
-
-    @Test
-    void redWithVerdictLabelsOffSetsNoLabel() {
-        waiting();
-        verdict = red("TEST-build");
-        wake(HEAD);
-        assertTrue(emitted.isEmpty(), emitted.toString());
-        assertEquals(ReviewState.Status.CANCELLED, state.status());
     }
 
     /** After a red skip, a new commit is a new run that waits for its own checks. */

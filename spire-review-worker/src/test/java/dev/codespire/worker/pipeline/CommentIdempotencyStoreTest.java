@@ -21,9 +21,6 @@ class CommentIdempotencyStoreTest {
     @Inject
     CommentIdempotencyStore store;
 
-    @Inject
-    javax.sql.DataSource dataSource;
-
     private String reviewId() {
         return "review::sandbox/idempotency#" + UUID.randomUUID();
     }
@@ -86,33 +83,5 @@ class CommentIdempotencyStoreTest {
         // a forced re-review of a NEW commit gets fresh slots
         assertInstanceOf(CommentIdempotencyStore.Claim.Post.class,
                 store.claim(reviewId, "def", "SUMMARY"));
-    }
-
-    /**
-     * The desired verdict label (V6) as the orchestrator writes it (its upsert, run here on the worker's schema): a later
-     * round replaces it, the same round updates it, and an earlier round's late write changes nothing.
-     */
-    @Test
-    void theDesiredLabelNeverMovesBackToAnEarlierRun() throws Exception {
-        String reviewId = reviewId();
-        org.junit.jupiter.api.Assertions.assertTrue(store.desiredLabel(reviewId).isEmpty());
-        desire(reviewId, 2, null);
-        desire(reviewId, 2, "review: approved");
-        desire(reviewId, 1, "review: ci-failed");
-        assertEquals(new CommentIdempotencyStore.DesiredLabel(2, "review: approved"), store.desiredLabel(reviewId).orElseThrow());
-        desire(reviewId, 3, null);
-        assertEquals(new CommentIdempotencyStore.DesiredLabel(3, null), store.desiredLabel(reviewId).orElseThrow());
-    }
-
-    private void desire(String reviewId, int round, String label) throws Exception {
-        try (java.sql.Connection c = dataSource.getConnection(); java.sql.PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO review_label_desired (review_id, round, label) VALUES (?, ?, ?)"
-                        + " ON CONFLICT (review_id) DO UPDATE SET round = EXCLUDED.round, label = EXCLUDED.label,"
-                        + " updated_at = now() WHERE review_label_desired.round <= EXCLUDED.round")) {
-            ps.setString(1, reviewId);
-            ps.setInt(2, round);
-            ps.setString(3, label);
-            ps.executeUpdate();
-        }
     }
 }

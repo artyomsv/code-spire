@@ -22,7 +22,7 @@ class ReviewStartGateTest extends ChecksWaitFixture {
 
     /**
      * "Immediately" takes the pre-V121 path exactly: the aggregate accepts the run and its first command goes out,
-     * unchanged, with no lock, no admission row and no receipt close.
+     * unchanged, with no lock and no admission row.
      */
     @Test
     void immediatelySendsTheRunsFirstCommandUnchanged() {
@@ -31,7 +31,6 @@ class ReviewStartGateTest extends ChecksWaitFixture {
         gate().begin(fetch, admitRun(NEXT_HEAD));
         assertEquals(List.of(fetch), emitted);
         assertEquals(null, waits.rowOf(REVIEW_ID));
-        assertEquals(List.of("quiet " + round()), labelLog, "only the quiet reset of its desired label");
         assertEquals(0, lockedSections, "no round lock");
         assertTrue(statuses.isEmpty(), statuses.toString());
     }
@@ -52,7 +51,6 @@ class ReviewStartGateTest extends ChecksWaitFixture {
     void afterChecksRecordsTheAcceptedRoundsWaitAndSendsNothing() {
         ReviewStartGate.AcceptedRun run = admitRun(NEXT_HEAD);
         assertEquals(round(), run.round(), "the round the aggregate accepted, folded from its own append");
-        assertEquals(List.of("new " + run.round()), labelLog, "its desired label is reset at admission");
         assertEquals(Stage.ADMITTED, waits.rowOf(REVIEW_ID).stage(), "nothing reads it before its header is set up");
         gate().begin(fetch(NEXT_HEAD), run);
         assertTrue(emitted.isEmpty(), "nothing runs and nothing is charged while the review waits");
@@ -162,12 +160,12 @@ class ReviewStartGateTest extends ChecksWaitFixture {
     }
 
     /**
-     * The admission fails after the aggregate accepted the run (resetting its desired label failed), so its event is
+     * The admission fails after the aggregate accepted the run (recording it failed), so its event is
      * redelivered; the redelivery finds the run accepted and unrecorded, records it and shows it waiting.
      */
     @Test
     void aFailedAdmissionIsRecordedByItsRedelivery() {
-        admissionFailure = new IllegalStateException("TEST-database-unavailable");
+        waits.registerFailure = new IllegalStateException("TEST-database-unavailable");
         assertThrows(IllegalStateException.class, () -> admitRun(NEXT_HEAD));
         assertEquals(0, waits.admittedRound(REVIEW_ID), "nothing recorded for the accepted round");
         ReviewStartGate.Admission redelivered = new ReviewStartGate.Admission(REVIEW_ID,

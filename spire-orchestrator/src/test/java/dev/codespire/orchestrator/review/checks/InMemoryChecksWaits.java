@@ -23,11 +23,18 @@ class InMemoryChecksWaits extends ChecksWaitStore {
     private final Map<String, ChecksWait> rows = new LinkedHashMap<>();
     /** The review's current round, as the aggregate counts it; the real store reads event_log in the same statement. */
     java.util.function.IntSupplier currentRound = () -> Integer.MIN_VALUE;
+    /** Fails the next registration once, as a lost database would after the aggregate accepted the run. */
+    RuntimeException registerFailure;
     /** The rounds a review was shown waiting for, in order. */
     final List<Integer> shownWaiting = new ArrayList<>();
 
     @Override
     public void register(ChecksWait wait) {
+        if (registerFailure != null) {
+            RuntimeException failure = registerFailure;
+            registerFailure = null;
+            throw failure;
+        }
         ChecksWait row = rows.get(wait.reviewId());
         if (row == null || row.round() < wait.round()) rows.put(wait.reviewId(), wait);
     }
