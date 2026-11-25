@@ -118,6 +118,15 @@ public interface CommentSink {
         return LabelOutcome.UNSUPPORTED;
     }
 
+    /**
+     * Removes {@code label} from the pull request if it carries it, leaving every other label (review waits for CI: an
+     * earlier run's {@code review: ci-failed} undone after a newer run began). {@link LabelOutcome#ALREADY_SET} when it
+     * was not there; the default is "this forge has no labels here".
+     */
+    default LabelOutcome removeVerdictLabel(RepoRef repo, long prId, VerdictLabel label) {
+        return LabelOutcome.UNSUPPORTED;
+    }
+
     /** The forge refused the asked verdict on this pull request (GitHub: one's own pull request). */
     class ReviewVerdictRefused extends RuntimeException {
         public ReviewVerdictRefused(String message, Throwable cause) {

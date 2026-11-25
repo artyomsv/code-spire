@@ -37,7 +37,9 @@ class ChecksFailedLabelTest {
     private final LabelRecordingSink sink = new LabelRecordingSink() {
         @Override
         public CommentSink.LabelOutcome setVerdictLabel(RepoRef repo, long prId, VerdictLabel label) {
-            duringLabel.run();
+            Runnable once = duringLabel;
+            duringLabel = () -> { };
+            once.run();
             return super.setVerdictLabel(repo, prId, label);
         }
     };
@@ -80,14 +82,44 @@ class ChecksFailedLabelTest {
         assertEquals("superseded", receipts.refOf(REVIEW, HEAD, SLOT));
     }
 
-    /** The worker took the receipt first: a re-run admitted during the forge call closes nothing it took. */
+    /**
+     * Past take(), before the forge call: a re-run of the head is admitted (its receipt close) and its review labels
+     * approved. The old run's label lands after it; finding its receipt closed, the worker restores the newer run's label.
+     */
     @Test
-    void aTakenReceiptIsNeitherClosedNorOverwritten() {
+    void aNewerRunsLabelSurvivesAnOldLabelThatLandedLate() {
         receipts.open(REVIEW, HEAD, SLOT);
+        duringLabel = () -> {
+            receipts.supersede(REVIEW);
+            receipts.markPosted(REVIEW, HEAD, VerdictLabels.CLAIM_KEY, "applied:review: approved");
+            sink.labels.add("review: approved");
+        };
+        label().apply(COMMAND);
+        assertEquals(Set.of("review: approved"), sink.labels);
+        assertEquals("superseded", receipts.refOf(REVIEW, HEAD, SLOT), "the closed receipt is never overwritten");
+    }
+
+    /** The newer run has set no label yet: the old run's ci-failed is removed, and nothing is set in its place. */
+    @Test
+    void anOldLabelThatLandedLateIsRemovedWhenTheNewerRunSetNone() {
+        receipts.open(REVIEW, HEAD, SLOT);
+        sink.labels.add("TEST-unrelated");
         duringLabel = () -> receipts.supersede(REVIEW);
         label().apply(COMMAND);
-        assertEquals(1, sink.labelCalls.size());
-        assertEquals("APPLIED", receipts.refOf(REVIEW, HEAD, SLOT), "the outcome is recorded over its own mark only");
+        assertEquals(Set.of("TEST-unrelated"), sink.labels);
+        assertEquals(List.of("label", "unlabel"), sink.calls);
+    }
+
+    /** A newer skipped run that labelled ci-failed itself keeps it. */
+    @Test
+    void aNewerSkippedRunsOwnLabelIsKept() {
+        receipts.open(REVIEW, HEAD, SLOT);
+        duringLabel = () -> {
+            receipts.supersede(REVIEW);
+            receipts.markPosted(REVIEW, HEAD, ChecksFailedLabel.CLAIM_PREFIX + 2, "APPLIED");
+        };
+        label().apply(COMMAND);
+        assertEquals(Set.of("review: ci-failed"), sink.labels);
     }
 
     /** A command whose receipt the orchestrator never opened labels nothing. */

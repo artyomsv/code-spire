@@ -101,19 +101,22 @@ public class CommentIdempotencyStore {
     /**
      * Takes a slot another service opened (posted_ref NULL) for its one effect, marking it {@link #TAKEN}: true only
      * while it is still open, so a slot the orchestrator closed first (review waits for CI: a newer run was admitted)
-     * is never taken, and a closed slot can never close a taken one. Unlike {@link #claim}, a missing row is not taken.
+     * is never taken. Unlike {@link #claim}, a missing row is not taken.
      */
-    public boolean take(String reviewId, String commit, String anchorKey) {
+    public boolean take(ReceiptKey key) {
         return slotUpdate("UPDATE comment_idempotency SET posted_ref = ?, posted_at = now()"
                 + " WHERE posted_ref IS NULL AND review_id = ? AND commit = ? AND anchor_key = ?",
-                new String[] {TAKEN, reviewId, commit, anchorKey}) == 1;
+                new String[] {TAKEN, key.reviewId(), key.commit(), key.anchorKey()}) == 1;
     }
 
-    /** Records a taken slot's outcome, only over its own {@link #TAKEN} mark. */
-    public void markTaken(String reviewId, String commit, String anchorKey, String outcome) {
-        slotUpdate("UPDATE comment_idempotency SET posted_ref = ?, posted_at = now()"
+    /**
+     * Records a taken slot's outcome, only over its own {@link #TAKEN} mark. False when the orchestrator closed the slot
+     * while its effect ran (a newer run was admitted meanwhile): the caller reconciles the effect it made.
+     */
+    public boolean markTaken(ReceiptKey key, String outcome) {
+        return slotUpdate("UPDATE comment_idempotency SET posted_ref = ?, posted_at = now()"
                 + " WHERE posted_ref = '" + TAKEN + "' AND review_id = ? AND commit = ? AND anchor_key = ?",
-                new String[] {outcome, reviewId, commit, anchorKey});
+                new String[] {outcome, key.reviewId(), key.commit(), key.anchorKey()}) == 1;
     }
 
     private int slotUpdate(String sql, String[] parameters) {

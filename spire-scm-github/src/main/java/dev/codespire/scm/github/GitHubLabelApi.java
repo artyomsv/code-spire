@@ -49,6 +49,14 @@ final class GitHubLabelApi {
         return changed ? LabelOutcome.APPLIED : LabelOutcome.ALREADY_SET;
     }
 
+    LabelOutcome remove(RepoRef repo, long prId, VerdictLabel label) {
+        if (!current(repo, prId).contains(label.name())) {
+            return LabelOutcome.ALREADY_SET;
+        }
+        remove(repo, prId, label.name());
+        return LabelOutcome.APPLIED;
+    }
+
     private List<String> current(RepoRef repo, long prId) {
         JsonNode labels = client.getJson(labelsPath(repo, prId) + "?per_page=" + PAGE);
         List<String> names = new ArrayList<>();

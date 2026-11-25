@@ -29,7 +29,8 @@ final class VerdictLabels {
 
     /** The claim slot of the label attempt, beside the review's own; never a posted inline comment. */
     static final String CLAIM_KEY = "LABEL";
-    private static final String APPLIED = "applied";
+    /** The recorded outcome of a label that was set, followed by its name, so a later effect can restore it. */
+    private static final String APPLIED = "applied:";
     private static final String FAILED = "failed:";
     /** The stored reason is for a person to read; a forge error body past this adds nothing. */
     private static final int MAX_REASON = 300;
@@ -65,13 +66,14 @@ final class VerdictLabels {
         if (claim instanceof CommentIdempotencyStore.Claim.AlreadyPosted recorded) {
             return failureOf(recorded.postedRef());
         }
-        return record(command, attempt(command, label));
+        return record(command, label, attempt(command, label));
     }
 
     /** The outcome kept for a redelivery; when it cannot be kept, a redelivery labels again, and the report says so. */
-    private String record(PostComments command, String failure) {
+    private String record(PostComments command, VerdictLabel label, String failure) {
         try {
-            idempotency.markPosted(command.reviewId(), command.commit(), CLAIM_KEY, failure == null ? APPLIED : FAILED + failure);
+            idempotency.markPosted(command.reviewId(), command.commit(), CLAIM_KEY,
+                    failure == null ? APPLIED + label.name() : FAILED + failure);
             return failure;
         } catch (RuntimeException e) {
             LOG.warnf(e, "review %s: could not record the verdict label outcome", command.reviewId());
@@ -102,6 +104,11 @@ final class VerdictLabels {
                     command.reviewId(), label.name());
             return reason(e);
         }
+    }
+
+    /** The label a recorded attempt set, or null when it set none (failed, or recorded before names were kept). */
+    static String appliedLabel(String recorded) {
+        return recorded != null && recorded.startsWith(APPLIED) ? recorded.substring(APPLIED.length()) : null;
     }
 
     private static String failureOf(String recorded) {

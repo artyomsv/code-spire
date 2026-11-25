@@ -7,7 +7,7 @@ import java.util.Map;
 /**
  * {@code comment_idempotency} in memory, following its SQL: a row's {@code posted_ref} is null while open. {@link #open}
  * and {@link #supersede} are the orchestrator's statements (SkippedRunReceipts): insert-if-absent, and close every open
- * {@code CI_FAILED:} row. {@link #take} and {@link #markTaken} are the worker's compare-and-set updates.
+ * or taken {@code CI_FAILED:} row. {@link #take} and {@link #markTaken} are the worker's compare-and-set updates.
  */
 class ReceiptStore extends CommentIdempotencyStore {
 
@@ -20,7 +20,7 @@ class ReceiptStore extends CommentIdempotencyStore {
 
     void supersede(String reviewId) {
         rows.replaceAll((key, ref) -> key.startsWith(reviewId + "/") && key.contains("/" + ChecksFailedLabel.CLAIM_PREFIX)
-                && OPEN.equals(ref) ? "superseded" : ref);
+                && (OPEN.equals(ref) || TAKEN.equals(ref)) ? ChecksFailedLabel.SUPERSEDED : ref);
     }
 
     String refOf(String reviewId, String commit, String anchorKey) {
@@ -42,13 +42,13 @@ class ReceiptStore extends CommentIdempotencyStore {
     }
 
     @Override
-    public boolean take(String reviewId, String commit, String anchorKey) {
-        return rows.replace(key(reviewId, commit, anchorKey), OPEN, TAKEN);
+    public boolean take(ReceiptKey receipt) {
+        return rows.replace(key(receipt.reviewId(), receipt.commit(), receipt.anchorKey()), OPEN, TAKEN);
     }
 
     @Override
-    public void markTaken(String reviewId, String commit, String anchorKey, String outcome) {
-        rows.replace(key(reviewId, commit, anchorKey), TAKEN, outcome);
+    public boolean markTaken(ReceiptKey receipt, String outcome) {
+        return rows.replace(key(receipt.reviewId(), receipt.commit(), receipt.anchorKey()), TAKEN, outcome);
     }
 
     @Override

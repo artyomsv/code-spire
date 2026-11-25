@@ -36,4 +36,10 @@ class LabelRecordingSink extends ReviewWorkerTest.RecordingSink {
         labels.removeIf(label::replaces);
         return labels.add(label.name()) ? CommentSink.LabelOutcome.APPLIED : CommentSink.LabelOutcome.ALREADY_SET;
     }
+
+    @Override
+    public CommentSink.LabelOutcome removeVerdictLabel(RepoRef repo, long prId, VerdictLabel label) {
+        calls.add("unlabel");
+        return labels.remove(label.name()) ? CommentSink.LabelOutcome.APPLIED : CommentSink.LabelOutcome.ALREADY_SET;
+    }
 }
