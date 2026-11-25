@@ -49,7 +49,7 @@ class ChecksWaitStoreTest {
     /** The aggregate accepted another run: its ReviewRequested, which the current round counts. */
     private void appendRequest(int sequence) throws Exception {
         execute("INSERT INTO event_log (event_id, stream_id, sequence, event_type, payload, occurred_at)"
-                + " VALUES (?, ?, ?, 'ReviewRequested', '\x7b7d'::bytea, now())", UUID.randomUUID(), reviewId,
+                + " VALUES (?, ?, ?, 'ReviewRequested', '\\x7b7d'::bytea, now())", UUID.randomUUID(), reviewId,
                 (long) sequence);
     }
 
