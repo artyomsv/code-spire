@@ -141,10 +141,11 @@ failed. V121 adds `start_review` (text, not null, default `IMMEDIATELY`, checked
 `AFTER_CHECKS`; review waits for CI): with `AFTER_CHECKS` a review of a new head waits in `review_checks_wait`
 (one row per review: repository, head, the run's round, fork flag, stage, the wait's start, the sweep's next read and
 a skip's failed checks; FK to `review_status` with ON DELETE CASCADE) until its checks finish. The stages are
-`waiting`, the claimed `starting`, `starting_unfinished` and `skipping` (the recoverable intent of an outcome the sweep
+`admitted`, `waiting`, the claimed `starting`, `starting_unfinished` and `skipping` (the recoverable intent of an outcome the sweep
 finishes after a crash), and the terminal `started`, `skipped` and `timed_out` (the last also the hold that keeps the
-review started on the 60-minute timeout from approving). The row is the review's latest admitted run, written in the
-round lock that admits it (a run started at once is recorded `started`) and never replaced by an earlier round. The read model shows `waiting_for_checks` and
+review started on the 60-minute timeout from approving). The row is the review's latest admitted run of a repository that
+waits for checks, written `admitted` in the round lock that admits it, made `waiting` once the review header is set up,
+and never replaced by an earlier round; a repository that starts reviews at once writes no row. The read model shows `waiting_for_checks` and
 `skipped`. V105 adds nullable
 `review_llm_provider_id` (FK to `llm_provider`, no ON DELETE action): the LLM provider the
 repository's reviews and replies use, null meaning the global default. Deleting a provider a

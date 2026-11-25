@@ -640,7 +640,11 @@ withheld because CI had not finished must not reach the label. A blocking assess
 still labels from its assessment as above. A head whose checks failed gets no review and `review: ci-failed`, set
 once per skipped run by `LabelChecksFailed`, never on a head the pull request moved past, never after a later
 review of the same head set its verdict label, and never for a run a newer run (a re-run of the same head included)
-replaced: the orchestrator opens the run's `CI_FAILED:<round>` receipt and closes every open one at the next admission.
+replaced: the orchestrator opens the run's `CI_FAILED:<round>` receipt and closes every open or taken one at the next
+admission. A receipt orders the label attempts, not the GitHub calls: when an old run's label call was already under
+way, the worker finds its receipt closed afterwards and undoes that label (restores the newer run's recorded verdict
+label, else removes `review: ci-failed` unless a newer skipped run set it). The window between the undo's read and its
+calls remains: a newer run that labels exactly then can be overwritten until its next label.
 
 ---
 
