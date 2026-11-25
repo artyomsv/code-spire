@@ -15,11 +15,12 @@ import org.jboss.logging.Logger;
  *
  * <p>Guarded like the verdict label ({@link VerdictLabels}) before the visible change:
  * <ul>
- *   <li>once per skipped run: the attempt is recorded under {@code CI_FAILED:<round>}, so a replayed command never
- *   labels again over a label someone set since;</li>
- *   <li>never for a run a newer run replaced: the orchestrator opens the receipt before it sends the command and marks
- *   every open one {@code superseded} when the next run of the review is admitted, a re-run of the same head included
- *   (a re-run keeps these receipts when it clears the worker's claims);</li>
+ *   <li>once per skipped run, and never for a run a newer run replaced: the orchestrator opens the run's
+ *   {@code CI_FAILED:<round>} receipt before it sends the command and, in the round lock that admits the next run of the
+ *   review (a re-run of the same head included), closes every open one ({@code superseded}). The worker takes the
+ *   receipt with a compare-and-set before the forge call, so whichever comes first wins: a closed receipt is never
+ *   taken, a taken one is never closed, and its outcome is recorded only over its own mark. A re-run keeps these
+ *   receipts when it clears the worker's other claims;</li>
  *   <li>never for a head the pull request has moved past (a delayed command);</li>
  *   <li>never after a later review of the same head set its verdict label (a re-run on the same commit).</li>
  * </ul>
@@ -31,8 +32,6 @@ public class ChecksFailedLabel {
 
     /** The claim slot of one skipped run's label, beside the review's own slots; never a posted comment. */
     static final String CLAIM_PREFIX = "CI_FAILED:";
-    /** What the orchestrator records on an open receipt when the next run of the review is admitted. */
-    static final String SUPERSEDED = "superseded";
     private static final Logger LOG = Logger.getLogger(ChecksFailedLabel.class);
 
     @Inject
@@ -57,14 +56,13 @@ public class ChecksFailedLabel {
             return;
         }
         String slot = CLAIM_PREFIX + command.round();
-        if (idempotency.claim(command.reviewId(), command.commit(), slot)
-                instanceof CommentIdempotencyStore.Claim.AlreadyPosted recorded) {
-            LOG.infof("review %s: no %s label for run %d: %s", command.reviewId(), VerdictLabel.CI_FAILED.name(),
-                    command.round(), SUPERSEDED.equals(recorded.postedRef()) ? "a newer run started" : "already attempted");
+        if (!idempotency.take(command.reviewId(), command.commit(), slot)) {
+            LOG.infof("review %s: no %s label for run %d: a newer run started, or it was already attempted",
+                    command.reviewId(), VerdictLabel.CI_FAILED.name(), command.round());
             return;
         }
         LabelOutcome outcome = clients.comments().setVerdictLabel(command.repo(), command.prId(), VerdictLabel.CI_FAILED);
-        idempotency.markPosted(command.reviewId(), command.commit(), slot, outcome.name());
+        idempotency.markTaken(command.reviewId(), command.commit(), slot, outcome.name());
         LOG.infof("review %s: label %s on %s#%d for failed checks on %s: %s", command.reviewId(),
                 VerdictLabel.CI_FAILED.name(), command.repo().full(), command.prId(), command.commit(), outcome);
     }

@@ -26,6 +26,9 @@ import java.util.Map;
 @ApplicationScoped
 public class CommentIdempotencyStore {
 
+    /** What {@link #take} marks a taken slot with until its outcome is recorded. */
+    public static final String TAKEN = "taken";
+
     /** Outcome of a claim attempt. */
     public sealed interface Claim {
         /** This caller owns the slot and must post. */
@@ -90,6 +93,33 @@ public class CommentIdempotencyStore {
             ps.setString(3, commit);
             ps.setString(4, anchorKey);
             ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("comment_idempotency update failed", e);
+        }
+    }
+
+    /**
+     * Takes a slot another service opened (posted_ref NULL) for its one effect, marking it {@link #TAKEN}: true only
+     * while it is still open, so a slot the orchestrator closed first (review waits for CI: a newer run was admitted)
+     * is never taken, and a closed slot can never close a taken one. Unlike {@link #claim}, a missing row is not taken.
+     */
+    public boolean take(String reviewId, String commit, String anchorKey) {
+        return slotUpdate("UPDATE comment_idempotency SET posted_ref = ?, posted_at = now()"
+                + " WHERE posted_ref IS NULL AND review_id = ? AND commit = ? AND anchor_key = ?",
+                new String[] {TAKEN, reviewId, commit, anchorKey}) == 1;
+    }
+
+    /** Records a taken slot's outcome, only over its own {@link #TAKEN} mark. */
+    public void markTaken(String reviewId, String commit, String anchorKey, String outcome) {
+        slotUpdate("UPDATE comment_idempotency SET posted_ref = ?, posted_at = now()"
+                + " WHERE posted_ref = '" + TAKEN + "' AND review_id = ? AND commit = ? AND anchor_key = ?",
+                new String[] {outcome, reviewId, commit, anchorKey});
+    }
+
+    private int slotUpdate(String sql, String[] parameters) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            for (int i = 0; i < parameters.length; i++) ps.setString(i + 1, parameters[i]);
+            return ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("comment_idempotency update failed", e);
         }

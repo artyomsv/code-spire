@@ -21,6 +21,9 @@ class CommentIdempotencyStoreTest {
     @Inject
     CommentIdempotencyStore store;
 
+    @Inject
+    javax.sql.DataSource dataSource;
+
     private String reviewId() {
         return "review::sandbox/idempotency#" + UUID.randomUUID();
     }
@@ -83,5 +86,33 @@ class CommentIdempotencyStoreTest {
         // a forced re-review of a NEW commit gets fresh slots
         assertInstanceOf(CommentIdempotencyStore.Claim.Post.class,
                 store.claim(reviewId, "def", "SUMMARY"));
+    }
+
+    /**
+     * Review waits for CI: the ci-failed receipt the orchestrator opens (an unposted row) is taken once, never when it
+     * is missing; the orchestrator's close (its SQL, run here on the worker's own schema) wins over a later take and
+     * never touches a taken receipt, and an outcome is recorded only over its own taken mark.
+     */
+    @Test
+    void aReceiptIsTakenOnlyWhileOpenAndClosingOnlyHitsOpenOnes() throws Exception {
+        String reviewId = reviewId();
+        org.junit.jupiter.api.Assertions.assertFalse(store.take(reviewId, "abc", "CI_FAILED:1"), "not opened");
+        store.claim(reviewId, "abc", "CI_FAILED:1");
+        store.claim(reviewId, "abc", "CI_FAILED:2");
+        store.claim(reviewId, "abc", "CIXFAILED:3");
+        org.junit.jupiter.api.Assertions.assertTrue(store.take(reviewId, "abc", "CI_FAILED:2"));
+        try (var c = dataSource.getConnection(); var ps = c.prepareStatement("UPDATE comment_idempotency"
+                + " SET posted_ref = 'superseded', posted_at = now()"
+                + " WHERE review_id = ? AND anchor_key LIKE 'CI\\_FAILED:%' AND posted_ref IS NULL")) {
+            ps.setString(1, reviewId);
+            ps.executeUpdate();
+        }
+        org.junit.jupiter.api.Assertions.assertFalse(store.take(reviewId, "abc", "CI_FAILED:1"), "closed first");
+        store.markTaken(reviewId, "abc", "CI_FAILED:1", "APPLIED");
+        store.markTaken(reviewId, "abc", "CI_FAILED:2", "APPLIED");
+        Map<String, String> posted = store.postedFor(reviewId, "abc");
+        assertEquals("superseded", posted.get("CI_FAILED:1"), "a closed receipt is never overwritten");
+        assertEquals("APPLIED", posted.get("CI_FAILED:2"), "a taken receipt is not closed");
+        org.junit.jupiter.api.Assertions.assertFalse(posted.containsKey("CIXFAILED:3"), "the underscore is literal");
     }
 }
