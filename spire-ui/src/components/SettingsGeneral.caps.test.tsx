@@ -13,6 +13,7 @@ import { queryWrapper } from '../test/queryWrapper';
 describe('SettingsGeneral — Limits', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(api, 'getReviewDiffLimit').mockResolvedValue({ limitTokens: null });
     vi.spyOn(api, 'getReviewSettings').mockResolvedValue({ maxAttempts: 3, backoffBaseMs: 5000, backoffFactor: 2 });
     vi.spyOn(api, 'getConversationSettings').mockResolvedValue({
       level: 'REPORT_ONLY', turnCap: 4, maxAttempts: 5, backoffBaseMs: 2000, backoffFactor: 2,
