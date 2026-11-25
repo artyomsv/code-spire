@@ -113,8 +113,8 @@ class ChecksWaitStoreTest {
     void aPausedRecoveryNeverRewritesTheHeaderOfARunThatMovedOn() throws Exception {
         ChecksWait admitted = wait(HEAD, 1, Instant.now()).at(Stage.ADMITTED);
         store.register(admitted);
-        execute("UPDATE review_status SET status = 'reviewing', run_token = 'TEST-caller', run_round = 1"
-                + " WHERE review_id = ?", reviewId);
+        execute("UPDATE review_status SET status = 'reviewing', commit_sha = ?, run_token = 'TEST-caller', run_round = 1"
+                + " WHERE review_id = ?", HEAD, reviewId);
         assertTrue(store.ready(admitted.run()), "the caller's begin");
         String readied = header();
         assertTrue(readied.startsWith(ChecksWaitStatus.WAITING + ":" + HEAD + ":"), readied);
