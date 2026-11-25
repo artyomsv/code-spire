@@ -135,6 +135,11 @@ abstract class IntegrationSagaFixture {
             }
 
             @Override
+            public void registerRunHeader(RunHeader header) {
+                headerProviderTypes.add(header.providerType());
+            }
+
+            @Override
             public void refreshHeader(String reviewId, RepoRef repo, long prId, String title, String author,
                                      String authorId, String sourceBranch, String destBranch, String sha,
                                      String htmlUrl, String providerType) {
@@ -224,6 +229,21 @@ abstract class IntegrationSagaFixture {
             }
         };
         saga.policy = policy;
+        // The repository starts reviews at once: the run's first command is sent as before (V121).
+        // Admission asks the (faked) aggregate as the saga did; the start sends the run's first command at once.
+        saga.reviewStart = new dev.codespire.orchestrator.review.checks.ReviewStartGate() {
+            @Override
+            public Optional<AcceptedRun> admit(Admission admission) {
+                boolean accepted = saga.lifecycle.handle(admission.reviewId(), admission.request()).stream()
+                        .anyMatch(DomainEvent.ReviewRequested.class::isInstance);
+                return accepted ? Optional.of(new AcceptedRun(1, false)) : Optional.empty();
+            }
+
+            @Override
+            public void begin(ActionCommand.FetchDiff fetch, AcceptedRun run) {
+                emitted.add(fetch);
+            }
+        };
         saga.rerunService = new ReviewRerunService() {
             @Override
             public boolean rerun(String workspace, String slug, long pr) {

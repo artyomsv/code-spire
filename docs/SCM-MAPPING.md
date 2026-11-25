@@ -93,6 +93,7 @@ Replies inherit the parent's anchor on every provider — never resend the ancho
 | PR opened | `pullrequest:created` | `pull_request` / `opened` | Merge Request / `open` | `pr:opened` |
 | PR updated (new commits) | `pullrequest:updated` | `pull_request` / `synchronize` | Merge Request / `update` (`last_commit` changed) | `pr:from_ref_updated` |
 | author replied | `pullrequest:comment_created` | `pull_request_review_comment` / `issue_comment` | Note Hook (on MR) | comment webhook |
+| checks changed on a commit (review waits for CI, V121) | — | `check_suite` / `completed`, `status` (not `pending`) | — | — |
 | **PR closed (merged / declined)** | `pullrequest:fulfilled` / `pullrequest:rejected` | `pull_request` / `closed` (`merged` bool distinguishes) | Merge Request / `merge` or `close` | `pr:merged` / `pr:declined` / `pr:deleted` |
 | **signature scheme** | `X-Hub-Signature` (HMAC-SHA256) | `X-Hub-Signature-256` (HMAC-SHA256) | **`X-Gitlab-Token` (static shared secret, NOT HMAC)** | signature header |
 

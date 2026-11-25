@@ -223,6 +223,8 @@ export const STATUS_LABEL: Record<ReviewStatus, string> = {
   superseded: 'Superseded',
   refused: 'Refused',
   observed: 'Observed',
+  waiting_for_checks: 'Waiting for checks',
+  skipped: 'Skipped: checks failed',
 };
 
 export function ago(updatedAt: string): string {
@@ -290,6 +292,12 @@ export function statusCell(r: { status: ReviewStatus; findings: number; blockerC
   );
 }
 
+/** The statuses whose pipeline cell is a label only. */
+const LABEL_ONLY: Partial<Record<ReviewStatus, string>> = {
+  cancelled: 'cancelled', superseded: 'superseded', refused: 'refused', observed: 'observed',
+  waiting_for_checks: 'waiting for checks', skipped: 'skipped: checks failed',
+};
+
 // In the list, ReviewSummary carries only `status` + `stage` (no per-segment
 // array), so segment states are derived exactly as the mockup's sample data
 // would have produced them.
@@ -320,28 +328,14 @@ export function miniPipeline(status: ReviewStatus, stage: number) {
       </div>
     );
   }
-  if (status === 'cancelled' || status === 'superseded') {
+  // A label and no segments. A refused review once fell through to the terminal "done" below and rendered as five
+  // green segments; a cap refuses at the diff or the review stage, so drawing progress would only invite reading how
+  // far it got as how far it should have. A review waiting for or skipped on its checks has run nothing at all.
+  const label = LABEL_ONLY[status];
+  if (label) {
     return (
       <div className="mini">
-        <span className="lbl">{status === 'cancelled' ? 'cancelled' : 'superseded'}</span>
-      </div>
-    );
-  }
-  // Before this branch existed, a refused review fell through to the terminal "done" below and
-  // rendered as five green segments — a review the deployment declined to spend on, shown as a
-  // successful one. Stage segments are omitted entirely: a cap refuses at the diff or the review
-  // stage, so drawing progress would only invite reading how far it got as how far it should have.
-  if (status === 'refused') {
-    return (
-      <div className="mini">
-        <span className="lbl">refused</span>
-      </div>
-    );
-  }
-  if (status === 'observed') {
-    return (
-      <div className="mini">
-        <span className="lbl">observed</span>
+        <span className="lbl">{label}</span>
       </div>
     );
   }
@@ -368,10 +362,10 @@ export function miniPipeline(status: ReviewStatus, stage: number) {
 export function findCell(status: ReviewStatus, findings: number, carriedOver = 0, degraded = false) {
   // While a review is still running the running tally is noise (and "0 so far"
   // reads as a result). Show a neutral placeholder until the review completes.
-  if (status === 'reviewing') return <span className="time">—</span>;
+  if (status === 'reviewing' || status === 'waiting_for_checks') return <span className="time">—</span>;
   // `refused` belongs here for a stronger reason than the other two: a cap declined to run the
   // review at all, so a `0` would be a findings count for a diff no model ever saw.
-  if (status === 'failed' || status === 'cancelled' || status === 'refused')
+  if (status === 'failed' || status === 'cancelled' || status === 'refused' || status === 'skipped')
     return <span className="time">—</span>;
   // A degraded run reports zero findings, and a plain `0` is exactly how it used to pass for a clean
   // review here. The placeholder rather than a second pill: the outcome badge already carries the
@@ -584,6 +578,7 @@ const STATUS_EXPLANATIONS: Partial<Record<ReviewStatus, StatusExplanation>> = {
   failed: { heading: 'Why it stalled', tone: 'warning' },
   cancelled: { heading: 'Why it stopped', tone: 'nit' },
   refused: { heading: 'Why it was refused', tone: 'warning' },
+  skipped: { heading: 'Why it was skipped', tone: 'warning' },
 };
 
 /** Not a status, so it cannot live in the record above — see {@link findingsCard}. */

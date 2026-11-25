@@ -505,7 +505,7 @@ class ResultSagaRetryTest {
                 return 0;
             }
         };
-        // Both read a database the decision reaches through the fixture's repository id.
+        saga.checksWaits = SagaRepositoryFakes.noUnfinishedChecks(); // these read a database via the repository id
         saga.repositories = SagaRepositoryFakes.approvingRepository();
         saga.repositoryAccounts = new dev.codespire.orchestrator.repository.RepositoryAccounts() {
             @Override

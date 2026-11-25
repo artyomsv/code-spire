@@ -128,6 +128,7 @@ final class HarnessSagaFakes {
     /** A repository whose reviewer may approve and is known, reviewed through a usable account. */
     static void wireRepository(ResultSaga saga) {
         saga.repositories = SagaRepositoryFakes.approvingRepository();
+        saga.checksWaits = SagaRepositoryFakes.noUnfinishedChecks();
         saga.repositoryAccounts = new RepositoryAccounts() {
             @Override
             public boolean reviewerIdentityKnown(UUID repositoryId) {

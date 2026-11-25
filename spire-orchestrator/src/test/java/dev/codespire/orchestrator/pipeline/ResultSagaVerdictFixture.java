@@ -53,6 +53,12 @@ class ResultSagaVerdictFixture {
     Optional<Boolean> setting = Optional.of(true);
     Optional<Boolean> labels = Optional.of(false);
     boolean identityKnown = true;
+    /** The commit whose review started on the check timeout (V121); none by default. */
+    String unfinishedChecksOn = "TEST-no-such-commit";
+    /** Why the held run's last check read failed; null when it answered. */
+    String checksReadFailure;
+    /** The run being posted; a hold names run 1. */
+    int round = FIRST_RUN;
 
     static ReviewGenerated generated() {
         return new ReviewGenerated(REVIEW_ID, 412L, COMMIT, new ReviewResult(List.of(), "s", ModelUsage.of(null, 0, 0)));
@@ -172,6 +178,8 @@ class ResultSagaVerdictFixture {
                 recordedLabelFailures.add(commit + ":" + reason);
             }
         };
+        saga.checksWaits = SagaRepositoryFakes.heldOn(unfinishedChecksOn,
+                new dev.codespire.orchestrator.review.checks.ChecksWaitStore.Hold(FIRST_RUN, checksReadFailure));
         saga.repositories = new dev.codespire.orchestrator.repository.RepositoryRegistry() {
             @Override
             public Optional<Boolean> reviewerMayApprove(UUID id) {
@@ -214,7 +222,7 @@ class ResultSagaVerdictFixture {
 
             @Override
             public int roundOrUnknown(String reviewId) {
-                return FIRST_RUN;
+                return round;
             }
         };
         return saga;

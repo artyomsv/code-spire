@@ -74,6 +74,13 @@ describe('webhookSetupGuide per webhook kind', () => {
     );
   });
 
+  // Review waits for CI (V121): the reviewer hook also wakes reviews waiting for a commit's checks.
+  it('lists check suites and statuses for the GitHub reviewer hook', () => {
+    expect(events('github', 'REVIEWER')).toEqual(
+      ['Pull requests', 'Issue comments', 'Pull request review comments', 'Check suites', 'Statuses'],
+    );
+  });
+
   it('lists only issues and issue comments for the GitHub issue hook', () => {
     expect(events('github', 'ISSUE')).toEqual(['Issues', 'Issue comments']);
   });

@@ -23,7 +23,7 @@ export default function RepositoryForm({ providers, kinds, onSaved, onCancel, pr
     scmType: prefill.get('scmType') ?? '', forgeOrigin: prefill.get('forgeOrigin') ?? '',
     workspace: prefill.get('workspace') ?? '', slug: prefill.get('slug') ?? '', enabled: true,
     reviewerAccountId: null, factoryAccountId: null, reviewerMayApprove: true, blockApprovalAt: 'BLOCKER', verdictLabels: false,
-    reviewLlmProviderId: null, reviewLlmModel: null, reviewHarness: null,
+    startReview: 'IMMEDIATELY', reviewLlmProviderId: null, reviewLlmModel: null, reviewHarness: null,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +42,7 @@ export default function RepositoryForm({ providers, kinds, onSaved, onCancel, pr
       {prefill.get('registration') && <p className="prov-note">Incoming registration: <span className="mono">{prefill.get('registration')}</span></p>}
       <SettingField label="Forge kind" scope="repository" hint="Required. Which forge hosts this repository.">
         <select aria-label="Forge kind" required value={fields.scmType}
-          onChange={e => patch({ scmType: e.target.value, reviewerAccountId: null, factoryAccountId: null, verdictLabels: false })}>
+          onChange={e => patch({ scmType: e.target.value, reviewerAccountId: null, factoryAccountId: null, verdictLabels: false, startReview: 'IMMEDIATELY' })}>
           <option value="">Select forge</option>{kinds.map(kind => <option key={kind}>{kind}</option>)}
         </select></SettingField>
       <SettingField label="Forge origin" scope="repository"

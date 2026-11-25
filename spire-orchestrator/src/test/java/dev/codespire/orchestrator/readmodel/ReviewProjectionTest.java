@@ -127,7 +127,7 @@ class ReviewProjectionTest {
         String id = completedReview(pr, List.of());
         String first = projection.runTokenOf(id).orElseThrow();
         assertFalse(first.isBlank());
-        projection.markRerunStarted(id);
+        projection.markRerunStarted(id, 1);
         String rerun = projection.runTokenOf(id).orElseThrow();
         assertNotEquals(first, rerun, "a re-run is a new run");
         projection.registerHeader(id, REPO, pr, "TEST title", "TEST-author", "TEST-acc", "feature", "main",
@@ -418,7 +418,7 @@ class ReviewProjectionTest {
                 "https://x/pr/4110", "github", "failed", ReviewProjection.STAGE_DIFF);
         projection.setError(id, "boom: the model rejected the request");
 
-        projection.markRerunStarted(id);
+        projection.markRerunStarted(id, 1);
 
         ReviewDetail d = projection.loadDetail("acme", "web", pr).orElseThrow();
         assertEquals("reviewing", d.status());

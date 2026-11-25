@@ -17,6 +17,7 @@ public final class EventKeys {
             case IntegrationEvent.AuthorReplied e -> e.reviewId();
             case IntegrationEvent.PushReceived e -> e.repo().full();
             case IntegrationEvent.RepositoryActivity e -> e.repo().full();
+            case IntegrationEvent.ChecksChanged e -> e.repo().full();
             case IntegrationEvent.DiffFetched e -> e.reviewId();
             case IntegrationEvent.ContextRequested e -> e.request().reviewId();
             case IntegrationEvent.ContextContributed e -> e.reviewId();

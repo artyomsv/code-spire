@@ -29,6 +29,7 @@ public record RepositoryDelivery(UUID repositoryId, UUID registrationId, long re
             case IntegrationEvent.AuthorReplied e -> e.repo();
             case IntegrationEvent.PushReceived e -> e.repo();
             case IntegrationEvent.RepositoryActivity e -> e.repo();
+            case IntegrationEvent.ChecksChanged e -> e.repo();
             default -> throw new IllegalArgumentException("Not a repository ingress event");
         };
     }

@@ -422,6 +422,7 @@ Every event (integration or domain) is wrapped:
 | `PullRequestClosed` | `spire-gateway` | repo, prId, reason(`MERGED`/`DECLINED`) — triggers the cancel saga (ADR-013); for a pull request a work item delivered, also the land observation (M4 land §7.8) |
 | `ManualCommandReceived` | `spire-gateway` | repo, prId, command(`review`/…), args, author{providerUserId,username} — parsed from a `/command` PR comment; the saga maps `review` → `RequestReview{force=true}` |
 | `PushReceived` *(P3)* | `spire-gateway` | repo, ref, commits[] |
+| `ChecksChanged` | `spire-gateway` | repo, headCommit — a GitHub `check_suite` (completed) or final `status` on the Reviewer webhook. Only wakes the reviews waiting on that head (review waits for CI, V121); the orchestrator's own read of the checks decides |
 | `DiffFetched` | `spire-review-worker` (via `DiffSource`) | reviewId, prId, commit, changedFiles, languages[], sizeBytes, truncated — **metadata only; no diff content** (deliberate two-fetch: content is re-fetched by commit at generate time; a 404 on re-fetch means the commit was force-pushed away → treat as superseded) |
 | `ContextRequested` | `spire-context-worker` | reviewId, repo, prId, commit, **references[]**, **expectedSources[]**, **scmType** — fan-out signal each `ContextProvider` subscribes to (§8) |
 | `ContextContributed` | each `ContextProvider` | reviewId, source(`JIRA`/`CONFLUENCE`/`GITHUB_ISSUES`/`GITLAB_ISSUES`/`RULES`/`CODE`/`MEMORY`), status(`OK`/`EMPTY`/`ERROR`), items[], latencyMs |
@@ -484,6 +485,7 @@ Every event (integration or domain) is wrapped:
 |---|---|
 | `RequestReview{commit,trigger,force}` | new commit → `ReviewRequested`; if newer run active → also `ReviewSuperseded`; `force=true` bypasses the reviewed-commit idempotency (FR-12) |
 | `CancelReview{reason}` | REVIEWING → `ReviewCancelled` (from `PullRequestClosed` or an operator action) |
+| `SkipReview{commit,round,reason}` | commit==current AND round==the current round → `ReviewCancelled{reason}` (review waits for CI: the head's checks failed; reason `CHECKS_FAILED`, projected as `skipped`; a skip for a replaced head → no-op) |
 | `RecordReviewOutcome{commit,findingsCount,summaryDigest}` | commit==current → `ReviewOutcomeRecorded` (aggregate keeps only a digest, not the findings) |
 | `RecordCommentsPosted{commit,summaryCommentId,count}` | commit==current → `ReviewCompleted` |
 | `RecordFailure{commit,phase,retryable}` | commit==current AND !retryable → `ReviewFailedTerminally` (stale failure from a superseded run → no-op) |
@@ -524,6 +526,7 @@ raisedFindingComments: Set<commentId>  // idempotency for /finding, same shape a
 | `REVIEWING` | `RecordFailure{c,retryable=false}` | **`c == currentCommit`** (stale failure from a superseded run → no-op) | `ReviewFailedTerminally` | FAILED |
 | `REVIEWING` | `CancelReview{reason}` | — | `ReviewCancelled{reason}` | CANCELLED |
 | `IDLE/COMPLETED/FAILED/CANCELLED` | `CancelReview` | — | `[]` (nothing in flight — no-op) | — |
+| `REVIEWING` | `SkipReview{c,r,reason}` | **`c == currentCommit` and `r == round`** (`round` counts the `ReviewRequested` folded; a skip decided for a run a newer commit or a re-run of the same head replaced → no-op) | `ReviewCancelled{reason}` | CANCELLED (a redelivered event for `c` stays a no-op; a new commit requests afresh) |
 | any | `OpenThread` / `RecordFollowUp` | — | `ThreadOpened` / `FollowUpRecorded` | threads updated |
 | any | `RaiseConversationFinding{threadRef,path,line,severity,message,triggeringCommentId}` | `triggeringCommentId ∉ raisedFindingComments` | `ConversationFindingRaised` (redelivered comment id → `[]`, idempotent no-op) | +raisedFindingComments |
 

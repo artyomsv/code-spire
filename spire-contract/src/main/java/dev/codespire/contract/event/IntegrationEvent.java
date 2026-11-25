@@ -38,6 +38,7 @@ import java.util.Set;
         @JsonSubTypes.Type(value = IntegrationEvent.AuthorReplied.class, name = "AuthorReplied"),
         @JsonSubTypes.Type(value = IntegrationEvent.PushReceived.class, name = "PushReceived"),
         @JsonSubTypes.Type(value = IntegrationEvent.RepositoryActivity.class, name = "RepositoryActivity"),
+        @JsonSubTypes.Type(value = IntegrationEvent.ChecksChanged.class, name = "ChecksChanged"),
         @JsonSubTypes.Type(value = IntegrationEvent.DiffFetched.class, name = "DiffFetched"),
         @JsonSubTypes.Type(value = IntegrationEvent.ContextRequested.class, name = "ContextRequested"),
         @JsonSubTypes.Type(value = IntegrationEvent.ContextContributed.class, name = "ContextContributed"),
@@ -110,9 +111,7 @@ public sealed interface IntegrationEvent {
         // value a webhook recorded.
 
         /**
-         * The wither that rebuilds the record with another provenance.
-         *
-         * <p>Adding a component to a wire record silently drops it at every rebuild site, because any
+         * The wither that rebuilds the record with another provenance. Adding a component to a wire record silently drops it at every rebuild site, because any
          * convenience constructor stays valid and everything still compiles. Enumerating the
          * components once, here, is what this repository does instead — the same reason
          * {@code RunFinished} has {@code withTruncated} and {@code withFindings}.
@@ -162,9 +161,8 @@ public sealed interface IntegrationEvent {
      * parsed it. It is a list of identities, not text: an SCM renders a mention in its own syntax
      * (a login, or an account id in braces), and only the adapter that knows the payload can read
      * it. Callers ask "is the bot in here?" and never learn how any provider writes it.
-     */
-    /**
-     * {@code location} is where in the diff the thread sits, when the provider says — each ingress
+     *
+     * <p>{@code location} is where in the diff the thread sits, when the provider says — each ingress
      * reads it from its own payload (GitHub's {@code path}/{@code line}, GitLab's {@code position},
      * Bitbucket's {@code inline}). Null for a summary or top-level comment, and for any provider that
      * does not report one.
@@ -202,10 +200,13 @@ public sealed interface IntegrationEvent {
 
     /** P3: feeds the RAG indexer. */
     record PushReceived(RepoRef repo, String ref, List<String> commits) implements IntegrationEvent {
-
         public PushReceived {
             commits = commits == null ? null : List.copyOf(commits);
         }
+    }
+
+    /** Review waits for CI: a commit's checks changed on the forge. It only wakes a waiting review; a read decides. */
+    record ChecksChanged(RepoRef repo, String headCommit) implements IntegrationEvent {
     }
 
     // --- worker results ---
@@ -218,9 +219,8 @@ public sealed interface IntegrationEvent {
      * providers can resolve what they recognise. One neutral set: each registered
      * {@link dev.codespire.contract.port.ContextReferenceSource} contributes the shapes it knows, and
      * every entry is a recall-favouring candidate that a provider narrows later.
-     */
-    /**
-     * {@code repoRules} is the repository's own {@code .codespire} review rules, read at diff-fetch
+     *
+     * <p>{@code repoRules} is the repository's own {@code .codespire} review rules, read at diff-fetch
      * from the PR's TARGET branch (see {@code DiffSource.fetchTextFileOnBranch}) and carried here so
      * the context aggregator needs no SCM credential of its own. Null when the repo has no rules file,
      * which is the normal case. Nullable by design: events serialized before this field existed

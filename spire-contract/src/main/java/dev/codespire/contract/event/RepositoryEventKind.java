@@ -9,7 +9,8 @@ public enum RepositoryEventKind {
             case REVIEWER -> event instanceof IntegrationEvent.PullRequestEventReceived
                     || event instanceof IntegrationEvent.PullRequestClosed
                     || event instanceof IntegrationEvent.ManualCommandReceived
-                    || event instanceof IntegrationEvent.AuthorReplied;
+                    || event instanceof IntegrationEvent.AuthorReplied
+                    || event instanceof IntegrationEvent.ChecksChanged;
             case FACTORY -> event instanceof IntegrationEvent.PullRequestEventReceived
                     || event instanceof IntegrationEvent.RepositoryActivity
                     || event instanceof IntegrationEvent.PullRequestClosed

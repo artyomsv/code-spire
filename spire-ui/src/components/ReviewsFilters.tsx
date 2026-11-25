@@ -43,12 +43,13 @@ export function needsAttention(status: ReviewStatus, degraded = false): boolean 
  */
 export function matchesChip(status: ReviewStatus, f: ChipFilter, degraded = false): boolean {
   if (f === 'all') return true;
-  if (f === 'reviewing') return status === 'reviewing';
+  // A review waiting for its checks is on its way; one skipped on red checks waits on the author, not the operator.
+  if (f === 'reviewing') return status === 'reviewing' || status === 'waiting_for_checks';
   // A degraded run is `completed` but produced nothing, so it answers to Needs attention rather
   // than Completed — otherwise the two chips would both claim it and the counts would not add up.
   if (f === 'completed') return status === 'completed' && !degraded;
   if (f === 'failed') return needsAttention(status, degraded);
-  return status === 'cancelled' || status === 'superseded';
+  return status === 'cancelled' || status === 'superseded' || status === 'skipped';
 }
 
 interface Props {

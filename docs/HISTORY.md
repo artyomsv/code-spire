@@ -2612,3 +2612,62 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   the run-worker image. 981 of the 995 alerts were in the two agent images, almost all bookworm packages with no fix
   released for bookworm, so #446 moves both images from `node:22-bookworm-slim` to `node:22-trixie-slim`. Neither
   change is measured after merge yet (docs/UNVERIFIED.md, the two 2026-11-24 entries).
+
+- **Review waits for CI (2026-11-24, branch `feat/review-waits-for-ci`, V121, Part of #391).** On code-spire #444 the
+  bot approved while CI was still running, and CI then failed. A GitHub repository may now set "Start review" to
+  "After checks finish" (Repository → Settings → Reviewing, beside "Verdict labels"; "Immediately" stays the default
+  and behaves as before). The review of a new head, a re-run included, is then recorded as `waiting_for_checks` and
+  nothing runs. A `check_suite` (completed) or `status` webhook wakes the reviews waiting on its head, and a sweep reads
+  every wait 60 s after it starts and then every 5 minutes, so a lost webhook only delays a review; the webhook only
+  wakes, and the reviewer account's own read (the land path's `GitHubCheckReduction`) decides. Green starts the review;
+  a head with no checks starts after the 60 s grace read; red skips it: no review, no charge, status `skipped` with
+  the failed check names, and no label (a `review: ci-failed` label was built and removed before release by operator
+  decision, 2026-11-25; it comes back as its own change). A skipped head is reviewed only after a new commit or a
+  dashboard Re-run: re-running CI to green alone starts nothing. Checks still
+  pending at the first read after 60 minutes start a review that never approves (posted as a Comment, its summary
+  opening with "CI had not finished", and no `review: approved` label; the hold is that run's alone, by round, and a round that cannot be read never
+  approves; a blocking one still labels
+  `review: changes-requested`). The wait is a row of `review_checks_wait` keyed by the run (its round). Claiming the
+  waiting row (start, timed-out start or skip) is the permit to act, so only one resolver acts on a run; the claimed row
+  stays until its effects are done, and the sweep finishes a claim a crash left, which can send a run's FetchDiff
+  twice but never zero times. A repository on "Immediately" (and any forge with no check read) is admitted exactly
+  as before V121, with no lock or row. For one that waits, a run is admitted in one critical section under the
+  review's round lock, for a pull request event and a re-run alike: the aggregate accepts it, its round (`ReviewState.round`, folded from the
+  history the append was made on) is recorded as the review's admission row, `admitted` (no reader acts on it until the caller has set up the review
+  header and run token and begins it; readying a run is one compare-and-set shared by the caller and the sweep's
+  recovery), and a
+  failure there fails the admission, and the redelivered event
+  records a run accepted but unrecorded. Completed outcomes stay as terminal rows (started, skipped, timed out), so a
+  late caller is fenced by the recorded round, not by row presence; begin acts only on the run it was handed and shows
+  it waiting only while that round still waits. Every later write names the round and the stage it observed. The aggregate keeps the run REVIEWING while it waits, so a new commit supersedes the wait and a close
+  cancels it; a skip ends the run under the review's round lock through the new, commit-guarded
+  `RecordCommand.SkipReview`, which emits the existing `ReviewCancelled` (reason `CHECKS_FAILED`, projected as
+  `skipped`), only while the claimed round is still the review's, so a re-run on the same head is never cancelled. Every write to a wait (readying, claims, the waiting status) also requires
+  its round to be the review's current one, read from the event log in the same statement. Every accepted run, one
+  started at once included, writes its round into `review_status.run_round` with its status and run token, and every
+  run's header is initialised once per round, only while the row holds an earlier round, evaluated on the locked row
+  (never on another table's snapshot): a caller that paused while the sweep readied and skipped its run, or while the
+  repository switched to "Immediately" and the same head re-ran, never replaces that status, posted verdict or token. New wire
+  type: `IntegrationEvent.ChecksChanged` (repository and head sha only). Interleavings are proven single-threaded against
+  fakes only (docs/UNVERIFIED.md). A check read that fails (an HTTP status kept on the wait) raises
+  `REVIEW_CHECKS_UNREADABLE` at once, and a review that then starts on the timeout says its checks could not be read.
+  `REVIEW_STUCK` treats `skipped` as finished and a review `waiting_for_checks` as stalled only 65 minutes past the
+  stuck limit; a waiting review cannot be archived.
+
+  **Upgrading to V121.** The migration is additive: `repository.start_review` (default `IMMEDIATELY`, so nothing
+  changes until a repository asks), `review_status.run_round` and the `review_checks_wait` table.
+  1. Roll the orchestrator first, then the gateway. A new gateway publishes `ChecksChanged` on the repository topic;
+     an older orchestrator cannot read it, so every check event would land in `cs.dlq`. An older gateway beside a new
+     orchestrator only drops the check events, and the 5-minute sweep still reads every wait.
+  2. Give the reviewer account read access to checks: a fine-grained token needs **Checks: read** and **Commit
+     statuses: read** (with Pull requests: read), a GitHub App the `checks` and `statuses` read permissions, a
+     classic token `repo`. Without them every read fails and `REVIEW_CHECKS_UNREADABLE` says so.
+  3. Add the **Check suites** and **Statuses** events to each GitHub Reviewer webhook. Without them a wait still ends
+     through the sweep, up to 5 minutes late.
+  4. Then set "Start review" to "After checks finish" on the repositories that want it.
+
+  **Rolling back.** The columns and the table can stay (an older orchestrator ignores them), but an older orchestrator
+  has no sweep, so a review left in `waiting_for_checks` would wait for ever. Before rolling back, set every
+  repository's "Start review" to "Immediately" and press Re-run on each review still "Waiting for checks" (a re-run on
+  "Immediately" starts at once), or let the waits end (at most 65 minutes). Not yet run live: see the
+  docs/UNVERIFIED.md entry.

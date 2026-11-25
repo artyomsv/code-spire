@@ -36,9 +36,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * GitHub webhook ingress (SCM-MAPPING §7): {@code X-Hub-Signature-256}
- * HMAC-SHA256 verification (constant-time compare) and translation of the
- * {@code pull_request} / {@code issue_comment} events into integration events.
+ * GitHub webhook ingress (SCM-MAPPING §7): {@code X-Hub-Signature-256} HMAC-SHA256 verification (constant-time
+ * compare) and translation of the {@code pull_request} / {@code issue_comment} events into integration events.
  * The self-loop guard (dropping bot-authored events, ADR-013) runs downstream in
  * the orchestrator, which holds the registry's resolved bot account id; each
  * event carries its author (the numeric GitHub id as {@code providerUserId}, so
@@ -125,6 +124,7 @@ public class GitHubIngress implements ScmIngress {
             case "pull_request" -> pullRequest(payload);
             case "issue_comment" -> issueComment(payload);
             case "pull_request_review_comment" -> reviewCommentReply(payload);
+            case "check_suite", "status" -> GitHubCheckEvents.translate(event, payload, repo(payload));
             default -> List.of(); // ping and everything else are no-ops
         };
     }

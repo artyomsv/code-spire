@@ -1,0 +1,296 @@
+package dev.codespire.orchestrator.review.checks;
+
+import dev.codespire.orchestrator.review.checks.ChecksWait.Stage;
+import dev.codespire.orchestrator.llm.ReviewRuns;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import org.jboss.logging.Logger;
+
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * The durable admission state of review runs and the waits of "Start review: after checks finish"
+ * ({@code review_checks_wait}, V121): one row per review, its latest admitted run. A wait lives in the database, so a
+ * restart resumes it. Moving a waiting row to a claimed stage ({@link #claim}) is the permit to act on
+ * that run: it is guarded on the stage and the round, so only one resolver ever acts, and the claimed row is the
+ * recoverable intent until {@link #finish}. Every change after the claim names the round, so it never touches the wait
+ * of a newer head or a re-run that replaced the row.
+ */
+@ApplicationScoped
+public class ChecksWaitStore {
+
+    private static final Logger LOG = Logger.getLogger(ChecksWaitStore.class);
+    private static final String COLUMNS =
+            "review_id, repository_id, head_commit, round, untrusted, waiting_since, state, failed_checks";
+    private static final String ROUND = " WHERE review_id = ? AND round = ?";
+    /**
+     * The review's current round, read in the same statement as the write it fences: the count of its folded
+     * ReviewRequested, as the aggregate and ReviewRuns count it. A run started at once records no row, so this, not the
+     * row, says whether a row's run is still the review's.
+     */
+    private static final String CURRENT_ROUND = "(SELECT count(*) FROM event_log e WHERE e.stream_id = review_checks_wait"
+            + ".review_id AND e.event_type = '" + ReviewRuns.REQUEST_EVENT + "')";
+    /** The header columns a run's first header write sets, kept when the locked row already holds the run's round. */
+    private static final String UNINITIALISED_HEADER = String.join(", ", once("commit_sha", "r.head_commit"),
+            once("attempt", "1"), once("error_detail", "NULL"), once("answering", "FALSE"), once("posted_verdict", "NULL"),
+            once("posted_review_ref", "NULL"), once("posted_review_url", "NULL"),
+            once("run_token", "md5(random()::text || clock_timestamp()::text)"), once("run_round", "r.round"));
+    private static final String DUE_STAGES = "('admitted', 'waiting', 'starting', 'starting_unfinished', 'skipping')";
+
+    @Inject
+    DataSource dataSource;
+
+    /** {@code column} set to {@code value} only while the locked header row holds an earlier round than the run's. */
+    private static String once(String column, String value) {
+        return column + " = CASE WHEN COALESCE(s.run_round, 0) < r.round THEN " + value + " ELSE s." + column + " END";
+    }
+
+    /**
+     * Records an admitted run in its stage, replacing the row of an EARLIER run (a new head or a re-run supersedes it).
+     * A row of the same or a later run is kept, whatever its stage, so a late caller never replaces a newer run.
+     */
+    public void register(ChecksWait wait) {
+        update("""
+                INSERT INTO review_checks_wait (review_id, repository_id, head_commit, round, untrusted, state,
+                                                waiting_since, next_read_at, failed_checks)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                ON CONFLICT (review_id) DO UPDATE SET repository_id = EXCLUDED.repository_id,
+                       head_commit = EXCLUDED.head_commit, round = EXCLUDED.round, untrusted = EXCLUDED.untrusted,
+                       state = EXCLUDED.state, waiting_since = EXCLUDED.waiting_since, next_read_at = EXCLUDED.next_read_at,
+                       failed_checks = NULL
+                 WHERE review_checks_wait.round < EXCLUDED.round
+                """, statement -> {
+            statement.setString(1, wait.reviewId());
+            statement.setObject(2, wait.repositoryId());
+            statement.setString(3, wait.head());
+            statement.setInt(4, wait.round());
+            statement.setBoolean(5, wait.untrusted());
+            statement.setString(6, wait.stage().stored());
+            statement.setTimestamp(7, Timestamp.from(wait.waitingSince()));
+            statement.setTimestamp(8, Timestamp.from(wait.waitingSince().plus(ChecksWaitDecision.GRACE)));
+        });
+    }
+
+    /**
+     * Makes an admitted run readable and shows it waiting, in ONE statement. It first locks the review's header row, only
+     * while no later round wrote it ({@code run_round}, which every accepted run's header write sets, one started at
+     * once included); a concurrent header write of a newer run either waits for this statement and then replaces its
+     * header, or committed first, and the lock re-reads the row and matches nothing. Then the run leaves 'admitted'
+     * (compare-and-set on the review, the round, the stage, and the round still being the review's current one) and the
+     * header shows 'waiting_for_checks'. The header is initialised for the round (head, round, a fresh run token, the
+     * outcome cleared) only if the locked row holds an earlier round: when the caller's own header write came first, its
+     * token stays; when this came first, the caller's late write finds the round set and writes nothing. Before this no
+     * wake-up reads the run and nothing can claim it. The caller ({@link ReviewStartGate#begin}) and the sweep's recovery
+     * share it, so whichever comes second matches no row; a skip or start in between is never undone.
+     */
+    public boolean ready(ChecksWait.Run run) {
+        return update("""
+                WITH header AS (SELECT review_id FROM review_status
+                                 WHERE review_id = ? AND COALESCE(run_round, 0) <= ? FOR UPDATE),
+                     readied AS (UPDATE review_checks_wait SET state = 'waiting'
+                                  WHERE review_id IN (SELECT review_id FROM header) AND round = ? AND head_commit = ?
+                                    AND state = 'admitted' AND round = %s
+                                  RETURNING review_id, head_commit, round)
+                UPDATE review_status s SET status = ?, stage = 1, updated_at = now(), %s
+                  FROM readied r WHERE s.review_id = r.review_id
+                """.formatted(CURRENT_ROUND, UNINITIALISED_HEADER), statement -> {
+            statement.setString(1, run.reviewId());
+            statement.setInt(2, run.round());
+            statement.setInt(3, run.round());
+            statement.setString(4, run.head());
+            statement.setString(5, ChecksWaitStatus.WAITING);
+        }) == 1;
+    }
+
+    /** The round of the review's latest admitted run, 0 when none was recorded. */
+    public int admittedRound(String reviewId) {
+        return roundOf("SELECT round FROM review_checks_wait WHERE review_id = ?", reviewId);
+    }
+
+    /**
+     * Shows the review as waiting for checks only while {@code round} still waits, in one statement, so a late caller
+     * never overwrites the status a start or a skip of that run, or a later run, has written since.
+     */
+    public boolean markWaiting(String reviewId, int round) {
+        return update("UPDATE review_status SET status = ?, updated_at = now() WHERE review_id = ? AND EXISTS (SELECT 1"
+                + " FROM review_checks_wait WHERE review_id = ? AND round = ? AND state = 'waiting' AND round = "
+                + CURRENT_ROUND + ")", statement -> {
+            statement.setString(1, ChecksWaitStatus.WAITING);
+            statement.setString(2, reviewId);
+            statement.setString(3, reviewId);
+            statement.setInt(4, round);
+        }) == 1;
+    }
+
+    /**
+     * Claims the waiting run as {@code claimed.stage()}; true for exactly one caller. The sweep finishes the claim if
+     * the claimant dies before {@link #finish}.
+     */
+    public boolean claim(ChecksWait claimed) {
+        return update("UPDATE review_checks_wait SET state = ?, failed_checks = ?,"
+                + " next_read_at = now() + make_interval(secs => ?)" + ROUND + " AND state = 'waiting' AND round = "
+                + CURRENT_ROUND, statement -> {
+            statement.setString(1, claimed.stage().stored());
+            statement.setString(2, claimed.failedChecks());
+            statement.setDouble(3, ChecksWaitDecision.SWEEP.toSeconds());
+            statement.setString(4, claimed.reviewId());
+            statement.setInt(5, claimed.round());
+        }) == 1;
+    }
+
+    /** Completes a claimed outcome in its terminal stage, which stays as the run's admission record. */
+    public void finish(ChecksWait claimed) {
+        update("UPDATE review_checks_wait SET state = ?" + ROUND + " AND state = ?", statement -> {
+            statement.setString(1, terminal(claimed.stage()).stored());
+            statement.setString(2, claimed.reviewId());
+            statement.setInt(3, claimed.round());
+            statement.setString(4, claimed.stage().stored());
+        });
+    }
+
+    private static Stage terminal(Stage claimed) {
+        return switch (claimed) {
+            case STARTING_UNFINISHED -> Stage.TIMED_OUT;
+            case SKIPPING -> Stage.SKIPPED;
+            default -> Stage.STARTED;
+        };
+    }
+
+    /**
+     * Drops the row as it was observed: this run, in this stage. A reader holding a stale waiting snapshot never drops
+     * the claim another resolver made since, which is that claim's recovery intent; a newer run's row is untouched.
+     */
+    public void drop(ChecksWait observed) {
+        update("DELETE FROM review_checks_wait" + ROUND + " AND state = ?", statement -> {
+            bindRun(statement, observed);
+            statement.setString(3, observed.stage().stored());
+        });
+    }
+
+    /**
+     * The CI hold on {@code head}: the review's run that started there before its checks finished (V121), with why its
+     * last read of them failed (null when the read answered). Empty for a review that never waited on this head.
+     */
+    public java.util.Optional<Hold> holdOn(String reviewId, String head) {
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(
+                "SELECT round, read_failure FROM review_checks_wait WHERE review_id = ? AND head_commit = ?"
+                        + " AND state IN ('starting_unfinished', 'timed_out')")) {
+            statement.setString(1, reviewId);
+            statement.setString(2, head);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? java.util.Optional.of(new Hold(rows.getInt(1), rows.getString(2)))
+                        : java.util.Optional.empty();
+            }
+        } catch (SQLException failure) {
+            throw new IllegalStateException("Check wait read failed", failure);
+        }
+    }
+
+    /** A run held for unfinished checks: its round, and its last read failure or null. */
+    public record Hold(int round, String readFailure) {
+    }
+
+    /** Whether the review waits for checks now (admitted or waiting), on any head. */
+    public boolean isWaiting(String reviewId) {
+        return exists("SELECT 1 FROM review_checks_wait WHERE review_id = ? AND state IN ('admitted', 'waiting')",
+                statement -> statement.setString(1, reviewId));
+    }
+
+    /** The waits on {@code head} in the repository: what a webhook wake-up reads. */
+    public List<ChecksWait> waitingOn(UUID repositoryId, String head) {
+        return query("SELECT " + COLUMNS + " FROM review_checks_wait WHERE repository_id = ? AND head_commit = ?"
+                + " AND state = 'waiting'", statement -> {
+            statement.setObject(1, repositoryId);
+            statement.setString(2, head);
+        });
+    }
+
+    /**
+     * Claims up to {@code limit} rows whose read or recovery is due (waiting or claimed, never terminal), pushing each
+     * one's due time {@link ChecksWaitDecision#SWEEP} ahead in the same statement, so overlapping sweeps or replicas
+     * never take one row at once. Empty on a database failure: the rows stay due and the next sweep tries again.
+     */
+    public List<ChecksWait> claimDue(int limit) {
+        try {
+            return query("UPDATE review_checks_wait SET next_read_at = now() + make_interval(secs => ?)"
+                    + " WHERE review_id IN (SELECT review_id FROM review_checks_wait WHERE state IN " + DUE_STAGES
+                    + " AND next_read_at <= now() ORDER BY next_read_at LIMIT ? FOR UPDATE SKIP LOCKED)"
+                    + " RETURNING " + COLUMNS, statement -> {
+                statement.setDouble(1, ChecksWaitDecision.SWEEP.toSeconds());
+                statement.setInt(2, limit);
+            });
+        } catch (IllegalStateException failure) {
+            LOG.warnf(failure, "Could not claim the due check waits; the next sweep tries again");
+            return List.of();
+        }
+    }
+
+    private int roundOf(String sql, String reviewId) {
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, reviewId);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? rows.getInt(1) : 0;
+            }
+        } catch (SQLException failure) {
+            throw new IllegalStateException("Check wait read failed", failure);
+        }
+    }
+
+    private static void bindRun(PreparedStatement statement, ChecksWait wait) throws SQLException {
+        statement.setString(1, wait.reviewId());
+        statement.setInt(2, wait.round());
+    }
+
+    private int update(String sql, Binder binder) {
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            binder.bind(statement);
+            return statement.executeUpdate();
+        } catch (SQLException failure) {
+            throw new IllegalStateException("Check wait write failed", failure);
+        }
+    }
+
+    private boolean exists(String sql, Binder binder) {
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            binder.bind(statement);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next();
+            }
+        } catch (SQLException failure) {
+            throw new IllegalStateException("Check wait read failed", failure);
+        }
+    }
+
+    private List<ChecksWait> query(String sql, Binder binder) {
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            binder.bind(statement);
+            List<ChecksWait> waits = new ArrayList<>();
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) waits.add(waitOf(rows));
+            }
+            return waits;
+        } catch (SQLException failure) {
+            throw new IllegalStateException("Check wait read failed", failure);
+        }
+    }
+
+    private static ChecksWait waitOf(ResultSet rows) throws SQLException {
+        return new ChecksWait(rows.getString("review_id"), rows.getObject("repository_id", UUID.class),
+                rows.getString("head_commit"), rows.getInt("round"), rows.getBoolean("untrusted"),
+                rows.getTimestamp("waiting_since").toInstant(), Stage.ofStored(rows.getString("state")),
+                rows.getString("failed_checks"));
+    }
+
+    @FunctionalInterface
+    private interface Binder {
+        void bind(PreparedStatement statement) throws SQLException;
+    }
+}

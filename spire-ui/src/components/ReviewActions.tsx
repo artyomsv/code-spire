@@ -36,6 +36,8 @@ const OFFERS_RERUN: Record<ReviewStatus, boolean> = {
   cancelled: false, // the pull request is closed, so fresh comments land where nobody is reading
   superseded: false, // a newer commit took over, and that run is the one an operator wants
   observed: false, // observe mode posts nothing, so a re-run buys the same silence twice
+  waiting_for_checks: false, // the review starts by itself when the checks finish
+  skipped: true, // the checks were re-run green, or the setting changed: this reviews the head
 };
 
 /**

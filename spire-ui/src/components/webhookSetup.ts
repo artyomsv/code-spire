@@ -45,7 +45,7 @@ const GUIDES: Record<string, ProviderGuide> = {
   github: {
     providerLabel: 'GitHub',
     events: {
-      REVIEWER: [{ title: GITHUB_EVENTS, events: ['Pull requests', 'Issue comments', 'Pull request review comments'] }],
+      REVIEWER: [{ title: GITHUB_EVENTS, events: ['Pull requests', 'Issue comments', 'Pull request review comments', 'Check suites', 'Statuses'] }],
       FACTORY: [{ title: GITHUB_EVENTS, events: ['Pushes', 'Pull requests', 'Pull request reviews', 'Pull request review comments', 'Issue comments'] }],
       ISSUE: [{ title: GITHUB_EVENTS, events: ['Issues', 'Issue comments'] }],
     },

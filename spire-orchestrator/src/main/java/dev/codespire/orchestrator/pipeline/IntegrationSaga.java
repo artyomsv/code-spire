@@ -26,6 +26,7 @@ import dev.codespire.orchestrator.readmodel.FindingProjection;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
+import dev.codespire.orchestrator.review.checks.ReviewStartGate;
 
 import java.util.List;
 import java.util.Locale;
@@ -93,6 +94,8 @@ public class IntegrationSaga {
 
     @Inject
     dev.codespire.orchestrator.review.run.ReviewRunCancellation reviewRunCancellation;
+
+    @Inject ReviewStartGate reviewStart; // admits a run; starts it at once, or after checks (V121)
 
     @Incoming("integration-in")
     @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
@@ -699,10 +702,7 @@ public class IntegrationSaga {
         String reviewId = ReviewIds.reviewId(e.repo(), e.prId());
         String commit = e.headCommit();
 
-        // Only PRs from a registered provider are reviewed. Resolve by (type,
-        // workspace) when the event names its SCM — a GitHub org and a Bitbucket
-        // workspace can share a name; fall back to workspace alone for events
-        // serialized before providerType existed (or the dev simulator).
+        // Only PRs from a registered provider are reviewed, resolved through the review's repository mapping.
         Optional<ScmProvider> provider = reviewProviders.resolveForReview(reviewId);
         if (provider.isEmpty()) {
             timeline.record("integration", "PullRequestSkipped", reviewId,
@@ -722,14 +722,13 @@ public class IntegrationSaga {
         }
 
         boolean observe = policy.observeOnly();
-        // Ask the aggregate FIRST, so the read model only ever claims a run that is actually starting.
-        // Observe-only must not advance the aggregate at all: emitting ReviewRequested here would lock
-        // the review into REVIEWING, so a later active registration of the same commit would find it
-        // "already requested" and never dispatch FetchDiff. The review must stay un-started so
-        // activating it later runs a fresh pipeline.
-        boolean started = !observe && lifecycle.handle(reviewId,
-                        new RecordCommand.RequestReview(commit, e.action().name(), false))
-                .stream().anyMatch(DomainEvent.ReviewRequested.class::isInstance);
+        // Ask the aggregate FIRST, so the read model only ever claims a run that is actually starting. Observe-only must
+        // not advance the aggregate at all: ReviewRequested here would lock the review into REVIEWING, so a later active
+        // registration of the same commit would find it "already requested" and never dispatch FetchDiff (V121: gate).
+        ReviewStartGate.Admission admission = new ReviewStartGate.Admission(reviewId,
+                new RecordCommand.RequestReview(commit, e.action().name(), false), !Boolean.FALSE.equals(e.fromFork()));
+        Optional<ReviewStartGate.AcceptedRun> run = observe ? Optional.empty() : reviewStart.admit(admission);
+        boolean started = run.isPresent();
 
         // Make the review visible on the dashboard whether or not any work runs — but a re-delivered
         // event for a commit the aggregate has already reviewed only refreshes the PR metadata. Claiming
@@ -739,10 +738,10 @@ public class IntegrationSaga {
             projection.registerHeader(reviewId, e.repo(), e.prId(), e.title(), username(e), authorId(e),
                     e.sourceBranch(), e.targetBranch(), commit, e.htmlUrl(), provider.get().type(),
                     "observed", ReviewProjection.STAGE_RECEIVED);
-        } else if (started) {
-            projection.registerHeader(reviewId, e.repo(), e.prId(), e.title(), username(e), authorId(e),
-                    e.sourceBranch(), e.targetBranch(), commit, e.htmlUrl(), provider.get().type(),
-                    "reviewing", ReviewProjection.STAGE_DIFF);
+        } else if (started) { // never over a header a later round wrote (V121)
+            projection.registerRunHeader(new ReviewProjection.RunHeader(reviewId, run.orElseThrow().round(), e.repo(),
+                    e.prId(), e.title(), username(e), authorId(e), e.sourceBranch(), e.targetBranch(), commit,
+                    e.htmlUrl(), provider.get().type()));
         } else {
             projection.refreshHeader(reviewId, e.repo(), e.prId(), e.title(), username(e), authorId(e),
                     e.sourceBranch(), e.targetBranch(), commit, e.htmlUrl(), provider.get().type());
@@ -771,8 +770,8 @@ public class IntegrationSaga {
             return;
         }
 
-        commands.emit(new ActionCommand.FetchDiff(reviewId, e.repo(), e.prId(), commit,
-                workerCredentials.pack(provider.get(), e.repo().workspace()), !Boolean.FALSE.equals(e.fromFork())));
+        reviewStart.begin(new ActionCommand.FetchDiff(reviewId, e.repo(), e.prId(), commit,
+                workerCredentials.pack(provider.get(), e.repo().workspace()), !Boolean.FALSE.equals(e.fromFork())), run.orElseThrow());
     }
 
     /**

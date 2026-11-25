@@ -454,7 +454,9 @@ Repo → Settings → Webhooks → Add webhook:
 - **Secret:** the secret from step 1.3
 - **Events:** "Let me select" → **Pull requests** and **Issue comments** — a `/review` comment
   forces a full re-run of the PR's latest commit; any other plain top-level PR comment starts (or
-  continues) a conversation in the summary-comment thread
+  continues) a conversation in the summary-comment thread. Add **Check suites** and **Statuses** too when the
+  repository's "Start review" is "After checks finish" (V121): they wake a review waiting for its checks, and
+  without them it starts on the 5-minute sweep instead
 
 GitHub sends a `ping` on save → the gateway returns **204** (accepted, nothing published).
 

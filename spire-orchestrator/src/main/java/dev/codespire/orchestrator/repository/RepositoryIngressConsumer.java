@@ -24,6 +24,8 @@ public class RepositoryIngressConsumer {
     @Inject UnregisteredRepositoryEvents unregistered;
     @Inject IntegrationSaga reviews;
     @Inject WorkPullRequestWatch workPullRequests;
+    /** Review waits for CI: a commit's checks changed, so the reviews waiting on it read them now. */
+    @Inject dev.codespire.orchestrator.review.checks.ChecksWaitResolver checksWaits;
     @Inject @Channel("repository-activity-out") Emitter<RepositoryDelivery> activities;
 
     @Incoming("repository-in") @Blocking
@@ -46,7 +48,9 @@ public class RepositoryIngressConsumer {
         // AuthorReplied carries both a review id and coordinates. Never let those name two targets.
         if (delivery.event() instanceof dev.codespire.contract.event.IntegrationEvent.AuthorReplied reply
                 && !dev.codespire.contract.event.ReviewIds.parse(reply.reviewId()).repo().equals(delivery.repo())) return;
-        if (delivery.eventKind() == RepositoryEventKind.REVIEWER) {
+        if (delivery.event() instanceof dev.codespire.contract.event.IntegrationEvent.ChecksChanged checks) {
+            checksWaits.wake(repository.id(), checks);
+        } else if (delivery.eventKind() == RepositoryEventKind.REVIEWER) {
             reviews.onRepository(delivery.event(), repository.id());
             // A repository may have no FACTORY webhook; the reviewer's close then is the only report of a hand merge or close
             // of a pull request the factory delivered (live land acceptance, issue #64).

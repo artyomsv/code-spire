@@ -183,11 +183,13 @@ export type ReviewStatus =
   | 'failed'
   | 'cancelled'
   | 'superseded'
-  // A spend or diff-size cap declined to run this review (ADR-025). Distinct from 'failed' on
-  // purpose: a policy decision is not an outage, and every consumer of this union that treats the
-  // two alike undoes the split. It is terminal and archivable.
+  // A spend or diff-size cap declined to run this review (ADR-025). Distinct from 'failed' on purpose: a policy
+  // decision is not an outage, and every consumer that treats the two alike undoes the split. Terminal, archivable.
   | 'refused'
-  | 'observed';
+  | 'observed'
+  // Review waits for CI (V121): nothing has run yet; and the head's checks failed, so no review ran.
+  | 'waiting_for_checks'
+  | 'skipped';
 
 export type StageState = 'done' | 'active' | 'pending' | 'failed';
 
@@ -1250,11 +1252,9 @@ export interface DlqEntry {
 /**
  * A factory run's status, matching `factory_run_status_closed` — nine values, not eight.
  *
- * <b>This union is a compile-time claim about runtime JSON, and this project has been bitten by
- * exactly that before:</b> an unlisted `ReviewStatus` fell into the SUCCESS branch, so `refused`
- * once rendered as five green segments and a degraded run as "✓ clean". So every consumer here
- * treats an unrecognised value as UNKNOWN rather than as anything good — see `runStatusLabel` and
- * `isRunUnfinished`, and the test that drives a value deliberately absent from this union.
+ * <b>This union is a compile-time claim about runtime JSON:</b> an unlisted `ReviewStatus` once fell into the
+ * SUCCESS branch (`refused` as five green segments, a degraded run as "✓ clean"). So every consumer here treats an
+ * unrecognised value as UNKNOWN — see `runStatusLabel`, `isRunUnfinished` and the test that drives one.
  */
 export type RunStatus =
   | 'queued'

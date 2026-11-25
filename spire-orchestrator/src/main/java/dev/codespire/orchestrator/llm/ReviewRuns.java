@@ -52,7 +52,7 @@ public class ReviewRuns {
      * {@code EventEnvelope.domain} derived from the payload class, so taking the name FROM that class
      * is what keeps the query and the writer from drifting apart.
      */
-    private static final String REQUEST_EVENT =
+    public static final String REQUEST_EVENT =
             dev.codespire.contract.event.DomainEvent.ReviewRequested.class.getSimpleName();
 
     @Inject

@@ -76,6 +76,15 @@ class ReviewArchivalTest {
         assertEquals(ArchiveOutcome.STILL_RUNNING, projection.archiveReview(WS, REPO, running));
     }
 
+    /** V121: a review waiting for its checks is in flight; archived, nothing would ever move it on again. */
+    @Test
+    void aReviewWaitingForItsChecksIsNotArchived() {
+        long waiting = ReviewFixtures.newPr();
+        ReviewFixtures.seedReviewingReview(projection, waiting);
+        projection.updateStatus(ReviewFixtures.reviewIdFor(waiting), "waiting_for_checks");
+        assertEquals(ArchiveOutcome.STILL_RUNNING, projection.archiveReview(WS, REPO, waiting));
+    }
+
     @Test
     void archivingClearsTheRetryScheduleAndTheAnsweringFlag() {
         long pr = ReviewFixtures.newPr();

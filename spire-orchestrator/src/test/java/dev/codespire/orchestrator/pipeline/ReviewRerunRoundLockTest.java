@@ -2,11 +2,9 @@ package dev.codespire.orchestrator.pipeline;
 
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
-import dev.codespire.contract.event.DomainEvent;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.TestRepositoryProjection;
-import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.review.run.ReviewRoundLock;
@@ -77,13 +75,20 @@ class ReviewRerunRoundLockTest {
     private ReviewRerunService service() {
         ReviewRerunService service = new ReviewRerunService();
         service.projection = projection();
-        service.lifecycle = lifecycle();
         service.rounds = roundLock();
-        service.commands = new CommandsEmitter() {
+        service.reviewStart = new dev.codespire.orchestrator.review.checks.ReviewStartGate() {
+            /** The admission in the round lock: the aggregate's request and, accepted, the run's record (V121). */
             @Override
-            public void emit(ActionCommand command) {
+            public Optional<AcceptedRun> admitHolding(Admission admission) {
+                steps.add("request");
+                assertEquals(new RecordCommand.RequestReview("TESTSHA1", "rerun", true), admission.request());
+                return starts ? Optional.of(new AcceptedRun(2, false)) : Optional.empty();
+            }
+
+            @Override
+            public void begin(ActionCommand.FetchDiff fetch, AcceptedRun run) {
                 steps.add("fetch");
-                fetches.add((ActionCommand.FetchDiff) command);
+                fetches.add(fetch);
             }
         };
         service.workerCredentials = new WorkerCredentials() {
@@ -118,18 +123,8 @@ class ReviewRerunRoundLockTest {
             }
 
             @Override
-            public void markRerunStarted(String reviewId) {
+            public void markRerunStarted(String reviewId, int round) {
                 steps.add("run token");
-            }
-        };
-    }
-
-    private ReviewLifecycleService lifecycle() {
-        return new ReviewLifecycleService() {
-            @Override
-            public List<DomainEvent> handle(String reviewId, RecordCommand command) {
-                steps.add("request");
-                return starts ? List.of(new DomainEvent.ReviewRequested("TESTSHA1", "rerun")) : List.of();
             }
         };
     }
