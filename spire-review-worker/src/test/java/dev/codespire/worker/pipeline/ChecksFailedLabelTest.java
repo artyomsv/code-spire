@@ -2,12 +2,6 @@ package dev.codespire.worker.pipeline;
 
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.ActionCommand.LabelChecksFailed;
-import dev.codespire.contract.port.CommentSink;
-import dev.codespire.contract.port.DiffSource;
-import dev.codespire.contract.port.ScmType;
-import dev.codespire.contract.scm.Author;
-import dev.codespire.contract.scm.Diff;
-import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.VerdictLabel;
 import dev.codespire.worker.adapters.WorkerScmClients;
@@ -20,176 +14,82 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Review waits for CI: a skipped run gets "review: ci-failed" once, only while its head is current and no newer run
- * was admitted. The receipt store follows the real SQL ({@link ReceiptStore}), and the orchestrator's open and close
- * are replayed in the order a real re-run makes them.
+ * Review waits for CI: a skipped run's label command makes the pull request's bot label converge to the desired label
+ * of the review's current run, so a late, stale or redelivered command never leaves a stale ci-failed behind.
  */
 class ChecksFailedLabelTest {
 
     private static final RepoRef REPO = new RepoRef("TEST-owner", "TEST-repo");
-    private static final String HEAD = "a".repeat(40);
-    private static final String REVIEW = "TEST-review";
-    private static final String SLOT = ChecksFailedLabel.CLAIM_PREFIX + 1;
-    private static final LabelChecksFailed COMMAND = new LabelChecksFailed(REVIEW, REPO, 7L, HEAD, 1, "TEST-cred");
+    private static final String CI_FAILED = VerdictLabel.CI_FAILED.name();
+    private static final String APPROVED = VerdictLabel.APPROVED.name();
+    private static final LabelChecksFailed COMMAND = new LabelChecksFailed("TEST-review", REPO, 7L, "a".repeat(40), 1,
+            "TEST-cred");
 
-    private final ReceiptStore receipts = new ReceiptStore();
-    private Runnable duringLabel = () -> { };
-    private final LabelRecordingSink sink = new LabelRecordingSink() {
-        @Override
-        public CommentSink.LabelOutcome setVerdictLabel(RepoRef repo, long prId, VerdictLabel label) {
-            Runnable once = duringLabel;
-            duringLabel = () -> { };
-            once.run();
-            return super.setVerdictLabel(repo, prId, label);
-        }
-    };
-    private String prHead = HEAD;
+    private final LabelRecordingSink sink = new LabelRecordingSink();
+    private final VerdictLabelWorkerFixture.DesiredState desired = new VerdictLabelWorkerFixture.DesiredState();
 
     @Test
-    void anOpenedRunIsLabelledOnceAndNothingIsPosted() {
-        receipts.open(REVIEW, HEAD, SLOT);
+    void theSkippedRunsLabelIsSetAndNothingIsPosted() {
+        desired.desire(1, CI_FAILED);
         sink.labels.addAll(List.of("review: requested", "TEST-unrelated"));
         label().apply(COMMAND);
-        assertEquals(Set.of("TEST-unrelated", "review: ci-failed"), sink.labels);
+        assertEquals(Set.of("TEST-unrelated", CI_FAILED), sink.labels);
         assertEquals(List.of("label"), sink.calls, "no comment, no review: the label is the only mark");
-        assertEquals("APPLIED", receipts.refOf(REVIEW, HEAD, SLOT));
     }
 
-    /** A replay after someone set another label since does not overwrite it. */
+    /** Run 2 started at once after the skip and wants no verdict label yet: the stale ci-failed is removed. */
     @Test
-    void aReplayAfterAnotherLabelLabelsNothing() {
-        receipts.open(REVIEW, HEAD, SLOT);
-        label().apply(COMMAND);
-        sink.labels.clear();
-        sink.labels.add("review: requested");
-        label().apply(COMMAND);
-        assertEquals(List.of(VerdictLabel.CI_FAILED.name()), sink.labelCalls);
-        assertEquals(Set.of("review: requested"), sink.labels);
-    }
-
-    /**
-     * The real re-run order: the skip opens run 1's receipt and sends the command; the re-run's admission (round lock)
-     * closes every open receipt; only then does the delayed command arrive. The head is the same; nothing is labelled.
-     */
-    @Test
-    void aRerunAdmittedBeforeTheOldCommandArrivesLabelsNothing() {
-        receipts.open(REVIEW, HEAD, SLOT);
-        receipts.supersede(REVIEW);
-        sink.labels.add("TEST-operator-label");
-        label().apply(COMMAND);
-        assertTrue(sink.labelCalls.isEmpty());
-        assertEquals(Set.of("TEST-operator-label"), sink.labels);
-        assertEquals("superseded", receipts.refOf(REVIEW, HEAD, SLOT));
-    }
-
-    /**
-     * Past take(), before the forge call: a re-run of the head is admitted (its receipt close) and its review labels
-     * approved. The old run's label lands after it; finding its receipt closed, the worker restores the newer run's label.
-     */
-    @Test
-    void aNewerRunsLabelSurvivesAnOldLabelThatLandedLate() {
-        receipts.open(REVIEW, HEAD, SLOT);
-        duringLabel = () -> {
-            receipts.supersede(REVIEW);
-            receipts.markPosted(REVIEW, HEAD, VerdictLabels.CLAIM_KEY, "applied:review: approved");
-            sink.labels.add("review: approved");
-        };
-        label().apply(COMMAND);
-        assertEquals(Set.of("review: approved"), sink.labels);
-        assertEquals("superseded", receipts.refOf(REVIEW, HEAD, SLOT), "the closed receipt is never overwritten");
-    }
-
-    /** The newer run has set no label yet: the old run's ci-failed is removed, and nothing is set in its place. */
-    @Test
-    void anOldLabelThatLandedLateIsRemovedWhenTheNewerRunSetNone() {
-        receipts.open(REVIEW, HEAD, SLOT);
-        sink.labels.add("TEST-unrelated");
-        duringLabel = () -> receipts.supersede(REVIEW);
+    void anImmediateRerunAfterASkipLeavesNoStaleCiFailed() {
+        sink.labels.addAll(List.of(CI_FAILED, "TEST-unrelated"));
+        desired.desire(2, null);
         label().apply(COMMAND);
         assertEquals(Set.of("TEST-unrelated"), sink.labels);
-        assertEquals(List.of("label", "unlabel"), sink.calls);
     }
 
-    /** A newer skipped run that labelled ci-failed itself keeps it. */
+    /** The old command lands after run 2 approved: run 2's label stands. */
     @Test
-    void aNewerSkippedRunsOwnLabelIsKept() {
-        receipts.open(REVIEW, HEAD, SLOT);
-        duringLabel = () -> {
-            receipts.supersede(REVIEW);
-            receipts.markPosted(REVIEW, HEAD, ChecksFailedLabel.CLAIM_PREFIX + 2, "APPLIED");
+    void aStaleEffectLandingAfterANewerRunsLabelEndsOnTheNewerRunsLabel() {
+        desired.desire(1, CI_FAILED);
+        sink.duringLabel = () -> {
+            desired.desire(2, APPROVED);
+            sink.labels.add(APPROVED);
         };
         label().apply(COMMAND);
-        assertEquals(Set.of("review: ci-failed"), sink.labels);
+        assertEquals(Set.of(APPROVED), sink.labels);
     }
 
-    /** A command whose receipt the orchestrator never opened labels nothing. */
+    /** The worker dies after its GitHub call; the redelivered command converges. */
     @Test
-    void anUnopenedRunIsNotLabelled() {
+    void aRedeliveryAfterACrashConverges() {
+        desired.desire(1, CI_FAILED);
+        sink.duringLabel = () -> {
+            desired.desire(2, APPROVED);
+            desired.failingReads = 1;
+        };
         label().apply(COMMAND);
-        assertTrue(sink.labelCalls.isEmpty());
-    }
-
-    /** A delayed command for a head the pull request moved past never labels the newer head. */
-    @Test
-    void aNewerHeadIsNotLabelled() {
-        receipts.open(REVIEW, HEAD, SLOT);
-        prHead = "b".repeat(40);
+        assertEquals(Set.of(CI_FAILED), sink.labels, "the crash left the stale label");
         label().apply(COMMAND);
-        assertTrue(sink.labelCalls.isEmpty());
-    }
-
-    /** A re-run on the same commit that posted and labelled its review wins over the earlier run's skip. */
-    @Test
-    void aLaterReviewOfTheSameHeadThatLabelledWins() {
-        receipts.open(REVIEW, HEAD, SLOT);
-        receipts.markPosted(REVIEW, HEAD, VerdictLabels.CLAIM_KEY, "applied");
-        label().apply(COMMAND);
-        assertTrue(sink.labelCalls.isEmpty());
+        assertEquals(Set.of(APPROVED), sink.labels);
     }
 
     /** Best effort: a forge failure is logged, never thrown, so the command is not dead-lettered. */
     @Test
     void aForgeFailureIsSwallowed() {
-        receipts.open(REVIEW, HEAD, SLOT);
+        desired.desire(1, CI_FAILED);
         sink.labelFailure = new IllegalStateException("TEST-forbidden");
         label().apply(COMMAND);
         assertTrue(sink.labels.isEmpty());
-        assertEquals(CommentIdempotencyStore.TAKEN, receipts.refOf(REVIEW, HEAD, SLOT));
     }
 
     private ChecksFailedLabel label() {
         ChecksFailedLabel label = new ChecksFailedLabel();
-        label.idempotency = receipts;
+        label.idempotency = desired;
         label.scm = new WorkerScmClients() {
             @Override
             public Clients forCommand(ActionCommand command) {
-                return new Clients(new HeadOnly(), sink);
+                return new Clients(null, sink);
             }
         };
         return label;
-    }
-
-    /** The pull request's head, the only read the label makes. */
-    private final class HeadOnly implements DiffSource {
-        @Override
-        public ScmType type() {
-            return ScmType.GITHUB;
-        }
-
-        @Override
-        public String apiHost() {
-            return "forge.example.test";
-        }
-
-        @Override
-        public PullRequest fetchPullRequest(RepoRef repo, long prId) {
-            return new PullRequest(repo, prId, "TEST-title", "", "TEST-source", "main", prHead,
-                    Author.of("TEST-id", "TEST-user", "TEST-user"), "https://forge.example.test/TEST/7");
-        }
-
-        @Override
-        public Diff fetchDiff(RepoRef repo, long prId, String commit) {
-            throw new AssertionError("a label never reads the diff");
-        }
     }
 }

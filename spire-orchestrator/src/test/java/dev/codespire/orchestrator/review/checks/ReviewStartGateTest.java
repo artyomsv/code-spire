@@ -31,7 +31,7 @@ class ReviewStartGateTest extends ChecksWaitFixture {
         gate().begin(fetch, admitRun(NEXT_HEAD));
         assertEquals(List.of(fetch), emitted);
         assertEquals(null, waits.rowOf(REVIEW_ID));
-        assertTrue(receiptLog.isEmpty(), receiptLog.toString());
+        assertEquals(List.of("quiet " + round()), labelLog, "only the quiet reset of its desired label");
         assertEquals(0, lockedSections, "no round lock");
         assertTrue(statuses.isEmpty(), statuses.toString());
     }
@@ -52,7 +52,7 @@ class ReviewStartGateTest extends ChecksWaitFixture {
     void afterChecksRecordsTheAcceptedRoundsWaitAndSendsNothing() {
         ReviewStartGate.AcceptedRun run = admitRun(NEXT_HEAD);
         assertEquals(round(), run.round(), "the round the aggregate accepted, folded from its own append");
-        assertEquals(List.of("supersede"), receiptLog, "the earlier runs' label receipts are closed at admission");
+        assertEquals(List.of("new " + run.round()), labelLog, "its desired label is reset at admission");
         assertEquals(Stage.ADMITTED, waits.rowOf(REVIEW_ID).stage(), "nothing reads it before its header is set up");
         gate().begin(fetch(NEXT_HEAD), run);
         assertTrue(emitted.isEmpty(), "nothing runs and nothing is charged while the review waits");
@@ -132,6 +132,25 @@ class ReviewStartGateTest extends ChecksWaitFixture {
         assertTrue(fetches().isEmpty());
     }
 
+    /**
+     * A waiting run is admitted (round r) and its caller pauses before begin; the repository switches to "Immediately"
+     * and the same head re-runs at once (round r+1, no row). The paused begin, and a sweep paused past its own read, find
+     * round r no longer current: nothing is readied, shown waiting or started over round r+1.
+     */
+    @Test
+    void aPausedWaitingRunNeverResetsAnImmediateRerunOfItsHead() {
+        ReviewStartGate.AcceptedRun first = admitRun(HEAD);
+        setting = StartReview.IMMEDIATELY;
+        requestRun(HEAD);
+        gate().begin(fetch(HEAD), first);
+        assertFalse(waits.ready(new ChecksWait.Run(REVIEW_ID, HEAD, first.round())), "the paused sweep's readying");
+        waits.age(REVIEW_ID, ChecksWaitDecision.GRACE.plusSeconds(1));
+        sweep().sweep();
+        assertEquals(1, fetches().size(), "round r+1's own start only");
+        assertTrue(waits.shownWaiting.isEmpty(), "round r+1's status is never reset to waiting");
+        assertTrue(waits.headersStarted.isEmpty(), "round r+1's header and token are never reset");
+    }
+
     /** A later run's record is never replaced by an earlier round, whatever order the writes arrive in. */
     @Test
     void anEarlierRunsLateRegistrationKeepsTheLaterRow() {
@@ -143,7 +162,7 @@ class ReviewStartGateTest extends ChecksWaitFixture {
     }
 
     /**
-     * The admission fails after the aggregate accepted the run (closing the label receipts failed), so its event is
+     * The admission fails after the aggregate accepted the run (resetting its desired label failed), so its event is
      * redelivered; the redelivery finds the run accepted and unrecorded, records it and shows it waiting.
      */
     @Test

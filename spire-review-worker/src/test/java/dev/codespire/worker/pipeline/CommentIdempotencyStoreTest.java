@@ -89,33 +89,30 @@ class CommentIdempotencyStoreTest {
     }
 
     /**
-     * Review waits for CI: the ci-failed receipt the orchestrator opens (an unposted row) is taken once, never when it
-     * is missing; the orchestrator's close (its SQL, run here on the worker's own schema) wins over a later take and
-     * closes a taken one too, and an outcome is recorded only over its own taken mark (false once closed).
+     * The desired verdict label (V6) as the orchestrator writes it (its upsert, run here on the worker's schema): a later
+     * round replaces it, the same round updates it, and an earlier round's late write changes nothing.
      */
     @Test
-    void aReceiptIsTakenOnlyWhileOpenAndClosingHitsOpenAndTakenOnes() throws Exception {
+    void theDesiredLabelNeverMovesBackToAnEarlierRun() throws Exception {
         String reviewId = reviewId();
-        ReceiptKey first = new ReceiptKey(reviewId, "abc", "CI_FAILED:1");
-        ReceiptKey second = new ReceiptKey(reviewId, "abc", "CI_FAILED:2");
-        org.junit.jupiter.api.Assertions.assertFalse(store.take(first), "not opened");
-        store.claim(reviewId, "abc", "CI_FAILED:1");
-        store.claim(reviewId, "abc", "CI_FAILED:2");
-        store.claim(reviewId, "abc", "CIXFAILED:3");
-        org.junit.jupiter.api.Assertions.assertTrue(store.take(second));
-        try (var c = dataSource.getConnection(); var ps = c.prepareStatement("UPDATE comment_idempotency"
-                + " SET posted_ref = 'superseded', posted_at = now()"
-                + " WHERE review_id = ? AND anchor_key LIKE 'CI\\_FAILED:%'"
-                + " AND (posted_ref IS NULL OR posted_ref = 'taken')")) {
+        org.junit.jupiter.api.Assertions.assertTrue(store.desiredLabel(reviewId).isEmpty());
+        desire(reviewId, 2, null);
+        desire(reviewId, 2, "review: approved");
+        desire(reviewId, 1, "review: ci-failed");
+        assertEquals(new CommentIdempotencyStore.DesiredLabel(2, "review: approved"), store.desiredLabel(reviewId).orElseThrow());
+        desire(reviewId, 3, null);
+        assertEquals(new CommentIdempotencyStore.DesiredLabel(3, null), store.desiredLabel(reviewId).orElseThrow());
+    }
+
+    private void desire(String reviewId, int round, String label) throws Exception {
+        try (java.sql.Connection c = dataSource.getConnection(); java.sql.PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO review_label_desired (review_id, round, label) VALUES (?, ?, ?)"
+                        + " ON CONFLICT (review_id) DO UPDATE SET round = EXCLUDED.round, label = EXCLUDED.label,"
+                        + " updated_at = now() WHERE review_label_desired.round <= EXCLUDED.round")) {
             ps.setString(1, reviewId);
+            ps.setInt(2, round);
+            ps.setString(3, label);
             ps.executeUpdate();
         }
-        org.junit.jupiter.api.Assertions.assertFalse(store.take(first), "closed first");
-        org.junit.jupiter.api.Assertions.assertFalse(store.markTaken(first, "APPLIED"));
-        org.junit.jupiter.api.Assertions.assertFalse(store.markTaken(second, "APPLIED"), "closed while its label ran");
-        Map<String, String> posted = store.postedFor(reviewId, "abc");
-        assertEquals("superseded", posted.get("CI_FAILED:1"), "a closed receipt is never overwritten");
-        assertEquals("superseded", posted.get("CI_FAILED:2"), "a taken receipt is closed too, so its label is undone");
-        org.junit.jupiter.api.Assertions.assertFalse(posted.containsKey("CIXFAILED:3"), "the underscore is literal");
     }
 }

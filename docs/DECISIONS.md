@@ -637,14 +637,18 @@ the 60-minute check timeout ("Start review: after checks finish", checks still p
 (reason `checks_unfinished`) and sets no `review: approved`, even with an approving assessment: an approval the bot
 withheld because CI had not finished must not reach the label. A blocking assessment still labels
 `review: changes-requested`. This exception is the CI hold's alone: a review held by "Reviewer may approve" off
-still labels from its assessment as above. A head whose checks failed gets no review and `review: ci-failed`, set
-once per skipped run by `LabelChecksFailed`, never on a head the pull request moved past, never after a later
-review of the same head set its verdict label, and never for a run a newer run (a re-run of the same head included)
-replaced: the orchestrator opens the run's `CI_FAILED:<round>` receipt and closes every open or taken one at the next
-admission. A receipt orders the label attempts, not the GitHub calls: when an old run's label call was already under
-way, the worker finds its receipt closed afterwards and undoes that label (restores the newer run's recorded verdict
-label, else removes `review: ci-failed` unless a newer skipped run set it). The window between the undo's read and its
-calls remains: a newer run that labels exactly then can be overwritten until its next label.
+still labels from its assessment as above. A head whose checks failed gets no review and `review: ci-failed`.
+
+The labels are desired state (amended again 2026-11-25). The orchestrator records, per review, the desired verdict
+label of the current run in the worker's `review_label_desired` (V6): a newer run's admission records its round with
+no label (for a run started at once, one idempotent write that never fails its admission), the run's decided verdict
+or its skip records its label, and a write never moves the round backwards. Every label command (PostComments with
+"Verdict labels" on, LabelChecksFailed) makes the pull request converge to that row: the worker applies it, reads it
+again after its GitHub call, and applies it once more if it changed (bounded passes). A stale, replayed or
+redelivered command therefore only re-applies the current run's label, and a crash after a GitHub call heals on
+redelivery; nothing is claimed once per run any more. The bot owns the labels starting `review: ` while "Verdict
+labels" is on: a desired label replaces every other one, a human-set `review: ` label included; "no label" removes
+only the bot's own three. A run that wants no label (degraded, held for CI, newly admitted) leaves none of the bot's.
 
 ---
 

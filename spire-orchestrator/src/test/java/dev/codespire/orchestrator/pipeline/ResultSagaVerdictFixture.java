@@ -57,6 +57,8 @@ class ResultSagaVerdictFixture {
     String unfinishedChecksOn = "TEST-no-such-commit";
     /** The run being posted; a hold names run 1. */
     int round = FIRST_RUN;
+    /** Each desired verdict label recorded, as {@code round:label}. */
+    final List<String> desiredLabels = new ArrayList<>();
 
     static ReviewGenerated generated() {
         return new ReviewGenerated(REVIEW_ID, 412L, COMMIT, new ReviewResult(List.of(), "s", ModelUsage.of(null, 0, 0)));
@@ -177,6 +179,12 @@ class ResultSagaVerdictFixture {
             }
         };
         saga.checksWaits = SagaRepositoryFakes.startedUnfinishedOn(unfinishedChecksOn, FIRST_RUN);
+        saga.desiredLabels = new dev.codespire.orchestrator.review.labels.DesiredLabels() {
+            @Override
+            public void record(DesiredLabel desired) {
+                desiredLabels.add(desired.round() + ":" + desired.label());
+            }
+        };
         saga.repositories = new dev.codespire.orchestrator.repository.RepositoryRegistry() {
             @Override
             public Optional<Boolean> reviewerMayApprove(UUID id) {

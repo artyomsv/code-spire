@@ -45,7 +45,7 @@ final class VerdictLabelWorkerFixture {
 
     final List<IntegrationEvent> emitted = new ArrayList<>();
     final LabelRecordingSink sink = new LabelRecordingSink();
-    final LabelClaimFaults idempotency = new LabelClaimFaults();
+    final DesiredState idempotency = new DesiredState();
     /** The pull request's head; a test moves it to supersede the run. */
     String head = COMMIT;
 
@@ -117,25 +117,25 @@ final class VerdictLabelWorkerFixture {
         }
     }
 
-    /** The in-memory claim store, whose LABEL slot a test may break as a lost database connection would. */
-    static final class LabelClaimFaults extends InMemoryIdempotency {
-        boolean failLabelClaim;
-        boolean failLabelMark;
+    /**
+     * The in-memory claim store with the review's desired verdict label, as the orchestrator records it. A test may
+     * fail the next reads, as a lost database connection would.
+     */
+    static final class DesiredState extends InMemoryIdempotency {
+        DesiredLabel desired;
+        int failingReads;
 
-        @Override
-        public Claim claim(String reviewId, String commit, String anchorKey) {
-            if (failLabelClaim && VerdictLabels.CLAIM_KEY.equals(anchorKey)) {
-                throw new IllegalStateException("TEST: comment_idempotency claim failed");
-            }
-            return super.claim(reviewId, commit, anchorKey);
+        void desire(int round, String label) {
+            desired = new DesiredLabel(round, label);
         }
 
         @Override
-        public void markPosted(String reviewId, String commit, String anchorKey, String postedRef) {
-            if (failLabelMark && VerdictLabels.CLAIM_KEY.equals(anchorKey)) {
-                throw new IllegalStateException("TEST: comment_idempotency update failed");
+        public java.util.Optional<DesiredLabel> desiredLabel(String reviewId) {
+            if (failingReads > 0) {
+                failingReads--;
+                throw new IllegalStateException("TEST: review_label_desired read failed");
             }
-            super.markPosted(reviewId, commit, anchorKey, postedRef);
+            return java.util.Optional.ofNullable(desired);
         }
     }
 

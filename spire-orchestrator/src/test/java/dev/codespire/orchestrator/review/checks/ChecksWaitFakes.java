@@ -17,8 +17,8 @@ abstract class ChecksWaitFakes {
     final List<String> history = new ArrayList<>();
     final List<String> reads = new ArrayList<>();
     final List<String> notes = new ArrayList<>();
-    /** The label receipts opened and closed, as {@code open <round>} and {@code supersede}. */
-    final List<String> receiptLog = new ArrayList<>();
+    /** The desired-label writes, as RunLabels and DesiredLabels were asked them. */
+    final List<String> labelLog = new ArrayList<>();
 
     List<ActionCommand.FetchDiff> fetches() {
         return emitted.stream().filter(ActionCommand.FetchDiff.class::isInstance)

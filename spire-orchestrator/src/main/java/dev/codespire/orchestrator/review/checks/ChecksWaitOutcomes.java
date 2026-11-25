@@ -10,7 +10,9 @@ import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
 import dev.codespire.orchestrator.review.checks.ChecksWait.Stage;
+import dev.codespire.orchestrator.review.labels.DesiredLabels;
 import dev.codespire.orchestrator.review.run.ReviewRoundLock;
+import dev.codespire.contract.scm.VerdictLabel;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -26,7 +28,8 @@ import java.util.Optional;
  * another resolver started. The claimed row is the recoverable intent: the effects follow, and the row is completed
  * last, so a process that dies in between leaves the claim for the sweep, which finishes it ({@link #dispatch},
  * {@link #finishSkip}). A restart can therefore send a run's FetchDiff or its label twice, never zero times; both are
- * idempotent downstream (the stale-run guard and the worker's claims, the label's per-run receipt).
+ * idempotent downstream (the stale-run guard and the worker's claims; a label command only converges to the
+ * current run's desired label).
  */
 @ApplicationScoped
 public class ChecksWaitOutcomes {
@@ -55,8 +58,9 @@ public class ChecksWaitOutcomes {
     @Inject
     ReviewRoundLock rounds;
 
+    /** The skipped run's desired verdict label, which its label command converges to (V121). */
     @Inject
-    SkippedRunReceipts receipts;
+    DesiredLabels desiredLabels;
 
     /** Every check finished green, or the head has none: the review starts as it would have at once. */
     public void start(ChecksWait wait) {
@@ -103,7 +107,7 @@ public class ChecksWaitOutcomes {
         waits.finish(claimed);
     }
 
-    /** Under the round lock: the run's end and its marks, so a re-run admitted next closes this run's label receipt. */
+    /** Under the round lock: the run's end and its marks, so a re-run admitted next replaces this run's desired label. */
     private boolean endRunAndMark(ChecksWait claimed) {
         if (!endRun(claimed)) return false;
         String names = claimed.failedChecks() == null ? NO_NAMES : claimed.failedChecks();
@@ -143,7 +147,8 @@ public class ChecksWaitOutcomes {
 
     private void labelFailed(ChecksWait claimed) {
         ReviewIds.Parsed review = ReviewIds.parse(claimed.reviewId());
-        receipts.open(claimed);
+        desiredLabels.record(new DesiredLabels.DesiredLabel(claimed.reviewId(), claimed.round(),
+                VerdictLabel.CI_FAILED.name()));
         credentialFor(claimed).ifPresent(credential -> commands.emit(new ActionCommand.LabelChecksFailed(
                 claimed.reviewId(), review.repo(), review.prId(), claimed.head(), claimed.round(), credential)));
     }

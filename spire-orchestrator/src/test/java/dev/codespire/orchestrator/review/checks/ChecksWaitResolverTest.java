@@ -89,6 +89,7 @@ class ChecksWaitResolverTest extends ChecksWaitFixture {
         ActionCommand.LabelChecksFailed label = labels().getFirst();
         assertEquals(HEAD, label.commit());
         assertEquals(round(), label.round());
+        assertTrue(labelLog.contains("desire " + round() + " review: ci-failed"), labelLog.toString());
         assertTrue(notes.getLast().contains("TEST-build, TEST-lint"), notes.toString());
         assertEquals(List.of("ChecksFailed"), history);
         assertEquals(ChecksWait.Stage.SKIPPED, waits.rowOf(REVIEW_ID).stage());

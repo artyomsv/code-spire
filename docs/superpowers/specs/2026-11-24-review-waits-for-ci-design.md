@@ -41,7 +41,7 @@ finished green; a red build gets no review until a new commit (operator decision
    the review's, so it never cancels a started run or a re-run of the same head. A claim survives a crash and the
    sweep finishes it (a FetchDiff or label may be sent twice, never zero times). The run is admitted in one critical section
    under the review's round lock (pull request events and re-runs alike): the aggregate accepts it, the accepted round is
-   recorded as the review's admission row and earlier runs' ci-failed receipts are closed. Completed outcomes stay as
+   recorded as the review's admission row and its desired verdict label is reset. Completed outcomes stay as
    terminal rows, and every later write compares the round and the stage it observed.
 
 ## Webhook setup

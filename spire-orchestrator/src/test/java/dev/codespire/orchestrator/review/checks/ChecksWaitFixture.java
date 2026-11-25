@@ -14,6 +14,8 @@ import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
 import dev.codespire.orchestrator.repository.StartReview;
+import dev.codespire.orchestrator.review.labels.DesiredLabels;
+import dev.codespire.orchestrator.review.labels.RunLabels;
 import dev.codespire.orchestrator.review.run.ReviewRoundLock;
 
 import java.time.Instant;
@@ -39,6 +41,10 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
     static final String NEXT_HEAD = "b".repeat(40);
 
     final InMemoryChecksWaits waits = new InMemoryChecksWaits();
+
+    {
+        waits.currentRound = () -> this.state.round();
+    }
     /** The aggregate: its head, status and round, folded by the real decider. */
     ReviewState state = reviewing(HEAD, 1);
     /** How many critical sections took the review's round lock. */
@@ -101,7 +107,7 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
         gate.waits = waits;
         gate.commands = commands();
         gate.lifecycle = lifecycle();
-        gate.receipts = receipts();
+        gate.labels = runLabels();
         gate.rounds = roundLock();
         return gate;
     }
@@ -142,7 +148,7 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
             }
         };
         outcomes.rounds = roundLock();
-        outcomes.receipts = receipts();
+        outcomes.desiredLabels = desiredLabels();
         return outcomes;
     }
 
@@ -156,20 +162,31 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
         };
     }
 
-    private SkippedRunReceipts receipts() {
-        return new SkippedRunReceipts() {
+    /** A newly admitted run's label reset, as {@code new <round>} or {@code quiet <round>}; may fail an admission. */
+    private RunLabels runLabels() {
+        return new RunLabels() {
             @Override
-            public void open(ChecksWait wait) {
-                receiptLog.add("open " + wait.round());
-            }
-
-            @Override
-            public void supersede(String reviewId) {
-                receiptLog.add("supersede");
+            public void newRun(String reviewId, int round) {
+                labelLog.add("new " + round);
                 if (admissionFailure == null) return;
                 RuntimeException failure = admissionFailure;
                 admissionFailure = null;
                 throw failure;
+            }
+
+            @Override
+            public void newRunQuietly(String reviewId, int round) {
+                labelLog.add("quiet " + round);
+            }
+        };
+    }
+
+    /** A decided desired label, as {@code desire <round> <label>}. */
+    private DesiredLabels desiredLabels() {
+        return new DesiredLabels() {
+            @Override
+            public void record(DesiredLabel desired) {
+                labelLog.add("desire " + desired.round() + " " + desired.label());
             }
         };
     }

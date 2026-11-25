@@ -7,14 +7,13 @@ import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.review.ReviewVerdict;
 import dev.codespire.contract.scm.VerdictLabel;
 import dev.codespire.scm.github.GitHubApiException;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Set;
 
-import static dev.codespire.worker.pipeline.VerdictLabelWorkerFixture.COMMIT;
 import static dev.codespire.worker.pipeline.VerdictLabelWorkerFixture.REPO;
-import static dev.codespire.worker.pipeline.VerdictLabelWorkerFixture.REVIEW_ID;
 import static dev.codespire.worker.pipeline.VerdictLabelWorkerFixture.labelled;
 import static dev.codespire.worker.pipeline.VerdictLabelWorkerFixture.labelledPostedAsComment;
 import static dev.codespire.worker.pipeline.VerdictLabelWorkerFixture.unlabelled;
@@ -26,8 +25,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The verdict label after a posted review (verdict labels, V120): set from the decided verdict only when the
- * repository asked for it, never for a review that was not posted, never at the review's expense, and once per run.
+ * The verdict label after a posted review (verdict labels, V120): only when the repository asked for it, never for a
+ * review that was not posted, never at the review's expense, and always the desired label of the review's current run
+ * (recorded by the orchestrator), to which a replay, a stale command or a redelivery after a crash converges.
  */
 class ReviewWorkerVerdictLabelTest {
 
@@ -37,12 +37,17 @@ class ReviewWorkerVerdictLabelTest {
     private final VerdictLabelWorkerFixture fx = new VerdictLabelWorkerFixture();
     private final ReviewWorker worker = fx.worker();
 
+    @BeforeEach
+    void runOneWantsApproved() {
+        fx.idempotency.desire(1, APPROVED);
+    }
+
     private CommentsPosted posted() {
         return assertInstanceOf(CommentsPosted.class, fx.emitted.getLast());
     }
 
     @Test
-    void anApprovalLabelsApprovedAfterTheReviewIsPosted() {
+    void theRunsDesiredLabelIsSetAfterTheReviewIsPosted() {
         worker.postComments(labelled(ReviewVerdict.APPROVE));
 
         assertEquals(List.of(APPROVED), fx.sink.labelCalls);
@@ -50,14 +55,7 @@ class ReviewWorkerVerdictLabelTest {
         assertNull(posted().labelFailure());
     }
 
-    @Test
-    void aRequestForChangesLabelsChangesRequested() {
-        worker.postComments(labelled(ReviewVerdict.REQUEST_CHANGES));
-
-        assertEquals(List.of(CHANGES_REQUESTED), fx.sink.labelCalls);
-    }
-
-    /** "Reviewer may approve" off posts a Comment; the label follows the decided verdict, not the posted event. */
+    /** "Reviewer may approve" off posts a Comment; the desired label came from the decided verdict. */
     @Test
     void anApprovalPostedAsACommentStillLabelsApproved() {
         worker.postComments(labelledPostedAsComment(ReviewVerdict.APPROVE));
@@ -69,24 +67,21 @@ class ReviewWorkerVerdictLabelTest {
     @Test
     void theSettingOffSetsNoLabel() {
         worker.postComments(unlabelled(ReviewVerdict.APPROVE));
-
-        assertTrue(fx.sink.labelCalls.isEmpty());
-        assertEquals(1, fx.sink.reviewPosts.size(), "the review is posted as before");
-    }
-
-    /** A degraded review's assessment is COMMENT: it says nothing about who acts next. */
-    @Test
-    void aDegradedReviewSetsNoLabel() {
-        worker.postComments(labelled(ReviewVerdict.COMMENT));
-
-        assertTrue(fx.sink.labelCalls.isEmpty());
-    }
-
-    /** A command from before the field existed carries null: off. */
-    @Test
-    void aCommandWithoutTheSettingSetsNoLabel() {
         worker.postComments(unlabelledCommand().withVerdict(ReviewVerdict.APPROVE, ReviewVerdict.APPROVE, true));
 
+        assertTrue(fx.sink.labelCalls.isEmpty());
+        assertTrue(fx.sink.calls.stream().noneMatch("unlabel"::equals));
+    }
+
+    /** A run that wants no verdict label (degraded, or held for CI) removes the bot's own labels and no other. */
+    @Test
+    void noDesiredLabelRemovesOnlyTheBotsLabels() {
+        fx.idempotency.desire(2, null);
+        fx.sink.labels.addAll(List.of(APPROVED, "review: requested", "TEST-unrelated"));
+
+        worker.postComments(labelled(ReviewVerdict.COMMENT));
+
+        assertEquals(Set.of("review: requested", "TEST-unrelated"), fx.sink.labels);
         assertTrue(fx.sink.labelCalls.isEmpty());
     }
 
@@ -124,42 +119,59 @@ class ReviewWorkerVerdictLabelTest {
         assertTrue(fx.emitted.stream().noneMatch(ReviewFailed.class::isInstance), "the review does not fail");
     }
 
-    /**
-     * Review of PR #444, M-1: another reviewer requests changes after this run labelled approved, then this run's
-     * PostComments is redelivered. The recovered review reports what the run already did and leaves the newer label.
-     */
+    /** The bot owns its label: a replay puts the current run's label back over one a person set since. */
     @Test
-    void aReplayDoesNotOverwriteALabelSetSinceTheFirstAttempt() {
+    void aReplayReappliesTheCurrentRunsLabel() {
         PostComments command = labelled(ReviewVerdict.APPROVE);
         worker.postComments(command);
         fx.sink.labels.clear();
-        fx.sink.labels.add(CHANGES_REQUESTED);
+        fx.sink.labels.add("review: requested");
 
         worker.postComments(command);
 
-        assertEquals(Set.of(CHANGES_REQUESTED), fx.sink.labels, "the newer label stands");
-        assertEquals(List.of(APPROVED), fx.sink.labelCalls, "one label call for the run");
+        assertEquals(Set.of(APPROVED), fx.sink.labels);
         assertEquals(1, fx.sink.reviewPosts.size());
+    }
+
+    /** A stale command of run 1, after run 2 decided changes-requested: it applies run 2's label, never its own. */
+    @Test
+    void aStaleCommandAppliesTheCurrentRunsLabel() {
+        fx.idempotency.desire(2, CHANGES_REQUESTED);
+
+        worker.postComments(labelled(ReviewVerdict.APPROVE));
+
+        assertEquals(Set.of(CHANGES_REQUESTED), fx.sink.labels);
+    }
+
+    /** A newer run decides while this label call runs: the desired label is read again and the newer one wins. */
+    @Test
+    void aNewerRunDecidingDuringTheCallWins() {
+        fx.sink.duringLabel = () -> fx.idempotency.desire(2, CHANGES_REQUESTED);
+
+        worker.postComments(labelled(ReviewVerdict.APPROVE));
+
+        assertEquals(Set.of(CHANGES_REQUESTED), fx.sink.labels);
+        assertEquals(List.of(APPROVED, CHANGES_REQUESTED), fx.sink.labelCalls);
+    }
+
+    /** The worker dies after its GitHub call (here: the re-read fails); the redelivery converges. */
+    @Test
+    void aRedeliveryAfterACrashConverges() {
+        PostComments command = labelled(ReviewVerdict.APPROVE);
+        fx.sink.duringLabel = () -> {
+            fx.idempotency.desire(2, CHANGES_REQUESTED);
+            fx.idempotency.failingReads = 1;
+        };
+        worker.postComments(command);
+        assertTrue(posted().labelFailure().contains("review_label_desired"), posted().labelFailure());
+
+        worker.postComments(command);
+
+        assertEquals(Set.of(CHANGES_REQUESTED), fx.sink.labels);
         assertNull(posted().labelFailure());
     }
 
-    /** A failed attempt is reported again on a replay, and not retried. */
-    @Test
-    void aReplayOfAFailedAttemptReportsTheFailureWithoutRetrying() {
-        PostComments command = labelled(ReviewVerdict.APPROVE);
-        fx.sink.labelFailure = new GitHubApiException(403, "POST", "/TEST/labels", "TEST-forbidden");
-        worker.postComments(command);
-        String reported = posted().labelFailure();
-        fx.sink.labelFailure = null;
-
-        worker.postComments(command);
-
-        assertEquals(reported, posted().labelFailure());
-        assertEquals(1, fx.sink.labelCalls.size(), "no second label call");
-        assertTrue(fx.sink.labels.isEmpty());
-    }
-
-    /** The label attempt's claim is never mistaken for a posted inline comment on recovery. */
+    /** No label is ever recovered as a posted inline comment. */
     @Test
     void theLabelClaimNeverBecomesAnInlineComment() {
         PostComments command = labelled(ReviewVerdict.APPROVE);
@@ -169,46 +181,6 @@ class ReviewWorkerVerdictLabelTest {
 
         assertTrue(posted().inline().isEmpty(), posted().inline().toString());
         assertFalse(InlineRecovery.isInline(VerdictLabels.CLAIM_KEY));
-        assertTrue(fx.idempotency.postedFor(REVIEW_ID, COMMIT).containsKey(VerdictLabels.CLAIM_KEY));
-    }
-
-    /** An earlier skipped run's ci-failed receipt on this head (V121) is never recovered as an inline comment. */
-    @Test
-    void aSkippedRunsLabelReceiptNeverBecomesAnInlineComment() {
-        fx.idempotency.markPosted(REVIEW_ID, COMMIT, ChecksFailedLabel.CLAIM_PREFIX + 1, "APPLIED");
-
-        worker.postComments(labelled(ReviewVerdict.APPROVE));
-
-        assertTrue(posted().inline().isEmpty(), posted().inline().toString());
-        assertFalse(InlineRecovery.isInline(ChecksFailedLabel.CLAIM_PREFIX + 1));
-    }
-
-    /** Review of PR #444, M-2: the claim store is down after the review was posted. Unknown state: no label call. */
-    @Test
-    void aLabelClaimThatCannotBeReadSkipsTheLabelAndStillReportsTheReview() {
-        fx.idempotency.failLabelClaim = true;
-
-        worker.postComments(labelled(ReviewVerdict.APPROVE));
-
-        CommentsPosted posted = posted();
-        assertEquals("rv-100", posted.reviewRef(), "the posted review is still reported");
-        assertTrue(posted.labelFailure().startsWith("the label claim could not be read"), posted.labelFailure());
-        assertTrue(fx.sink.labelCalls.isEmpty(), "no label call while the run's own attempt is unknown");
-        assertTrue(fx.emitted.stream().noneMatch(ReviewFailed.class::isInstance), "the review does not fail");
-    }
-
-    /** The label is set but its outcome cannot be kept: the label stands, and the report says a replay may repeat it. */
-    @Test
-    void aLabelOutcomeThatCannotBeRecordedKeepsTheLabelAndStillReportsTheReview() {
-        fx.idempotency.failLabelMark = true;
-
-        worker.postComments(labelled(ReviewVerdict.APPROVE));
-
-        CommentsPosted posted = posted();
-        assertEquals("rv-100", posted.reviewRef());
-        assertEquals(Set.of(APPROVED), fx.sink.labels, "the label call happened");
-        assertTrue(posted.labelFailure().startsWith("the label outcome could not be recorded"), posted.labelFailure());
-        assertTrue(fx.emitted.stream().noneMatch(ReviewFailed.class::isInstance), "the review does not fail");
     }
 
     /** GitLab and Bitbucket keep the port's default. */
@@ -217,5 +189,6 @@ class ReviewWorkerVerdictLabelTest {
         CommentSink plain = new VerdictLabelWorkerFixture.PlainSink();
 
         assertEquals(CommentSink.LabelOutcome.UNSUPPORTED, plain.setVerdictLabel(REPO, 9, VerdictLabel.APPROVED));
+        assertEquals(CommentSink.LabelOutcome.UNSUPPORTED, plain.removeVerdictLabel(REPO, 9, VerdictLabel.APPROVED));
     }
 }

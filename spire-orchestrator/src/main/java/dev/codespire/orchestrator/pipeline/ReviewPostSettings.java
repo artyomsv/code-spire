@@ -7,7 +7,9 @@ import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.repository.BlockApprovalAt;
 import dev.codespire.orchestrator.repository.RepositoryAccounts;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
+import dev.codespire.contract.scm.VerdictLabel;
 import dev.codespire.orchestrator.llm.ReviewRuns;
+import dev.codespire.orchestrator.review.labels.DesiredLabels;
 import dev.codespire.orchestrator.review.checks.ChecksWait;
 import dev.codespire.orchestrator.review.checks.ChecksWaitStore;
 
@@ -39,7 +41,7 @@ final class ReviewPostSettings {
 
     /** The saga's collaborators this reads. */
     record Sources(ReviewProjection projection, RepositoryRegistry repositories, RepositoryAccounts repositoryAccounts,
-                   ChecksWaitStore checksWaits, ReviewRuns runs) {
+                   ChecksWaitStore checksWaits, ReviewRuns runs, DesiredLabels desiredLabels) {
     }
 
     private final Sources sources;
@@ -80,15 +82,27 @@ final class ReviewPostSettings {
     }
 
     /**
-     * The repository's "Verdict labels" (V120); off for an unknown repository. A review that started before its checks
-     * finished sets no {@code review: approved}: an approval it never posted must not reach the label either. It keeps
-     * {@code review: changes-requested}, which an unfinished build does not weaken. The labels of a review held by
-     * "Reviewer may approve" still follow its assessment (ADR-047).
+     * Whether this run's PostComments carries a label command (V120); off for an unknown repository. When on, the run's
+     * desired verdict label is recorded first, under its round, and the worker converges the pull request to it. The
+     * label follows the assessment (ADR-047: "Reviewer may approve" off still labels approved). A review that started
+     * before its checks finished, or whose run cannot be identified, wants no {@code review: approved}; a blocking one
+     * keeps {@code review: changes-requested}; a degraded one wants no verdict label. A run with no readable round
+     * sends no label command.
      */
     boolean verdictLabels(ReviewGenerated generated, ReviewVerdictDecision.Decision decision) {
-        boolean on = sources.projection().repositoryIdOf(generated.reviewId())
+        String reviewId = generated.reviewId();
+        boolean on = sources.projection().repositoryIdOf(reviewId)
                 .flatMap(id -> sources.repositories().verdictLabels(id)).orElse(false);
-        return on && !(decision.assessment() == ReviewVerdict.APPROVE && ciHold(generated) != CiHold.NONE);
+        int round = on ? sources.runs().roundOrUnknown(reviewId) : ReviewRuns.UNKNOWN_RUN;
+        if (round == ReviewRuns.UNKNOWN_RUN) return false;
+        sources.desiredLabels().record(new DesiredLabels.DesiredLabel(reviewId, round, labelFor(generated, decision)));
+        return true;
+    }
+
+    private String labelFor(ReviewGenerated generated, ReviewVerdictDecision.Decision decision) {
+        if (decision.assessment() == ReviewVerdict.REQUEST_CHANGES) return VerdictLabel.CHANGES_REQUESTED.name();
+        boolean approves = decision.assessment() == ReviewVerdict.APPROVE && ciHold(generated) == CiHold.NONE;
+        return approves ? VerdictLabel.APPROVED.name() : null;
     }
 
     /**

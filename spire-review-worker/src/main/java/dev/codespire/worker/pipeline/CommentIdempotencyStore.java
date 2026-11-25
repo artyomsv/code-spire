@@ -10,6 +10,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Insert-before-post idempotency for comment posting (ADR-013), owned by the
@@ -25,9 +26,6 @@ import java.util.Map;
  */
 @ApplicationScoped
 public class CommentIdempotencyStore {
-
-    /** What {@link #take} marks a taken slot with until its outcome is recorded. */
-    public static final String TAKEN = "taken";
 
     /** Outcome of a claim attempt. */
     public sealed interface Claim {
@@ -99,33 +97,23 @@ public class CommentIdempotencyStore {
     }
 
     /**
-     * Takes a slot another service opened (posted_ref NULL) for its one effect, marking it {@link #TAKEN}: true only
-     * while it is still open, so a slot the orchestrator closed first (review waits for CI: a newer run was admitted)
-     * is never taken. Unlike {@link #claim}, a missing row is not taken.
+     * The desired verdict label of the review's current run (V6, written by the orchestrator), or empty when none was
+     * recorded. Read fresh on every call: it is the state a label command converges to (LabelReconciler).
      */
-    public boolean take(ReceiptKey key) {
-        return slotUpdate("UPDATE comment_idempotency SET posted_ref = ?, posted_at = now()"
-                + " WHERE posted_ref IS NULL AND review_id = ? AND commit = ? AND anchor_key = ?",
-                new String[] {TAKEN, key.reviewId(), key.commit(), key.anchorKey()}) == 1;
-    }
-
-    /**
-     * Records a taken slot's outcome, only over its own {@link #TAKEN} mark. False when the orchestrator closed the slot
-     * while its effect ran (a newer run was admitted meanwhile): the caller reconciles the effect it made.
-     */
-    public boolean markTaken(ReceiptKey key, String outcome) {
-        return slotUpdate("UPDATE comment_idempotency SET posted_ref = ?, posted_at = now()"
-                + " WHERE posted_ref = '" + TAKEN + "' AND review_id = ? AND commit = ? AND anchor_key = ?",
-                new String[] {outcome, key.reviewId(), key.commit(), key.anchorKey()}) == 1;
-    }
-
-    private int slotUpdate(String sql, String[] parameters) {
-        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
-            for (int i = 0; i < parameters.length; i++) ps.setString(i + 1, parameters[i]);
-            return ps.executeUpdate();
+    public Optional<DesiredLabel> desiredLabel(String reviewId) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
+                "SELECT round, label FROM review_label_desired WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(new DesiredLabel(rs.getInt(1), rs.getString(2))) : Optional.empty();
+            }
         } catch (SQLException e) {
-            throw new IllegalStateException("comment_idempotency update failed", e);
+            throw new IllegalStateException("review_label_desired read failed", e);
         }
+    }
+
+    /** A run's desired verdict label: {@code label} null means no bot verdict label at all. */
+    public record DesiredLabel(int round, String label) {
     }
 
     /** anchorKey -> what that slot recorded, for every completed slot of this run (redelivery

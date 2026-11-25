@@ -77,13 +77,13 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
 
-    @Inject
-    dev.codespire.orchestrator.repository.RepositoryAccounts repositoryAccounts;
+    @Inject dev.codespire.orchestrator.repository.RepositoryAccounts repositoryAccounts;
 
     /** Why the posted review's verdict label failed (V120), for the attention row. */
     @Inject
     dev.codespire.orchestrator.attention.LabelFailures labelFailures;
     @Inject dev.codespire.orchestrator.review.checks.ChecksWaitStore checksWaits; // a review started before CI finished
+    @Inject dev.codespire.orchestrator.review.labels.DesiredLabels desiredLabels; // the run's verdict label (V120)
 
     @Inject
     dev.codespire.orchestrator.readmodel.FindingProjection findings;
@@ -500,7 +500,7 @@ public class ResultSaga {
     private void postReview(ReviewGenerated e, dev.codespire.orchestrator.memory.PreferenceFilter.Filtered filtered,
                             String priorSummaryRef) {
         ReviewPostSettings settings = new ReviewPostSettings(
-                new ReviewPostSettings.Sources(projection, repositories, repositoryAccounts, checksWaits, runs));
+                new ReviewPostSettings.Sources(projection, repositories, repositoryAccounts, checksWaits, runs, desiredLabels));
         ReviewVerdictDecision.Decision decision = settings.decide(e, filtered.result());
         projection.appendEvent(e.reviewId(), "result", "ReviewVerdictDecided", decision.detail());
         // The worker marks this run's review with its token, so a re-run on the same head posts beside the earlier one.

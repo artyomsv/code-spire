@@ -21,6 +21,8 @@ class LabelRecordingSink extends ReviewWorkerTest.RecordingSink {
     final List<String> labelCalls = new ArrayList<>();
     /** Thrown by setVerdictLabel while set. */
     RuntimeException labelFailure;
+    /** Runs once inside the next label call, before it changes anything: a newer run deciding meanwhile. */
+    Runnable duringLabel;
 
     LabelRecordingSink() {
         nativeReviews = true;
@@ -30,6 +32,11 @@ class LabelRecordingSink extends ReviewWorkerTest.RecordingSink {
     public CommentSink.LabelOutcome setVerdictLabel(RepoRef repo, long prId, VerdictLabel label) {
         calls.add("label");
         labelCalls.add(label.name());
+        if (duringLabel != null) {
+            Runnable once = duringLabel;
+            duringLabel = null;
+            once.run();
+        }
         if (labelFailure != null) {
             throw labelFailure;
         }

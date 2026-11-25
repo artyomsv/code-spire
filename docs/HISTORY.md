@@ -2629,26 +2629,24 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   waiting row (start, timed-out start or skip) is the permit to act, so only one resolver acts on a run; the claimed row
   stays until its effects are done, and the sweep finishes a claim a crash left, which can send a run's FetchDiff or
   label twice but never zero times. A repository on "Immediately" (and any forge with no check read) is admitted exactly
-  as before V121, with no lock, row or receipt. For one that waits, a run is admitted in one critical section under the
+  as before V121, with no lock or row. For one that waits, a run is admitted in one critical section under the
   review's round lock, for a pull request event and a re-run alike: the aggregate accepts it, its round (`ReviewState.round`, folded from the
   history the append was made on) is recorded as the review's admission row, `admitted` (no reader acts on it until the caller has set up the review
   header and run token and begins it; a header write for a run already made readable is skipped in SQL, and readying a run
   and setting up its header is one compare-and-set shared by the caller and the sweep's recovery), and every
-  earlier run's open ci-failed receipt is closed; a failure there fails the admission, and the redelivered event
+  run's desired verdict label is reset; a failure there fails the admission, and the redelivered event
   records a run accepted but unrecorded. Completed outcomes stay as terminal rows (started, skipped, timed out), so a
   late caller is fenced by the recorded round, not by row presence; begin acts only on the run it was handed and shows
   it waiting only while that round still waits. Every later write names the round and the stage it observed. The aggregate keeps the run REVIEWING while it waits, so a new commit supersedes the wait and a close
   cancels it; a skip ends the run under the review's round lock through the new, commit-guarded
   `RecordCommand.SkipReview`, which emits the existing `ReviewCancelled` (reason `CHECKS_FAILED`, projected as
-  `skipped`), only while the claimed round is still the review's, so a re-run on the same head is never cancelled. The
-  worker sets `review: ci-failed` once per skipped run, never on a head the pull request moved past, nor after a later
-  review of the same head set its verdict label, nor for a run a newer one replaced: the orchestrator opens the run's
-  `CI_FAILED:<round>` receipt before it sends the command and closes every open one when the next run is admitted; the
-  worker takes the receipt with a compare-and-set before its forge call, so a closed receipt is never taken; a receipt
-  closed while its label call ran makes the worker undo that label (restoring the newer run's recorded verdict label),
-  with a window left between the undo's read and its calls; a re-run keeps these receipts when it clears the worker's
-  claims. New wire types: `IntegrationEvent.ChecksChanged` (repository and head sha only) and
-  `ActionCommand.LabelChecksFailed` (with the skipped run's round). Interleavings are proven single-threaded against
+  `skipped`), only while the claimed round is still the review's, so a re-run on the same head is never cancelled. Every write to a wait (readying, claims, the waiting status) also requires
+  its round to be the review's current one, read from the event log in the same statement, so a waiting run a
+  newer run started at once replaced is never readied over it. Verdict labels are desired state (ADR-047, amended
+  2026-11-25): the orchestrator records the current run's desired `review: ` label (worker V6,
+  `review_label_desired`), and every label command converges the pull request to it, reading it again after each
+  GitHub call; a stale, replayed or redelivered command re-applies the current run's label. New wire types: `IntegrationEvent.ChecksChanged` (repository and head sha only) and
+  `ActionCommand.LabelChecksFailed` (the skipped run's round, for the log). Worker V6 adds `review_label_desired`. Interleavings are proven single-threaded against
   fakes only (docs/UNVERIFIED.md). Upgrading: V121 adds `repository.start_review` (default `IMMEDIATELY`) and the
   `review_checks_wait` table. Add the **Check suites** and **Statuses** events to each GitHub Reviewer webhook (an
   existing webhook without them still works through the 5-minute sweep). Roll the gateway, the orchestrator and the
