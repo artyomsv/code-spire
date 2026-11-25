@@ -17,7 +17,7 @@ ALTER TABLE repository ADD COLUMN start_review TEXT NOT NULL DEFAULT 'IMMEDIATEL
 --   waiting             nothing has run; the webhook wake-up and the sweep read the head's checks.
 --   starting            the review was claimed to start; its FetchDiff is sent, then the row becomes started.
 --   starting_unfinished the same after the 60-minute timeout; the row then becomes timed_out.
---   skipping            the checks failed; the run is ended, noted and labelled, then the row becomes skipped.
+--   skipping            the checks failed; the run is ended and noted, then the row becomes skipped.
 --   started             the run's review started (at once, or after its checks); terminal.
 --   skipped             the run was skipped on red checks; terminal.
 --   timed_out           the review started before its checks finished, so its verdict never approves; terminal.
@@ -43,3 +43,9 @@ CREATE TABLE review_checks_wait (
 CREATE INDEX review_checks_wait_due ON review_checks_wait (next_read_at)
     WHERE state IN ('admitted', 'waiting', 'starting', 'starting_unfinished', 'skipping');
 CREATE INDEX review_checks_wait_head ON review_checks_wait (repository_id, head_commit) WHERE state = 'waiting';
+
+-- run_round: the round of the run whose header this row holds. Every accepted run writes it with its status and run
+-- token (a run started at once, a re-run, a waiting run's header and its readying), and each of those writes matches
+-- only while the row's run_round is not later than its own, evaluated on the locked row. So a run whose caller paused
+-- never replaces the header of a later run, whatever the repository's start setting. NULL: no run since V121.
+ALTER TABLE review_status ADD COLUMN run_round INT;

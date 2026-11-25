@@ -100,13 +100,13 @@ public class ReviewRerunService {
      * The next round and its run token, under the review's round lock (review of PR #368, code-quality/H-1). A harness
      * outcome reads its round and acts under the same lock, so it never takes this round's number and token for the
      * round its answer belongs to: a forced re-run keeps the commit, which is all the outcome path's other checks see.
-     * The run is admitted in the same critical section (V121): its round, its admission row and its label fence.
+     * The run is admitted in the same critical section (V121), and its header write carries its round.
      */
     private Optional<ReviewStartGate.AcceptedRun> requestRound(String reviewId, String commit, boolean untrusted) {
         Optional<ReviewStartGate.AcceptedRun> run = reviewStart.admitHolding(new ReviewStartGate.Admission(reviewId,
                 new RecordCommand.RequestReview(commit, "rerun", true), untrusted));
         if (run.isPresent()) {
-            projection.markRerunStarted(reviewId);
+            projection.markRerunStarted(reviewId, run.orElseThrow().round());
         }
         return run;
     }

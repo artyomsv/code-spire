@@ -133,7 +133,7 @@ class ArchivedReviewGateTest {
             }
 
             @Override
-            public void markRerunStarted(String reviewId) {
+            public void markRerunStarted(String reviewId, int round) {
             }
         };
     }

@@ -738,10 +738,10 @@ public class IntegrationSaga {
             projection.registerHeader(reviewId, e.repo(), e.prId(), e.title(), username(e), authorId(e),
                     e.sourceBranch(), e.targetBranch(), commit, e.htmlUrl(), provider.get().type(),
                     "observed", ReviewProjection.STAGE_RECEIVED);
-        } else if (started) {
-            projection.registerHeader(reviewId, e.repo(), e.prId(), e.title(), username(e), authorId(e),
-                    e.sourceBranch(), e.targetBranch(), commit, e.htmlUrl(), provider.get().type(),
-                    "reviewing", ReviewProjection.STAGE_DIFF);
+        } else if (started) { // never over a header a later round wrote (V121)
+            projection.registerRunHeader(new ReviewProjection.RunHeader(reviewId, run.orElseThrow().round(), e.repo(),
+                    e.prId(), e.title(), username(e), authorId(e), e.sourceBranch(), e.targetBranch(), commit,
+                    e.htmlUrl(), provider.get().type()));
         } else {
             projection.refreshHeader(reviewId, e.repo(), e.prId(), e.title(), username(e), authorId(e),
                     e.sourceBranch(), e.targetBranch(), commit, e.htmlUrl(), provider.get().type());

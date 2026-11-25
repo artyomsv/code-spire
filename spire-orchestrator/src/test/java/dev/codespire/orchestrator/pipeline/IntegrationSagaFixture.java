@@ -135,6 +135,11 @@ abstract class IntegrationSagaFixture {
             }
 
             @Override
+            public void registerRunHeader(RunHeader header) {
+                headerProviderTypes.add(header.providerType());
+            }
+
+            @Override
             public void refreshHeader(String reviewId, RepoRef repo, long prId, String title, String author,
                                      String authorId, String sourceBranch, String destBranch, String sha,
                                      String htmlUrl, String providerType) {

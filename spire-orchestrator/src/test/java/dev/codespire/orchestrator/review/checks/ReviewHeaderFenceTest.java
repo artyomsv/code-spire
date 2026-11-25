@@ -20,7 +20,8 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 /**
  * The header fence against the real schema (V121): a caller whose header write comes after the sweep readied its run
  * and a red read skipped it never resets the status or the run token. A run still admitted, and a newer round on the
- * same head (a re-run started at once), get their header as before.
+ * same head (a re-run started at once), get their header as before; an earlier run's late write never replaces a later
+ * run's header.
  */
 @QuarkusTest
 class ReviewHeaderFenceTest {
@@ -53,7 +54,7 @@ class ReviewHeaderFenceTest {
         execute("INSERT INTO review_checks_wait (review_id, repository_id, head_commit, round, untrusted, state,"
                 + " waiting_since, next_read_at) VALUES (?, ?, ?, 1, false, 'skipped', now(), now())",
                 reviewId, UUID.randomUUID(), HEAD);
-        registerHeader();
+        registerHeader(1);
         assertEquals("skipped:TEST-token", statusAndToken());
     }
 
@@ -63,7 +64,7 @@ class ReviewHeaderFenceTest {
         execute("INSERT INTO review_checks_wait (review_id, repository_id, head_commit, round, untrusted, state,"
                 + " waiting_since, next_read_at) VALUES (?, ?, ?, 1, false, 'admitted', now(), now())",
                 reviewId, UUID.randomUUID(), HEAD);
-        registerHeader();
+        registerHeader(1);
         assertEquals("reviewing", statusAndToken().split(":")[0]);
         assertNotEquals("TEST-token", statusAndToken().split(":")[1]);
     }
@@ -75,13 +76,30 @@ class ReviewHeaderFenceTest {
                 + " waiting_since, next_read_at) VALUES (?, ?, ?, 1, false, 'timed_out', now(), now())",
                 reviewId, UUID.randomUUID(), HEAD);
         appendRequest(2);
-        registerHeader();
+        registerHeader(2);
         assertEquals("reviewing", statusAndToken().split(":")[0]);
     }
 
-    private void registerHeader() {
-        projection.registerHeader(reviewId, repo, 7L, "TEST-title", "TEST-author", "TEST-1", "TEST-feature", "main",
-                HEAD, "https://forge.example.test/TEST/7", "github", "reviewing", ReviewProjection.STAGE_DIFF);
+    /**
+     * Run 1 was admitted to wait and its caller paused before its header write; the repository switched to
+     * "Immediately" and run 2 re-ran the same head, writing its header (round 2). The late write of run 1 is fenced by
+     * the row it would write: run 2's status and token stay.
+     */
+    @Test
+    void aLateHeaderWriteNeverReplacesALaterRunsHeader() throws Exception {
+        execute("INSERT INTO review_checks_wait (review_id, repository_id, head_commit, round, untrusted, state,"
+                + " waiting_since, next_read_at) VALUES (?, ?, ?, 1, false, 'admitted', now(), now())",
+                reviewId, UUID.randomUUID(), HEAD);
+        appendRequest(2);
+        registerHeader(2);
+        String later = statusAndToken();
+        registerHeader(1);
+        assertEquals(later, statusAndToken());
+    }
+
+    private void registerHeader(int round) {
+        projection.registerRunHeader(new ReviewProjection.RunHeader(reviewId, round, repo, 7L, "TEST-title",
+                "TEST-author", "TEST-1", "TEST-feature", "main", HEAD, "https://forge.example.test/TEST/7", "github"));
     }
 
     private void appendRequest(int sequence) throws Exception {

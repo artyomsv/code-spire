@@ -29,8 +29,10 @@ finished green; a red build gets no review until a new commit (operator decision
    register a few seconds late.
 5. **Green.** Nothing pending and nothing failed: the review starts as today.
 6. **Red.** Nothing pending and at least one check failed: no review runs and nothing is charged. The review is
-   recorded as `skipped: checks failed` with the failed check names (dashboard), and with Verdict labels on the pull
-   request gets `review: ci-failed`. No comment is posted. A new commit starts a new wait.
+   recorded as `skipped: checks failed` with the failed check names (dashboard). No comment is posted and no label is
+   set. A new commit starts a new wait. (A `review: ci-failed` label was built and removed by operator decision on
+   2026-11-25: a skipped run's label has no posted review to tie it to, so a late one could stand beside a newer run's
+   verdict. It comes back as its own change with a simpler design; ADR-047.)
 7. **Superseded / closed.** A new commit while waiting replaces the wait for the old head (existing supersede rule);
    a closed pull request ends the wait.
 8. **Timeout.** Checks still pending after 60 minutes: the review starts anyway, never approves (posted as a Comment),
@@ -39,10 +41,11 @@ finished green; a red build gets no review until a new commit (operator decision
 9. **One resolver per run.** Webhook and sweep may read one wait at once. Claiming the waiting row, keyed by the run's
    round, is the permit to start or skip; a skip ends the run under the review's round lock and only while its round is
    the review's, so it never cancels a started run or a re-run of the same head. A claim survives a crash and the
-   sweep finishes it (a FetchDiff or label may be sent twice, never zero times). The run is admitted in one critical section
+   sweep finishes it (a FetchDiff may be sent twice, never zero times). The run is admitted in one critical section
    under the review's round lock (pull request events and re-runs alike): the aggregate accepts it, the accepted round is
-   recorded as the review's admission row and its desired verdict label is reset. Completed outcomes stay as
-   terminal rows, and every later write compares the round and the stage it observed.
+   recorded as the review's admission row. Completed outcomes stay as terminal rows, and every later write compares
+   the round and the stage it observed. Every accepted run, one started at once included, writes its round into the
+   review header (`run_round`) with its status and token, and no header write of an earlier round replaces it.
 
 ## Webhook setup
 
@@ -63,14 +66,13 @@ webhooks (`check_suite` only for `completed`, which is the one needed).
 - Orchestrator: the repository setting (next migration), the waiting/skipped state on the review, the wake-up
   handler, the 5-minute sweep, the 60-minute timeout, and the not-approving path for a timeout.
 - SCM port: a read of a commit's check summary for reviews, reusing the GitHub land reader.
-- Worker/labels: `review: ci-failed` joins the verdict labels; a skipped review sets it without posting anything.
 - UI: the setting beside "Verdict labels"; statuses "Waiting for checks" and "Skipped: checks failed" (status union
   rule in CLAUDE.md); webhook instructions list the two new events.
 
 ## Tests (CI only)
 
 Wait then start on green; webhook wake-up starts it without waiting for the sweep; sweep starts it when no webhook
-arrives; immediate start with no checks; red skips the review, charges nothing and sets `review: ci-failed`; a new
+arrives; immediate start with no checks; red skips the review, charges nothing and sets no label; a new
 commit after red waits again; supersede and close end the wait; timeout starts a non-approving review; `immediately`
 behaves exactly as today; an event for a head with no waiting review does nothing. Live proof on spired.dev with
 code-spire.

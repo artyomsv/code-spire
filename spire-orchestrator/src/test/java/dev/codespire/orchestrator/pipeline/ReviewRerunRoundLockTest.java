@@ -123,7 +123,7 @@ class ReviewRerunRoundLockTest {
             }
 
             @Override
-            public void markRerunStarted(String reviewId) {
+            public void markRerunStarted(String reviewId, int round) {
                 steps.add("run token");
             }
         };

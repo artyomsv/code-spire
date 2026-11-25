@@ -122,59 +122,72 @@ public class ReviewProjection {
     // ---- writes (called by the sagas) --------------------------------------
 
     /**
-     * Upsert the header of a review and reset its status/stage for a (re)run. Also resets {@code answering}: the
-     * reviewId is stable per PR, so a stuck "responding…" flag must not bleed into the new run. Fenced (V121): a run
-     * that waits for checks and was already made readable (by the sweep, its caller late) keeps its status and token.
+     * Upsert the header of a review and reset its status/stage for a (re)run, {@code answering} included (the reviewId
+     * is stable per PR, so a stuck "responding…" flag must not bleed into the new run). Not tied to a round: the
+     * observe-only header; an accepted run writes {@link #registerRunHeader}.
      */
     public void registerHeader(String reviewId, RepoRef repo, long prId, String title, String author,
                                String authorId, String sourceBranch, String destBranch, String sha,
                                String htmlUrl, String providerType, String status, int stage) {
         upsertHeader(reviewId, repo, prId, title, author, authorId, sourceBranch, destBranch, sha,
-                htmlUrl, providerType, status, stage, true);
+                htmlUrl, providerType, status, stage, NO_ROUND);
+    }
+
+    /** An accepted run's header: {@link #registerHeader}'s fields, with the run's round (V121). */
+    public record RunHeader(String reviewId, int round, RepoRef repo, long prId, String title, String author,
+                            String authorId, String sourceBranch, String destBranch, String sha, String htmlUrl,
+                            String providerType) {
     }
 
     /**
-     * Refresh a review's PR metadata WITHOUT claiming a run: status, stage, attempt, error detail and the
-     * answering flag are left exactly as they were.
-     *
-     * <p>Used when an event arrives for a commit the aggregate has already reviewed (a re-delivered
-     * webhook, a provider's "test" delivery). {@link #registerHeader} would overwrite the finished
-     * outcome with {@code reviewing}, and since no run starts, nothing ever moves it on again — the
-     * review sat in "reviewing" forever with no command on the bus.
+     * {@link #registerHeader} for an accepted run, which records its round in {@code run_round}. Fenced on the row it
+     * writes (V121): a header a later round already wrote is never replaced (a waiting run's caller that paused while a
+     * newer run started at once), and a waiting run already made readable keeps its status and token.
+     */
+    public void registerRunHeader(RunHeader h) {
+        upsertHeader(h.reviewId(), h.repo(), h.prId(), h.title(), h.author(), h.authorId(), h.sourceBranch(),
+                h.destBranch(), h.sha(), h.htmlUrl(), h.providerType(), "reviewing", STAGE_DIFF, h.round());
+    }
+
+    /**
+     * Refresh a review's PR metadata WITHOUT claiming a run (status, stage, attempt, error detail and answering kept),
+     * for a commit the aggregate already reviewed (a re-delivered webhook, a "test" delivery): {@link #registerHeader}
+     * would overwrite the finished outcome with {@code reviewing}, which no run would ever move on again.
      */
     public void refreshHeader(String reviewId, RepoRef repo, long prId, String title, String author,
                               String authorId, String sourceBranch, String destBranch, String sha,
                               String htmlUrl, String providerType) {
         upsertHeader(reviewId, repo, prId, title, author, authorId, sourceBranch, destBranch, sha,
-                htmlUrl, providerType, "reviewing", STAGE_DIFF, false);
+                htmlUrl, providerType, "reviewing", STAGE_DIFF, REFRESH);
     }
 
-    /** @param claimRun whether this write may set status/stage — false preserves the row's outcome
-     *                  (the status/stage arguments then apply only to a first INSERT). */
+    /** {@code claimRound}: {@link #REFRESH} keeps the row's outcome (status/stage then only fill a first INSERT). */
     private void upsertHeader(String reviewId, RepoRef repo, long prId, String title, String author,
                               String authorId, String sourceBranch, String destBranch, String sha,
-                              String htmlUrl, String providerType, String status, int stage,
-                              boolean claimRun) {
+                              String htmlUrl, String providerType, String status, int stage, int claimRound) {
         // A new run clears what the forge held for the previous head (ADR-047) and gets a fresh run_token (runTokenOf);
         // a refresh keeps the row's token as it keeps its outcome.
+        boolean claimRun = claimRound != REFRESH;
         String outcomeColumns = claimRun
                 ? "status = EXCLUDED.status, stage = EXCLUDED.stage, attempt = 1, "
                         + "error_detail = NULL, answering = FALSE, "
                         + "posted_verdict = NULL, posted_review_ref = NULL, posted_review_url = NULL, "
                         + "run_token = EXCLUDED.run_token,"
+                        + (claimRound > NO_ROUND ? " run_round = EXCLUDED.run_round," : "")
                 : "";
         String sql = """
                 INSERT INTO review_status (review_id, workspace, slug, pr_id, title, author, author_id,
                         source_branch, dest_branch, commit_sha, html_url, provider_type, status, stage,
-                        attempt, run_token, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, %s, now())
+                        attempt, run_token, run_round, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, %s, ?, now())
                 ON CONFLICT (review_id) DO UPDATE SET
                         title = EXCLUDED.title, author = EXCLUDED.author, author_id = EXCLUDED.author_id,
                         source_branch = EXCLUDED.source_branch, dest_branch = EXCLUDED.dest_branch,
                         commit_sha = EXCLUDED.commit_sha, html_url = EXCLUDED.html_url,
                         provider_type = EXCLUDED.provider_type,
                         %s updated_at = now() %s
-                """.formatted(NEW_RUN_TOKEN, outcomeColumns, claimRun ? HEADER_FENCE : "");
+                """.formatted(NEW_RUN_TOKEN, outcomeColumns, claimRun ? HEADER_FENCE
+                + (claimRound > NO_ROUND ? " AND " + LATER_ROUND_KEPT : "") : "");
         update(sql, ps -> {
             ps.setString(1, reviewId);
             ps.setString(2, repo.workspace());
@@ -190,6 +203,7 @@ public class ReviewProjection {
             ps.setString(12, providerType == null ? "" : providerType);
             ps.setString(13, status);
             ps.setInt(14, stage);
+            ps.setObject(15, claimRound > NO_ROUND ? claimRound : null, java.sql.Types.INTEGER);
         });
         broadcast(reviewId);
     }
@@ -857,30 +871,17 @@ public class ReviewProjection {
     /**
      * Add a finding raised in a conversation ({@code /finding}) to the carry-forward baseline.
      *
-     * <p>Deliberately {@code open_findings_json} and NOT {@code findings_json}: the latter is what
-     * the review of a commit produced — a truthful record of one model call, copied to
-     * {@code posted_findings_json} as the run snapshot by {@link #recordPosted}. A conversation
-     * finding did not come from that call. {@code open_findings_json} is already defined as the
-     * carry-forward baseline, which is exactly what this is: something now open that the next round
-     * must reconcile against and exclude from re-reporting.
+     * <p>Deliberately {@code open_findings_json} and NOT {@code findings_json}: the latter is the truthful record of
+     * one model call (copied to {@code posted_findings_json} by {@link #recordPosted}), and a conversation finding did
+     * not come from it; the former is the carry-forward baseline the next round reconciles against.
      *
-     * <p><b>{@code posted_findings_json} is amended, never overwritten.</b> {@link #priorRunFor}
-     * (what a follow-up's reconciliation reads to build its exclusion list) is keyed off that
-     * column, and nothing besides {@link #recordPosted} otherwise refreshes it — which only happens
-     * on the review's NEXT round. A {@code /finding} already lives on a real SCM thread (its
-     * {@code threadRef} names it), so it is already "posted" in every sense that column cares about;
-     * leaving it stale until some future round would mean an author who filed a finding, then pushed
-     * a fix before any new review ran, gets no reconciliation credit for it. But {@code recordPosted}
-     * deliberately guards its write with {@code WHERE commit_sha = ?} so a superseded run can never
-     * pair the PREVIOUS run's {@code last_posted_commit} with newer findings — copying the whole
-     * baseline over {@code posted_findings_json} here would bypass that guard and, on supersession or
-     * a terminal post failure, promote an unposted baseline into the posted snapshot while
-     * {@code last_posted_commit} still names the older run. Reading the CURRENT posted snapshot,
-     * adding just this one finding, deduping, and writing back keeps the two columns' meanings
-     * independent, the way {@code recordOpenFindings} and {@code recordPosted} already are. Skipped
-     * entirely when {@code last_posted_commit IS NULL}: {@link #priorRunFor} returns
-     * {@code Optional.empty()} in that state, so nothing reads {@code posted_findings_json} yet and
-     * writing one would invent a snapshot that was never actually posted.
+     * <p><b>{@code posted_findings_json} is amended, never overwritten.</b> {@link #priorRunFor} is keyed off it and
+     * only {@link #recordPosted} refreshes it, on the NEXT round; a {@code /finding} already lives on a real thread, so
+     * leaving it out would deny an author who pushed a fix before any new review its reconciliation credit. Copying the
+     * whole baseline would bypass {@code recordPosted}'s {@code WHERE commit_sha = ?} guard and could promote an
+     * unposted baseline while {@code last_posted_commit} names the older run, so the CURRENT snapshot is read, this one
+     * finding added, deduped and written back. Skipped when {@code last_posted_commit IS NULL}: nothing reads the
+     * column yet, and writing it would invent a snapshot never posted.
      *
      * <p>Runs the same {@link #dedupeByAnchor} the baseline is always written through, so a
      * {@code /finding} on a line that already has an open finding merges into it rather than
@@ -1488,33 +1489,33 @@ public class ReviewProjection {
     }
 
     /**
-     * Reset the row to an in-progress state for a manual re-run, clearing any prior terminal error.
+     * Reset the row to an in-progress state for a manual re-run of {@code round}, clearing any prior terminal error;
+     * never over a header a later round wrote (V121).
      *
-     * <p>Deliberately does NOT touch {@code attempt}, and {@code attempt} is deliberately NOT the run
-     * identity a charge is keyed under — the obvious reuse, and wrong in both directions. It is written
-     * only by {@link #retryPipeline} and {@link #scheduleRetry}, the ADR-016 auto-retry paths, which
-     * keep the worker's idempotency claims so the worker re-emits its PERSISTED result: one paid call,
-     * dispatched more than once, whose charges must therefore COLLAPSE. A re-run is the opposite — the
-     * claims are cleared on purpose, so the LLM spends again and the charges must SEPARATE — and it
-     * leaves {@code attempt} untouched, so folding that column into the key would be inert here and
-     * would inflate every auto-retry into two or three charges for one call. The run number comes from
-     * {@link dev.codespire.orchestrator.llm.ReviewRuns} instead, which moves on exactly the paths that
-     * can spend again.
+     * <p>Deliberately does NOT touch {@code attempt}, which is NOT the run identity a charge is keyed under: only the
+     * ADR-016 auto-retry paths ({@link #retryPipeline}, {@link #scheduleRetry}) write it, and they keep the worker's
+     * claims, so one paid call dispatched more than once must COLLAPSE its charges. A re-run clears the claims, so its
+     * charges must SEPARATE; the run number comes from {@link dev.codespire.orchestrator.llm.ReviewRuns} instead.
      */
-    public void markRerunStarted(String reviewId) {
-        // A re-run is a new run: a fresh run_token, so the worker's look-first does not take the
-        // earlier run's review for its own (spire-test PR 55, 2026-10-16).
+    public void markRerunStarted(String reviewId, int round) {
+        // A fresh run_token, so the worker's look-first does not take the earlier run's review (spire-test PR 55).
         update("""
                 UPDATE review_status SET status = 'reviewing', stage = ?, error_detail = NULL,
-                       note = 'Re-run requested.', run_token = %s, updated_at = now()
-                WHERE review_id = ?
+                       note = 'Re-run requested.', run_token = %s, run_round = ?, updated_at = now()
+                WHERE review_id = ? AND COALESCE(run_round, 0) <= ?
                 """.formatted(NEW_RUN_TOKEN), ps -> {
             ps.setInt(1, STAGE_DIFF);
-            ps.setString(2, reviewId);
+            ps.setInt(2, round);
+            ps.setString(3, reviewId);
+            ps.setInt(4, round);
         });
         broadcast(reviewId);
     }
 
+    private static final int REFRESH = -1; // upsertHeader's claimRound: a refresh
+    private static final int NO_ROUND = 0; // a header with no run (observe-only)
+    /** A run's header write never replaces a header a later round wrote; evaluated on the locked row (V121). */
+    private static final String LATER_ROUND_KEPT = "COALESCE(review_status.run_round, 0) <= EXCLUDED.run_round";
     /** A claimed header write is skipped once the current round's check wait has left 'admitted' (V121). */
     private static final String HEADER_FENCE = "WHERE NOT EXISTS (SELECT 1 FROM review_checks_wait w WHERE w.review_id ="
             + " EXCLUDED.review_id AND w.state <> 'admitted' AND w.round = (SELECT count(*) FROM event_log e WHERE"
