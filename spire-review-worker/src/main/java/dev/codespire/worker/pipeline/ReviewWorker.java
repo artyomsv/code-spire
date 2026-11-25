@@ -6,7 +6,6 @@ import dev.codespire.contract.event.IntegrationEvent.CommentsPosted;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
 import dev.codespire.contract.llm.Completion;
-import dev.codespire.contract.llm.Prompt;
 import dev.codespire.contract.command.ActionCommand.GenerateReview;
 import dev.codespire.contract.command.ActionCommand.PostComments;
 import dev.codespire.contract.port.CommentSink;
@@ -39,9 +38,11 @@ import org.jboss.logging.Logger;
 
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * The review worker: GenerateReview (re-fetch diff by commit -> prompt -> LLM
@@ -111,8 +112,21 @@ public class ReviewWorker {
     /** Idempotency slot for the reconcile call (ADR-019) — same keyspace, its own claim. */
     static final String RECONCILE_KEY = "LLM:reconcile";
 
-    /** Persisted under RECONCILE_KEY so redelivery replays verdicts without a second spend. */
-    private record ReconcileOutcome(List<FindingVerdict> verdicts, ModelUsage usage) {
+    /**
+     * Persisted under RECONCILE_KEY so redelivery replays verdicts without a second spend. {@code truncated} and
+     * {@code omittedFiles} carry a clipped reconcile diff to the posted note, also on a replay; a blob written before
+     * they existed reads as not clipped.
+     */
+    private record ReconcileOutcome(List<FindingVerdict> verdicts, ModelUsage usage, boolean truncated,
+                                    List<String> omittedFiles) {
+
+        private ReconcileOutcome {
+            omittedFiles = omittedFiles == null ? List.of() : List.copyOf(omittedFiles);
+        }
+
+        private ReconcileOutcome(List<FindingVerdict> verdicts, ModelUsage usage) {
+            this(verdicts, usage, false, List.of());
+        }
     }
 
     /**
@@ -181,21 +195,15 @@ public class ReviewWorker {
                                Reconciliation reconciliation, WorkerLlmProvider.LlmClient client) {
         ReviewPromptBuilder.Built built =
                 ReviewPromptBuilder.build(pr, diff.files(), context, reconciliation.exclusions(),
-                        command.reviewPrompt());
-        Completion completion = promptLog.tap("review", client.provider())
-                .complete(built.prompt(), client.params())
-                .toCompletableFuture().join();
+                        command.reviewPrompt(), client.limits());
+        Completion completion = PaidCalls.complete(promptLog.tap("review", client.provider()),
+                built.prompt(), client.params(), built.largePrompt());
 
-        ReviewResult parsed = FindingsParser.parse(completion);
-        // Carry the "diff was clipped to fit the budget" flag so a partial review is
-        // marked on the dashboard and the posted summary comment (not silent).
-        ReviewResult truncatedAware = built.truncated()
-                ? parsed.withTruncated(true)
-                : parsed;
         ReconcileOutcome reconcile = reconciliation.outcome();
+        ReviewResult parsed = withClipping(FindingsParser.parse(completion), built, reconcile);
         ReviewResult result = reconcile == null
-                ? truncatedAware
-                : ReconcileSteps.dropAnchorCollisions(truncatedAware, reconcile.verdicts());
+                ? parsed
+                : ReconcileSteps.dropAnchorCollisions(parsed, reconcile.verdicts());
 
         // Persist-then-emit (finding M2): marking first makes the paid call
         // unrepeatable; the serialized result keeps redelivery re-emittable
@@ -205,6 +213,23 @@ public class ReviewWorker {
                 ? new ReviewGenerated(command.reviewId(), command.prId(), command.commit(), result)
                 : new ReviewGenerated(command.reviewId(), command.prId(), command.commit(),
                         result, reconcile.verdicts(), reconcile.usage()));
+    }
+
+    /**
+     * Carries what was cut from the review call and the reconcile call onto the result, so a partial review is marked
+     * on the dashboard and the posted summary names the files the model did not fully see (not silent).
+     */
+    private static ReviewResult withClipping(ReviewResult parsed, ReviewPromptBuilder.Built built,
+                                             ReconcileOutcome reconcile) {
+        boolean reconcileClipped = reconcile != null && reconcile.truncated();
+        if (!built.truncated() && !reconcileClipped) {
+            return parsed;
+        }
+        Set<String> omitted = new LinkedHashSet<>(built.omittedFiles());
+        if (reconcile != null) {
+            omitted.addAll(reconcile.omittedFiles());
+        }
+        return parsed.withTruncated(true).withOmittedFiles(List.copyOf(omitted));
     }
 
     /**
@@ -236,13 +261,14 @@ public class ReviewWorker {
         List<PriorFinding> remapped = basis.remapped();
         String diffText = incremental != null ? incremental : DiffRenderer.render(diff.files());
         Map<String, ThreadTranscript> transcripts = ReconcileSteps.transcripts(clients.comments(), at, remapped);
-        Prompt prompt = ReconcilePrompt.render(remapped, transcripts, diffText,
-                incremental != null, command.reconcilePrompt());
-        Completion completion = promptLog.tap("reconcile", client.provider())
-                .complete(prompt, client.params())
-                .toCompletableFuture().join();
-        List<FindingVerdict> verdicts = ReconcileSteps.judge(completion.text(), remapped, incremental);
-        ReconcileOutcome outcome = new ReconcileOutcome(verdicts, completion.usage());
+        ReconcilePrompt.Built built = ReconcilePrompt.build(remapped, transcripts, diffText,
+                incremental != null, command.reconcilePrompt(), client.limits());
+        Completion completion = PaidCalls.complete(promptLog.tap("reconcile", client.provider()),
+                built.prompt(), client.params(), built.largePrompt());
+        List<FindingVerdict> verdicts = ReconcileSteps.judge(completion.text(), remapped, incremental,
+                Set.copyOf(built.omittedFiles()));
+        ReconcileOutcome outcome = new ReconcileOutcome(verdicts, completion.usage(), built.truncated(),
+                built.omittedFiles());
         idempotency.markPosted(command.reviewId(), command.commit(), RECONCILE_KEY, writeReconcileOutcome(outcome));
         return new Reconciliation(remapped, outcome);
     }
@@ -732,8 +758,7 @@ public class ReviewWorker {
         StringBuilder sb = new StringBuilder();
         sb.append("### Code Spire review (`").append(commit).append("`)\n\n");
         if (review.truncated()) {
-            sb.append("> **Partial review:** this PR's diff exceeded the review budget and was ")
-                    .append("truncated — changes beyond the token limit were not reviewed.\n\n");
+            sb.append(PartialReviewNote.markdown(review.omittedFiles()));
         }
         sb.append(review.summary() == null ? "" : review.summary()).append('\n');
         if (!review.findings().isEmpty()) {

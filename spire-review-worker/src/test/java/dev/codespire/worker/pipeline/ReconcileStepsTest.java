@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -168,6 +169,19 @@ class ReconcileStepsTest {
         List<FindingVerdict> verdicts = ReconcileSteps.judge(answer, numbered, null);
 
         assertEquals(FindingVerdict.Status.STILL_OPEN, verdicts.getFirst().status());
+    }
+
+    /** Review input limit: a clipped reconcile never resolves a finding on a file the model did not fully see. */
+    @Test
+    void aFindingOnAnOmittedFileStaysUnchangedWhateverTheAnswerSaid() {
+        List<PriorFinding> numbered = List.of(at("src/A.java", 3, "TEST-thread-1"), at("src/B.java", 9, "TEST-thread-2"));
+        String answer = "{\"verdicts\":[{\"id\":1,\"status\":\"resolved\"},{\"id\":2,\"status\":\"resolved\"}]}";
+
+        List<FindingVerdict> verdicts = ReconcileSteps.judge(answer, numbered, null, Set.of("src/B.java"));
+
+        assertEquals(FindingVerdict.Status.RESOLVED, verdicts.get(0).status(), "src/A.java was seen");
+        assertEquals(FindingVerdict.Status.UNCHANGED, verdicts.get(1).status(), "src/B.java was not");
+        assertEquals("TEST-thread-2", verdicts.get(1).threadRef(), "the verdict keeps its thread");
     }
 
     @Test

@@ -99,6 +99,28 @@ final class ReconcileSteps {
     }
 
     /**
+     * As {@link #judge(String, List, String)}, and a finding on a file the clipped diff left the model not fully
+     * seeing is UNCHANGED whatever the answer said: a reconcile must never resolve, or reopen, what it could not see.
+     */
+    static List<FindingVerdict> judge(String answerText, List<PriorFinding> numbered, String incrementalDiff,
+                                      Set<String> omittedPaths) {
+        return unchangedWhereUnseen(judge(answerText, numbered, incrementalDiff), omittedPaths);
+    }
+
+    /** Every verdict on an omitted path becomes UNCHANGED, keeping its thread, place and note. */
+    static List<FindingVerdict> unchangedWhereUnseen(List<FindingVerdict> verdicts, Set<String> omittedPaths) {
+        if (omittedPaths.isEmpty()) {
+            return verdicts;
+        }
+        return verdicts.stream()
+                .map(v -> omittedPaths.contains(v.path()) && v.status() != FindingVerdict.Status.UNCHANGED
+                        ? new FindingVerdict(v.threadRef(), v.path(), v.line(), FindingVerdict.Status.UNCHANGED,
+                                v.note())
+                        : v)
+                .toList();
+    }
+
+    /**
      * Drops new findings whose anchor collides with a STILL_OPEN or UNCHANGED verdict — that code
      * is already tracked (in its thread, or deliberately left untouched) so a fresh finding there
      * would be a duplicate.
