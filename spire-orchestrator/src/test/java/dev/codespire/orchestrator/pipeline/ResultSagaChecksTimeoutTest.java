@@ -24,7 +24,7 @@ class ResultSagaChecksTimeoutTest {
     void aReviewStartedOnTheTimeoutIsPostedAsACommentAndSaysCiHadNotFinished() {
         fx.unfinishedChecksOn = COMMIT;
         fx.saga().on(generated());
-        var post = assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast());
+        ActionCommand.PostComments post = assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast());
         assertEquals(ReviewVerdict.APPROVE, post.assessment());
         assertEquals(ReviewVerdict.COMMENT, post.verdict());
         assertEquals(Boolean.FALSE, post.reviewerMayApprove());
@@ -40,9 +40,25 @@ class ResultSagaChecksTimeoutTest {
     void aReviewWhoseChecksFinishedApprovesAsBefore() {
         fx.unfinishedChecksOn = "TEST-older-head";
         fx.saga().on(generated());
-        var post = assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast());
+        ActionCommand.PostComments post = assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast());
         assertEquals(ReviewVerdict.APPROVE, post.verdict());
         assertEquals("s", post.findings().summary());
+    }
+
+    /**
+     * Round 1 timed out on this head; the repository then switched to "Immediately" and round 2 re-ran the same head.
+     * Round 1's hold is not round 2's: it approves, with no notice, and labels approved.
+     */
+    @Test
+    void anEarlierRoundsHoldDoesNotReachARerunOfTheSameHead() {
+        fx.unfinishedChecksOn = COMMIT;
+        fx.round = 2;
+        fx.labels = Optional.of(true);
+        fx.saga().on(generated());
+        ActionCommand.PostComments post = assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast());
+        assertEquals(ReviewVerdict.APPROVE, post.verdict());
+        assertEquals("s", post.findings().summary());
+        assertEquals(Boolean.TRUE, post.verdictLabels());
     }
 
     /** With Verdict labels on, an approval the timeout held back never reaches the label either. */
@@ -76,7 +92,7 @@ class ResultSagaChecksTimeoutTest {
     /** A decision with no reason of its own gets the hold's reason alone, never "null · checks_unfinished". */
     @Test
     void theHoldOfADecisionWithoutAReasonIsTheHoldAlone() {
-        var held = ReviewVerdictDecision.holdForUnfinishedChecks(
+        ReviewVerdictDecision.Decision held = ReviewVerdictDecision.holdForUnfinishedChecks(
                 new ReviewVerdictDecision.Decision(ReviewVerdict.APPROVE, ReviewVerdict.APPROVE, true, null));
         assertEquals(ReviewVerdictDecision.REASON_CHECKS_UNFINISHED, held.reason());
         assertEquals(ReviewVerdict.COMMENT, held.verdict());
@@ -88,7 +104,7 @@ class ResultSagaChecksTimeoutTest {
         fx.unfinishedChecksOn = COMMIT;
         fx.openBlockers = 1;
         fx.saga().on(generated());
-        var post = assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast());
+        ActionCommand.PostComments post = assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast());
         assertEquals(ReviewVerdict.REQUEST_CHANGES, post.assessment());
         assertEquals(ReviewVerdict.COMMENT, post.verdict());
     }

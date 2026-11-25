@@ -102,14 +102,15 @@ class ChecksWaitStoreTest {
         ChecksWait wait = wait(HEAD, 1, Instant.now());
         store.startWaiting(wait);
         assertTrue(store.claim(wait.at(Stage.STARTING_UNFINISHED)));
-        assertTrue(store.startedUnfinished(reviewId, HEAD), "held while the start is pending");
+        assertTrue(store.startedUnfinished(new ChecksWait.Run(reviewId, HEAD, 1)), "held while the start is pending");
         store.finish(wait.at(Stage.STARTING_UNFINISHED));
-        assertTrue(store.startedUnfinished(reviewId, HEAD));
-        assertFalse(store.startedUnfinished(reviewId, NEXT_HEAD));
+        assertTrue(store.startedUnfinished(new ChecksWait.Run(reviewId, HEAD, 1)));
+        assertFalse(store.startedUnfinished(new ChecksWait.Run(reviewId, NEXT_HEAD, 1)));
+        assertFalse(store.startedUnfinished(new ChecksWait.Run(reviewId, HEAD, 2)), "a later round of the head is not held");
         store.register(wait(HEAD, 1, Instant.now()).at(Stage.STARTED));
-        assertTrue(store.startedUnfinished(reviewId, HEAD), "the same round is never registered again");
+        assertTrue(store.startedUnfinished(new ChecksWait.Run(reviewId, HEAD, 1)), "the same round is never registered again");
         store.register(wait(HEAD, 2, Instant.now()).at(Stage.STARTED));
-        assertFalse(store.startedUnfinished(reviewId, HEAD), "a later run started at once replaces the hold");
+        assertFalse(store.startedUnfinished(new ChecksWait.Run(reviewId, HEAD, 1)), "a later run started at once replaces the hold");
     }
 
     /** A late registration of an earlier run never replaces a later run's row. */
@@ -165,10 +166,10 @@ class ChecksWaitStoreTest {
 
     /** The review's persisted row as {@code state:round:failed_checks}, or {@code none}. */
     private String row() {
-        try (var connection = dataSource.getConnection(); var statement = connection.prepareStatement(
+        try (java.sql.Connection connection = dataSource.getConnection(); java.sql.PreparedStatement statement = connection.prepareStatement(
                 "SELECT state, round, failed_checks FROM review_checks_wait WHERE review_id = ?")) {
             statement.setString(1, reviewId);
-            try (var rows = statement.executeQuery()) {
+            try (java.sql.ResultSet rows = statement.executeQuery()) {
                 return rows.next() ? rows.getString(1) + ":" + rows.getInt(2) + ":" + rows.getString(3) : "none";
             }
         } catch (java.sql.SQLException failure) {
@@ -185,7 +186,7 @@ class ChecksWaitStoreTest {
     }
 
     private void execute(String sql, Object... parameters) throws Exception {
-        try (var connection = dataSource.getConnection(); var statement = connection.prepareStatement(sql)) {
+        try (java.sql.Connection connection = dataSource.getConnection(); java.sql.PreparedStatement statement = connection.prepareStatement(sql)) {
             for (int i = 0; i < parameters.length; i++) statement.setObject(i + 1, parameters[i]);
             statement.executeUpdate();
         }

@@ -34,29 +34,14 @@ public class ReviewStartGate {
 
     private static final Logger LOG = Logger.getLogger(ReviewStartGate.class);
 
-    @Inject
-    ReviewProjection projection;
-
-    @Inject
-    StartReviewSetting setting;
-
-    @Inject
-    ChecksReader reader;
-
-    @Inject
-    ChecksWaitStore waits;
-
-    @Inject
-    CommandsEmitter commands;
-
-    @Inject
-    ReviewLifecycleService lifecycle;
-
-    @Inject
-    SkippedRunReceipts receipts;
-
-    @Inject
-    ReviewRoundLock rounds;
+    @Inject ReviewProjection projection;
+    @Inject StartReviewSetting setting;
+    @Inject ChecksReader reader;
+    @Inject ChecksWaitStore waits;
+    @Inject CommandsEmitter commands;
+    @Inject ReviewLifecycleService lifecycle;
+    @Inject SkippedRunReceipts receipts;
+    @Inject ReviewRoundLock rounds;
 
     /** A run to admit: its request, and the fork flag its review's start sends. */
     public record Admission(String reviewId, RequestReview request, boolean untrusted) {
@@ -121,14 +106,18 @@ public class ReviewStartGate {
             recordIfUnrecorded(admission, requested.state(), repositoryId);
             return Optional.empty();
         }
-        record(admission, requested.state(), Stage.ADMITTED, repositoryId);
+        record(admitted(admission, requested.state(), repositoryId));
         return Optional.of(new AcceptedRun(requested.state().round(), true));
     }
 
-    private void record(Admission admission, ReviewState state, Stage stage, UUID repositoryId) {
-        receipts.supersede(admission.reviewId());
-        waits.register(ChecksWait.admitted(new ChecksWait.Run(admission.reviewId(), state.currentCommit(), state.round()),
-                repositoryId, stage).withUntrusted(admission.untrusted()));
+    private void record(ChecksWait row) {
+        receipts.supersede(row.reviewId());
+        waits.register(row);
+    }
+
+    private static ChecksWait admitted(Admission admission, ReviewState state, UUID repositoryId) {
+        return ChecksWait.admitted(new ChecksWait.Run(admission.reviewId(), state.currentCommit(), state.round()),
+                repositoryId, Stage.ADMITTED).withUntrusted(admission.untrusted());
     }
 
     /**
@@ -138,7 +127,7 @@ public class ReviewStartGate {
     private void recordIfUnrecorded(Admission admission, ReviewState state, UUID repositoryId) {
         boolean current = state.isReviewing() && admission.request().commit().equals(state.currentCommit());
         if (!current || waits.admittedRound(admission.reviewId()) >= state.round()) return;
-        record(admission, state, Stage.WAITING, repositoryId);
+        record(admitted(admission, state, repositoryId).at(Stage.WAITING));
         if (waits.markWaiting(admission.reviewId(), state.round())) projection.touch(admission.reviewId());
         LOG.infof("review %s: recorded round %d's wait, which its first admission missed", admission.reviewId(),
                 state.round());

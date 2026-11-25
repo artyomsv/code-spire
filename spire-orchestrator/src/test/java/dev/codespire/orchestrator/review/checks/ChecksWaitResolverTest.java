@@ -144,7 +144,7 @@ class ChecksWaitResolverTest extends ChecksWaitFixture {
         waits.startWaiting(waitOn(HEAD, ChecksWaitDecision.TIMEOUT.toSeconds()));
         resolver().resolve(waits.rowOf(REVIEW_ID));
         assertEquals(1, fetches().size());
-        assertTrue(waits.startedUnfinished(REVIEW_ID, HEAD), "the kept row holds the verdict below Approve");
+        assertTrue(waits.startedUnfinished(new ChecksWait.Run(REVIEW_ID, HEAD, round())), "the kept row holds the verdict below Approve");
         assertEquals(List.of("reviewing"), statuses);
         assertEquals(List.of("ChecksTimedOut"), history);
     }

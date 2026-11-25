@@ -111,13 +111,25 @@ class ReviewStartGateTest extends ChecksWaitFixture {
         assertEquals(List.of("reviewing"), statuses, "the header write came first and nothing repeats it");
     }
 
-    /** A caller that died between admission and begin: once the grace has passed, the sweep makes the run readable. */
+    /**
+     * The caller pauses after admission, before its header write. The sweep, once the grace has passed, sets the run's
+     * header up and makes it readable; red skips it. The caller then resumes: its begin finds the round no longer
+     * admitted and does nothing (its header write is fenced in SQL, ReviewHeaderFenceTest), so the skip stands.
+     */
     @Test
-    void anAdmittedRunWhoseCallerDiedIsMadeReadyByTheSweep() {
-        waits.register(waitOn(HEAD, ChecksWaitDecision.GRACE.toSeconds() + 1).at(Stage.ADMITTED));
+    void aCallerPausedPastTheGraceNeverUndoesTheSweepsSkip() {
+        ReviewStartGate.AcceptedRun run = admitRun(NEXT_HEAD);
+        waits.age(REVIEW_ID, ChecksWaitDecision.GRACE.plusSeconds(1));
         sweep().sweep();
+        assertEquals(List.of(run.round()), waits.headersStarted, "the sweep set up the header of the run it readied");
         assertEquals(Stage.WAITING, waits.rowOf(REVIEW_ID).stage());
-        assertEquals(List.of(round()), waits.shownWaiting);
+        verdict = red("TEST-build");
+        resolver().wake(REPOSITORY_ID, new ChecksChanged(REPO, NEXT_HEAD));
+        assertEquals(Stage.SKIPPED, waits.rowOf(REVIEW_ID).stage());
+        gate().begin(fetch(NEXT_HEAD), run);
+        assertEquals(Stage.SKIPPED, waits.rowOf(REVIEW_ID).stage());
+        assertEquals(List.of(run.round()), waits.shownWaiting, "the late caller showed nothing over the skip");
+        assertTrue(fetches().isEmpty());
     }
 
     /** A later run's record is never replaced by an earlier round, whatever order the writes arrive in. */

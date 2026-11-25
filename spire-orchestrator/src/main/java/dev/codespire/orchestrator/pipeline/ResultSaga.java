@@ -500,7 +500,7 @@ public class ResultSaga {
     private void postReview(ReviewGenerated e, dev.codespire.orchestrator.memory.PreferenceFilter.Filtered filtered,
                             String priorSummaryRef) {
         ReviewPostSettings settings = new ReviewPostSettings(
-                new ReviewPostSettings.Sources(projection, repositories, repositoryAccounts, checksWaits));
+                new ReviewPostSettings.Sources(projection, repositories, repositoryAccounts, checksWaits, runs));
         ReviewVerdictDecision.Decision decision = settings.decide(e, filtered.result());
         projection.appendEvent(e.reviewId(), "result", "ReviewVerdictDecided", decision.detail());
         // The worker marks this run's review with its token, so a re-run on the same head posts beside the earlier one.

@@ -7,6 +7,8 @@ import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.repository.BlockApprovalAt;
 import dev.codespire.orchestrator.repository.RepositoryAccounts;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
+import dev.codespire.orchestrator.llm.ReviewRuns;
+import dev.codespire.orchestrator.review.checks.ChecksWait;
 import dev.codespire.orchestrator.review.checks.ChecksWaitStore;
 
 import java.util.Objects;
@@ -31,7 +33,7 @@ final class ReviewPostSettings {
 
     /** The saga's collaborators this reads. */
     record Sources(ReviewProjection projection, RepositoryRegistry repositories, RepositoryAccounts repositoryAccounts,
-                   ChecksWaitStore checksWaits) {
+                   ChecksWaitStore checksWaits, ReviewRuns runs) {
     }
 
     private final Sources sources;
@@ -76,10 +78,16 @@ final class ReviewPostSettings {
         return on && !(decision.assessment() == ReviewVerdict.APPROVE && checksUnfinished(generated));
     }
 
-    /** Whether this run started on the check timeout (V121); never for an unknown repository. */
+    /**
+     * Whether this very run (its head and round) started on the check timeout (V121); never for an unknown repository.
+     * An earlier round's hold on the same head, left by a run before the repository switched to "Immediately", is not
+     * this run's.
+     */
     private boolean checksUnfinished(ReviewGenerated generated) {
-        return sources.projection().repositoryIdOf(generated.reviewId())
-                .map(id -> sources.checksWaits().startedUnfinished(generated.reviewId(), generated.commit()))
+        String reviewId = generated.reviewId();
+        return sources.projection().repositoryIdOf(reviewId)
+                .map(id -> sources.checksWaits().startedUnfinished(
+                        new ChecksWait.Run(reviewId, generated.commit(), sources.runs().roundOrUnknown(reviewId))))
                 .orElse(false);
     }
 }

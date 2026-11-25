@@ -81,9 +81,9 @@ class InMemoryChecksWaits extends ChecksWaitStore {
     }
 
     @Override
-    public boolean startedUnfinished(String reviewId, String commit) {
-        ChecksWait row = rows.get(reviewId);
-        return row != null && row.head().equals(commit)
+    public boolean startedUnfinished(ChecksWait.Run run) {
+        ChecksWait row = rows.get(run.reviewId());
+        return row != null && row.head().equals(run.head()) && row.round() == run.round()
                 && (row.stage() == Stage.STARTING_UNFINISHED || row.stage() == Stage.TIMED_OUT);
     }
 
@@ -110,6 +110,21 @@ class InMemoryChecksWaits extends ChecksWaitStore {
     private static boolean graceOver(ChecksWait row) {
         return row.stage() == Stage.ADMITTED
                 && !java.time.Instant.now().isBefore(row.waitingSince().plus(ChecksWaitDecision.GRACE));
+    }
+
+    /** The runs whose header the sweep set up, by round. */
+    final List<Integer> headersStarted = new ArrayList<>();
+
+    @Override
+    public void startHeader(ChecksWait admitted) {
+        headersStarted.add(admitted.round());
+    }
+
+    /** Ages the review's row, as time passing would. */
+    void age(String reviewId, java.time.Duration by) {
+        ChecksWait row = rows.get(reviewId);
+        rows.put(reviewId, new ChecksWait(row.reviewId(), row.repositoryId(), row.head(), row.round(), row.untrusted(),
+                row.waitingSince().minus(by), row.stage(), row.failedChecks()));
     }
 
     /** The review's row, or null. */

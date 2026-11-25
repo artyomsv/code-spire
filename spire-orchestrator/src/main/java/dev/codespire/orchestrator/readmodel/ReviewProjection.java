@@ -122,11 +122,9 @@ public class ReviewProjection {
     // ---- writes (called by the sagas) --------------------------------------
 
     /**
-     * Upsert the header of a review and reset its status/stage for a (re)run. Also resets
-     * {@code answering} to false: the reviewId is stable per PR, so a fresh push re-enters this
-     * upsert, and without the reset a stuck "responding…" flag (e.g. a follow-up that terminally
-     * DLQs without ever posting {@code FollowUpPosted}) would otherwise bleed into the new,
-     * unrelated run.
+     * Upsert the header of a review and reset its status/stage for a (re)run. Also resets {@code answering}: the
+     * reviewId is stable per PR, so a stuck "responding…" flag must not bleed into the new run. Fenced (V121): a run
+     * that waits for checks and was already made readable (by the sweep, its caller late) keeps its status and token.
      */
     public void registerHeader(String reviewId, RepoRef repo, long prId, String title, String author,
                                String authorId, String sourceBranch, String destBranch, String sha,
@@ -157,11 +155,8 @@ public class ReviewProjection {
                               String authorId, String sourceBranch, String destBranch, String sha,
                               String htmlUrl, String providerType, String status, int stage,
                               boolean claimRun) {
-        // A new run also clears what the forge held for the previous head (ADR-047): the commit guard
-        // on recordPostedVerdict protects the write, and "Posted as Approved" under "reviewing" would
-        // read as this head's verdict.
-        // A claimed run is a new run: it gets a fresh run_token (the worker marks this run's review with
-        // it, see runTokenOf); a refresh keeps the row's token as it keeps its outcome.
+        // A new run clears what the forge held for the previous head (ADR-047) and gets a fresh run_token (runTokenOf);
+        // a refresh keeps the row's token as it keeps its outcome.
         String outcomeColumns = claimRun
                 ? "status = EXCLUDED.status, stage = EXCLUDED.stage, attempt = 1, "
                         + "error_detail = NULL, answering = FALSE, "
@@ -178,8 +173,8 @@ public class ReviewProjection {
                         source_branch = EXCLUDED.source_branch, dest_branch = EXCLUDED.dest_branch,
                         commit_sha = EXCLUDED.commit_sha, html_url = EXCLUDED.html_url,
                         provider_type = EXCLUDED.provider_type,
-                        %s updated_at = now()
-                """.formatted(NEW_RUN_TOKEN, outcomeColumns);
+                        %s updated_at = now() %s
+                """.formatted(NEW_RUN_TOKEN, outcomeColumns, claimRun ? HEADER_FENCE : "");
         update(sql, ps -> {
             ps.setString(1, reviewId);
             ps.setString(2, repo.workspace());
@@ -1520,6 +1515,10 @@ public class ReviewProjection {
         broadcast(reviewId);
     }
 
+    /** A claimed header write is skipped once the current round's check wait has left 'admitted' (V121). */
+    private static final String HEADER_FENCE = "WHERE NOT EXISTS (SELECT 1 FROM review_checks_wait w WHERE w.review_id ="
+            + " EXCLUDED.review_id AND w.state <> 'admitted' AND w.round = (SELECT count(*) FROM event_log e WHERE"
+            + " e.stream_id = EXCLUDED.review_id AND e.event_type = 'ReviewRequested'))";
     /** SQL for a fresh, opaque run token; a retry ({@link #retryPipeline}) and a refresh never write one. */
     private static final String NEW_RUN_TOKEN = "md5(random()::text || clock_timestamp()::text)";
 

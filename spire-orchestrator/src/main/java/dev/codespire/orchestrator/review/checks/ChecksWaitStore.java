@@ -140,13 +140,29 @@ public class ChecksWaitStore {
         });
     }
 
-    /** Whether the review of {@code commit} started (or is starting) before its checks finished. */
-    public boolean startedUnfinished(String reviewId, String commit) {
-        return exists("SELECT 1 FROM review_checks_wait WHERE review_id = ? AND head_commit = ?"
+    /** Whether this very run (review, head and round) started, or is starting, before its checks finished. */
+    public boolean startedUnfinished(ChecksWait.Run run) {
+        return exists("SELECT 1 FROM review_checks_wait WHERE review_id = ? AND head_commit = ? AND round = ?"
                 + " AND state IN ('starting_unfinished', 'timed_out')", statement -> {
-            statement.setString(1, reviewId);
-            statement.setString(2, commit);
+            statement.setString(1, run.reviewId());
+            statement.setString(2, run.head());
+            statement.setInt(3, run.round());
         });
+    }
+
+    /**
+     * Sets up the review header for an admitted run whose caller died before it did (V121): the run's head, status
+     * "reviewing" and a fresh run token, as the saga's header write would. The caller's own write, if it comes late, is
+     * then fenced by ReviewProjection because the run has left 'admitted'.
+     */
+    public void startHeader(ChecksWait admitted) {
+        update("UPDATE review_status SET commit_sha = ?, status = 'reviewing', stage = 1, attempt = 1, error_detail = NULL,"
+                + " answering = FALSE, posted_verdict = NULL, posted_review_ref = NULL, posted_review_url = NULL,"
+                + " run_token = md5(random()::text || clock_timestamp()::text), updated_at = now() WHERE review_id = ?",
+                statement -> {
+                    statement.setString(1, admitted.head());
+                    statement.setString(2, admitted.reviewId());
+                });
     }
 
     /** Whether the review waits for checks now (admitted or waiting), on any head. */

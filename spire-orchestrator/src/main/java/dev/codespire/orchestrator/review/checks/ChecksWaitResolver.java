@@ -75,14 +75,16 @@ public class ChecksWaitResolver {
     }
 
     /**
-     * An admitted run whose caller died before it began (its grace has passed: the sweep reads no younger one): made
-     * readable and shown waiting while it is still the review's run, else dropped as it was read.
+     * An admitted run whose caller died before it began (its grace has passed: the sweep reads no younger one): its
+     * header is set up, then it is made readable and shown waiting while it is still the review's run, else dropped as
+     * it was read. A caller that only ran late finds its own header write fenced (ReviewProjection).
      */
     private void readyAdmitted(ChecksWait wait) {
         if (!stillCurrent(wait)) {
             drop(wait);
             return;
         }
+        waits.startHeader(wait);
         if (waits.ready(wait.reviewId(), wait.round()) && waits.markWaiting(wait.reviewId(), wait.round())) {
             projection.touch(wait.reviewId());
         }

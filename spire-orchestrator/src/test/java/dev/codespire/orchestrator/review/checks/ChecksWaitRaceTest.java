@@ -59,7 +59,7 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
         assertEquals(1, fetches().size());
         assertEquals(0, skips());
         assertEquals(ReviewState.Status.REVIEWING, state.status());
-        assertTrue(waits.startedUnfinished(REVIEW_ID, HEAD));
+        assertTrue(waits.startedUnfinished(new ChecksWait.Run(REVIEW_ID, HEAD, round())));
     }
 
     /** The red skip wins; the timeout reader that read first starts nothing. */
@@ -135,7 +135,7 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
             ChecksWait newer = waits.rowOf(REVIEW_ID);
             assertEquals(round(), newer.round(), stage.name());
             assertEquals(Stage.WAITING, newer.stage(), "the re-run's own wait is unchanged");
-            assertTrue(!waits.startedUnfinished(REVIEW_ID, HEAD), "no earlier run's hold on the new run");
+            assertTrue(!waits.startedUnfinished(new ChecksWait.Run(REVIEW_ID, HEAD, round())), "no earlier run's hold on the new run");
         }
     }
 
@@ -158,7 +158,7 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
         ChecksWait wait = waiting(ChecksWaitDecision.TIMEOUT.toSeconds());
         duringSend = lostAck();
         assertThrows(IllegalStateException.class, () -> resolver().resolve(wait));
-        assertTrue(waits.startedUnfinished(REVIEW_ID, HEAD), "the hold stands while the start is pending");
+        assertTrue(waits.startedUnfinished(new ChecksWait.Run(REVIEW_ID, HEAD, round())), "the hold stands while the start is pending");
         sweep().sweep();
         assertEquals(1, fetches().size());
         assertEquals(Stage.TIMED_OUT, waits.rowOf(REVIEW_ID).stage());
