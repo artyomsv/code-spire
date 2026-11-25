@@ -30,7 +30,7 @@ public class ChecksWaitStore {
     private static final String COLUMNS =
             "review_id, repository_id, head_commit, round, untrusted, waiting_since, state, failed_checks";
     private static final String ROUND = " WHERE review_id = ? AND round = ?";
-    private static final String DUE_STAGES = "('waiting', 'starting', 'starting_unfinished', 'skipping')";
+    private static final String DUE_STAGES = "('admitted', 'waiting', 'starting', 'starting_unfinished', 'skipping')";
 
     @Inject
     DataSource dataSource;
@@ -64,6 +64,17 @@ public class ChecksWaitStore {
             statement.setTimestamp(7, Timestamp.from(wait.waitingSince()));
             statement.setTimestamp(8, Timestamp.from(wait.waitingSince().plus(ChecksWaitDecision.GRACE)));
         });
+    }
+
+    /**
+     * Makes an admitted run readable once its review header is set up: before this no wake-up reads it and nothing can
+     * claim it, so a start or a skip never lands before the header write that would undo its status and token.
+     */
+    public boolean ready(String reviewId, int round) {
+        return update("UPDATE review_checks_wait SET state = 'waiting'" + ROUND + " AND state = 'admitted'", statement -> {
+            statement.setString(1, reviewId);
+            statement.setInt(2, round);
+        }) == 1;
     }
 
     /** The round of the review's latest admitted run, 0 when none was recorded. */
@@ -138,9 +149,9 @@ public class ChecksWaitStore {
         });
     }
 
-    /** Whether the review waits for checks now, on any head. */
+    /** Whether the review waits for checks now (admitted or waiting), on any head. */
     public boolean isWaiting(String reviewId) {
-        return exists("SELECT 1 FROM review_checks_wait WHERE review_id = ? AND state = 'waiting'",
+        return exists("SELECT 1 FROM review_checks_wait WHERE review_id = ? AND state IN ('admitted', 'waiting')",
                 statement -> statement.setString(1, reviewId));
     }
 

@@ -722,13 +722,12 @@ public class IntegrationSaga {
         }
 
         boolean observe = policy.observeOnly();
-        // Ask the aggregate FIRST, so the read model only ever claims a run that is actually starting.
-        // Observe-only must not advance the aggregate at all: emitting ReviewRequested here would lock
-        // the review into REVIEWING, so a later active registration of the same commit would find it
-        // "already requested" and never dispatch FetchDiff. The review must stay un-started so
-        // activating it later runs a fresh pipeline. Admitted in the review's round lock, with its round (V121).
-        var run = observe ? java.util.Optional.<ReviewStartGate.AcceptedRun>empty() : reviewStart.admit(new ReviewStartGate
-                .Admission(reviewId, new RecordCommand.RequestReview(commit, e.action().name(), false), !Boolean.FALSE.equals(e.fromFork())));
+        // Ask the aggregate FIRST, so the read model only ever claims a run that is actually starting. Observe-only must
+        // not advance the aggregate at all: ReviewRequested here would lock the review into REVIEWING, so a later active
+        // registration of the same commit would find it "already requested" and never dispatch FetchDiff (V121: gate).
+        ReviewStartGate.Admission admission = new ReviewStartGate.Admission(reviewId,
+                new RecordCommand.RequestReview(commit, e.action().name(), false), !Boolean.FALSE.equals(e.fromFork()));
+        Optional<ReviewStartGate.AcceptedRun> run = observe ? Optional.empty() : reviewStart.admit(admission);
         boolean started = run.isPresent();
 
         // Make the review visible on the dashboard whether or not any work runs — but a re-delivered

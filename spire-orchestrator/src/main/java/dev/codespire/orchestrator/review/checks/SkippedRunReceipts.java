@@ -27,6 +27,8 @@ public class SkippedRunReceipts {
 
     static final String PREFIX = "CI_FAILED:";
     static final String SUPERSEDED = "superseded";
+    /** The worker's mark on a receipt whose label call is under way (CommentIdempotencyStore.TAKEN). */
+    static final String TAKEN = "taken";
     private static final String TABLE = "worker.comment_idempotency";
     private static final Logger LOG = Logger.getLogger(SkippedRunReceipts.class);
 
@@ -43,10 +45,14 @@ public class SkippedRunReceipts {
         });
     }
 
-    /** Closes every receipt of the review that no label has used yet: a newer run was admitted. */
+    /**
+     * Closes every receipt of the review that no label has finished with: a newer run was admitted. An open one is never
+     * taken after this; a taken one (its label call under way) finds its outcome refused and undoes that label.
+     */
     public void supersede(String reviewId) {
         write("UPDATE worker.comment_idempotency SET posted_ref = '" + SUPERSEDED + "', posted_at = now()"
-                + " WHERE review_id = ? AND anchor_key LIKE 'CI\\_FAILED:%' AND posted_ref IS NULL",
+                + " WHERE review_id = ? AND anchor_key LIKE 'CI\\_FAILED:%'"
+                + " AND (posted_ref IS NULL OR posted_ref = '" + TAKEN + "')",
                 statement -> statement.setString(1, reviewId));
     }
 

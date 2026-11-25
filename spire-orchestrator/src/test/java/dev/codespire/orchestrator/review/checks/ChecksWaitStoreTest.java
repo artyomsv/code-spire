@@ -59,6 +59,20 @@ class ChecksWaitStoreTest {
         assertEquals(1, store.admittedRound(reviewId));
     }
 
+    /** An admitted run is unreadable and unclaimable until ready, and only its own round can make it ready. */
+    @Test
+    void anAdmittedRunIsReadOnlyOnceReady() {
+        ChecksWait wait = wait(HEAD, 1, Instant.now());
+        store.register(wait.at(Stage.ADMITTED));
+        assertTrue(store.waitingOn(repositoryId, HEAD).isEmpty());
+        assertFalse(store.claim(wait.at(Stage.STARTING)));
+        assertFalse(store.markWaiting(reviewId, 1));
+        assertFalse(store.ready(reviewId, 2));
+        assertTrue(store.ready(reviewId, 1));
+        assertFalse(store.ready(reviewId, 1), "once");
+        assertEquals(List.of(HEAD), store.waitingOn(repositoryId, HEAD).stream().map(ChecksWait::head).toList());
+    }
+
     /** The waiting status is written only while that very round waits, never over a later status. */
     @Test
     void theWaitingStatusIsShownOnlyWhileThatRoundWaits() {

@@ -100,7 +100,7 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
         assertEquals(0, skips());
         assertEquals(ReviewState.Status.REVIEWING, state.status());
         assertEquals(round(), waits.rowOf(REVIEW_ID).round(), "the re-run's own record is untouched");
-        assertEquals(Stage.WAITING, waits.rowOf(REVIEW_ID).stage());
+        assertEquals(Stage.ADMITTED, waits.rowOf(REVIEW_ID).stage());
     }
 
     /**

@@ -41,6 +41,8 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
     final InMemoryChecksWaits waits = new InMemoryChecksWaits();
     /** The aggregate: its head, status and round, folded by the real decider. */
     ReviewState state = reviewing(HEAD, 1);
+    /** How many critical sections took the review's round lock. */
+    int lockedSections;
     /** Fails the next admission after the aggregate accepted its run, as a lost database would. */
     RuntimeException admissionFailure;
     StartReview setting = StartReview.AFTER_CHECKS;
@@ -144,10 +146,11 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
         return outcomes;
     }
 
-    private static ReviewRoundLock roundLock() {
+    private ReviewRoundLock roundLock() {
         return new ReviewRoundLock() {
             @Override
             public <T> T holding(String reviewId, Supplier<T> work) {
+                lockedSections++;
                 return work.get();
             }
         };

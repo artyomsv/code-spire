@@ -50,6 +50,7 @@ public class ChecksWaitResolver {
     /** A row the sweep claimed: a wait to read, or a claimed outcome to finish. */
     public void resume(ChecksWait wait) {
         switch (wait.stage()) {
+            case ADMITTED -> readyAdmitted(wait);
             case WAITING -> resolve(wait);
             // Fenced by the run's round under the round lock in dispatch: an earlier run's claim never starts a later one.
             case STARTING, STARTING_UNFINISHED -> outcomes.dispatch(wait);
@@ -70,6 +71,20 @@ public class ChecksWaitResolver {
             case START -> outcomes.start(wait);
             case START_UNFINISHED -> outcomes.startUnfinished(wait);
             case SKIP -> outcomes.skip(wait, verdict.failed());
+        }
+    }
+
+    /**
+     * An admitted run whose caller died before it began (its grace has passed: the sweep reads no younger one): made
+     * readable and shown waiting while it is still the review's run, else dropped as it was read.
+     */
+    private void readyAdmitted(ChecksWait wait) {
+        if (!stillCurrent(wait)) {
+            drop(wait);
+            return;
+        }
+        if (waits.ready(wait.reviewId(), wait.round()) && waits.markWaiting(wait.reviewId(), wait.round())) {
+            projection.touch(wait.reviewId());
         }
     }
 

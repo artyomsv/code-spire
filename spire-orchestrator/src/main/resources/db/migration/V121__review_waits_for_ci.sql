@@ -10,8 +10,10 @@ ALTER TABLE repository ADD COLUMN start_review TEXT NOT NULL DEFAULT 'IMMEDIATEL
     CONSTRAINT repository_start_review_known CHECK (start_review IN ('IMMEDIATELY', 'AFTER_CHECKS'));
 
 -- One row per review: its latest admitted run, identified by its round (the count of ReviewRequested folded when the
--- run was accepted, so a re-run on the same head is another run). The row is written in the round lock that admits
--- the run and is never replaced by an earlier round, so it is the durable admission state every later write fences on.
+-- run was accepted, so a re-run on the same head is another run), for a repository that waits for checks. The row is
+-- written in the round lock that admits the run and is never replaced by an earlier round, so it is the durable
+-- admission state every later write fences on.
+--   admitted            the run was accepted and its review header is still being set up; nothing reads it yet.
 --   waiting             nothing has run; the webhook wake-up and the sweep read the head's checks.
 --   starting            the review was claimed to start; its FetchDiff is sent, then the row becomes started.
 --   starting_unfinished the same after the 60-minute timeout; the row then becomes timed_out.
@@ -32,12 +34,12 @@ CREATE TABLE review_checks_wait (
     round         INT         NOT NULL,
     untrusted     BOOLEAN     NOT NULL,
     state         TEXT        NOT NULL CONSTRAINT review_checks_wait_state_known
-        CHECK (state IN ('waiting', 'starting', 'starting_unfinished', 'skipping', 'started', 'skipped', 'timed_out')),
+        CHECK (state IN ('admitted', 'waiting', 'starting', 'starting_unfinished', 'skipping', 'started', 'skipped', 'timed_out')),
     waiting_since TIMESTAMPTZ NOT NULL,
     next_read_at  TIMESTAMPTZ NOT NULL,
     failed_checks TEXT
 );
 
 CREATE INDEX review_checks_wait_due ON review_checks_wait (next_read_at)
-    WHERE state IN ('waiting', 'starting', 'starting_unfinished', 'skipping');
+    WHERE state IN ('admitted', 'waiting', 'starting', 'starting_unfinished', 'skipping');
 CREATE INDEX review_checks_wait_head ON review_checks_wait (repository_id, head_commit) WHERE state = 'waiting';

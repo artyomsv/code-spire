@@ -13,11 +13,11 @@ public record ChecksWait(String reviewId, UUID repositoryId, String head, int ro
                          Instant waitingSince, Stage stage, String failedChecks) {
 
     /**
-     * Where the run is: its claimed stages are the recoverable intent of an outcome not yet complete; STARTED, SKIPPED
+     * Where the run is: ADMITTED until its review header is set up, then WAITING; its claimed stages are the recoverable intent of an outcome not yet complete; STARTED, SKIPPED
      * and TIMED_OUT are terminal and stay as the admission record later writes fence on.
      */
     public enum Stage {
-        WAITING, STARTING, STARTING_UNFINISHED, SKIPPING, STARTED, SKIPPED, TIMED_OUT;
+        ADMITTED, WAITING, STARTING, STARTING_UNFINISHED, SKIPPING, STARTED, SKIPPED, TIMED_OUT;
 
         /** The stored form ({@code review_checks_wait.state}). */
         public String stored() {
@@ -29,7 +29,7 @@ public record ChecksWait(String reviewId, UUID repositoryId, String head, int ro
         }
     }
 
-    /** A new run of the review in {@code stage}: WAITING for its checks, or STARTED at once. */
+    /** A new run of the review in {@code stage}. */
     public static ChecksWait admitted(Run run, UUID repositoryId, Stage stage) {
         return new ChecksWait(run.reviewId(), repositoryId, run.head(), run.round(), false, Instant.now(), stage, null);
     }

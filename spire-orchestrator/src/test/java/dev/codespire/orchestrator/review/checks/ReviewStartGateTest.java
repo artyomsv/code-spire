@@ -20,26 +20,32 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class ReviewStartGateTest extends ChecksWaitFixture {
 
-    /** "Immediately" sends the run's own first command, unchanged; the run is recorded as started. */
+    /**
+     * "Immediately" takes the pre-V121 path exactly: the aggregate accepts the run and its first command goes out,
+     * unchanged, with no lock, no admission row and no receipt close.
+     */
     @Test
     void immediatelySendsTheRunsFirstCommandUnchanged() {
         setting = StartReview.IMMEDIATELY;
         ActionCommand.FetchDiff fetch = fetch(NEXT_HEAD);
         gate().begin(fetch, admitRun(NEXT_HEAD));
         assertEquals(List.of(fetch), emitted);
-        assertEquals(Stage.STARTED, waits.rowOf(REVIEW_ID).stage());
+        assertEquals(null, waits.rowOf(REVIEW_ID));
+        assertTrue(receiptLog.isEmpty(), receiptLog.toString());
+        assertEquals(0, lockedSections, "no round lock");
         assertTrue(statuses.isEmpty(), statuses.toString());
     }
 
-    /** A run admitted to start at once replaces an earlier run's wait or hold. */
+    /** A replayed event on an immediate repository behaves as before V121: the aggregate declines it, nothing else. */
     @Test
-    void immediatelyReplacesAnEarlierRunsWait() {
-        waits.startWaiting(waitOn(HEAD, 0));
+    void immediatelyAReplayedEventIsDeclinedAsBefore() {
         setting = StartReview.IMMEDIATELY;
         requestRun(NEXT_HEAD);
-        assertEquals(Stage.STARTED, waits.rowOf(REVIEW_ID).stage());
-        assertEquals(round(), waits.rowOf(REVIEW_ID).round());
+        ReviewStartGate.Admission replay = new ReviewStartGate.Admission(REVIEW_ID,
+                new RecordCommand.RequestReview(NEXT_HEAD, "UPDATED", false), true);
+        assertTrue(gate().admit(replay).isEmpty());
         assertEquals(1, fetches().size());
+        assertEquals(null, waits.rowOf(REVIEW_ID));
     }
 
     @Test
@@ -47,6 +53,7 @@ class ReviewStartGateTest extends ChecksWaitFixture {
         ReviewStartGate.AcceptedRun run = admitRun(NEXT_HEAD);
         assertEquals(round(), run.round(), "the round the aggregate accepted, folded from its own append");
         assertEquals(List.of("supersede"), receiptLog, "the earlier runs' label receipts are closed at admission");
+        assertEquals(Stage.ADMITTED, waits.rowOf(REVIEW_ID).stage(), "nothing reads it before its header is set up");
         gate().begin(fetch(NEXT_HEAD), run);
         assertTrue(emitted.isEmpty(), "nothing runs and nothing is charged while the review waits");
         ChecksWait wait = waits.rowOf(REVIEW_ID);
@@ -83,6 +90,34 @@ class ReviewStartGateTest extends ChecksWaitFixture {
         assertEquals(first.round() + 1, waits.rowOf(REVIEW_ID).round());
         assertEquals(List.of(first.round() + 1), waits.shownWaiting, "the paused run never showed waiting");
         assertEquals(List.of("reviewing"), statuses);
+    }
+
+    /**
+     * Nothing reads an admitted run before its header is set up: a red read before begin skips nothing, so the saga's
+     * header write (status "reviewing", a fresh run token) never lands over a skip. After begin the skip happens.
+     */
+    @Test
+    void anAdmittedRunIsReadOnlyAfterItsHeaderIsSetUp() {
+        ReviewStartGate.AcceptedRun run = admitRun(NEXT_HEAD);
+        verdict = red("TEST-build");
+        resolver().wake(REPOSITORY_ID, new ChecksChanged(REPO, NEXT_HEAD));
+        sweep().sweep();
+        assertEquals(0, skips());
+        assertTrue(reads.isEmpty(), "no read of a run whose header is not set up");
+        statuses.add("reviewing");
+        gate().begin(fetch(NEXT_HEAD), run);
+        resolver().wake(REPOSITORY_ID, new ChecksChanged(REPO, NEXT_HEAD));
+        assertEquals(1, skips());
+        assertEquals(List.of("reviewing"), statuses, "the header write came first and nothing repeats it");
+    }
+
+    /** A caller that died between admission and begin: once the grace has passed, the sweep makes the run readable. */
+    @Test
+    void anAdmittedRunWhoseCallerDiedIsMadeReadyByTheSweep() {
+        waits.register(waitOn(HEAD, ChecksWaitDecision.GRACE.toSeconds() + 1).at(Stage.ADMITTED));
+        sweep().sweep();
+        assertEquals(Stage.WAITING, waits.rowOf(REVIEW_ID).stage());
+        assertEquals(List.of(round()), waits.shownWaiting);
     }
 
     /** A later run's record is never replaced by an earlier round, whatever order the writes arrive in. */
