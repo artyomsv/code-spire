@@ -112,6 +112,12 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
         resolver.outcomes = outcomes();
         resolver.lifecycle = lifecycle();
         resolver.projection = projection();
+        resolver.readFailures = new ChecksReadFailures() {
+            @Override
+            public void record(ChecksWait.Run run, String failure) {
+                readFailures.add(failure);
+            }
+        };
         return resolver;
     }
 

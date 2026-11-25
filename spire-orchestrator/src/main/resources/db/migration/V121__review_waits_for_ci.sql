@@ -27,6 +27,9 @@ ALTER TABLE repository ADD COLUMN start_review TEXT NOT NULL DEFAULT 'IMMEDIATEL
 -- next_read_at is the sweep's due time: 60 s after the wait starts (the grace read), then every 5 minutes; for a
 -- claimed row, 5 minutes after the claim. It is pushed forward in the statement that claims the row for a sweep.
 -- failed_checks names the failed checks of a skip, so a skip finished after a restart still says which.
+-- read_failure is why the last read of the head's checks failed (an HTTP status, when the forge gave one), NULL after
+-- a read that answered: a waiting row with one raises REVIEW_CHECKS_UNREADABLE, and a review started on the timeout
+-- with one says its checks could not be read rather than that they were still pending.
 CREATE TABLE review_checks_wait (
     review_id     VARCHAR(512) PRIMARY KEY REFERENCES review_status (review_id) ON DELETE CASCADE,
     repository_id UUID        NOT NULL,
@@ -37,7 +40,8 @@ CREATE TABLE review_checks_wait (
         CHECK (state IN ('admitted', 'waiting', 'starting', 'starting_unfinished', 'skipping', 'started', 'skipped', 'timed_out')),
     waiting_since TIMESTAMPTZ NOT NULL,
     next_read_at  TIMESTAMPTZ NOT NULL,
-    failed_checks TEXT
+    failed_checks TEXT,
+    read_failure  TEXT
 );
 
 CREATE INDEX review_checks_wait_due ON review_checks_wait (next_read_at)

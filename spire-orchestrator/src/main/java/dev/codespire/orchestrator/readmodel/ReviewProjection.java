@@ -1234,13 +1234,14 @@ public class ReviewProjection {
      * <p>Refuses while running: {@code ResultSaga.ifCurrentRun} guards on commit alone, so an in-flight
      * worker's results would still write status, findings and charges to a row that is supposed to be
      * frozen — and those late charges would carry a NULL archived_at into a future purge, becoming
-     * exactly the orphan the column exists to prevent.
+     * exactly the orphan the column exists to prevent. A review waiting for its checks (V121) is in flight too: its
+     * wait would be dropped, and an unarchived row would show "Waiting for checks" with nothing to move it.
      */
     private ArchiveOutcome archiveRow(String reviewId) {
         String sql = """
                 UPDATE review_status
                    SET archived_at = now(), retry_at = NULL, answering = false, updated_at = now()
-                 WHERE review_id = ? AND archived_at IS NULL AND lower(status) <> 'reviewing'
+                 WHERE review_id = ? AND archived_at IS NULL AND lower(status) NOT IN ('reviewing', 'waiting_for_checks')
                 """;
         try (Connection c = dataSource.getConnection()) {
             c.setAutoCommit(false);

@@ -17,6 +17,8 @@ abstract class ChecksWaitFakes {
     final List<String> history = new ArrayList<>();
     final List<String> reads = new ArrayList<>();
     final List<String> notes = new ArrayList<>();
+    /** Each read's failure as recorded on the wait, null for a read that answered. */
+    final List<String> readFailures = new ArrayList<>();
 
     List<ActionCommand.FetchDiff> fetches() {
         return emitted.stream().filter(ActionCommand.FetchDiff.class::isInstance)

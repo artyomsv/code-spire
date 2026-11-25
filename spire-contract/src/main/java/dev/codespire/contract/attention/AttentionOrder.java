@@ -20,8 +20,8 @@ public final class AttentionOrder {
 
     /**
      * The prefix every per-review code carries: {@code REVIEW_STUCK}, {@code REVIEW_FAILED}, {@code REVIEW_DEGRADED},
-     * {@code REVIEW_HARNESS_REFUSED} and {@code REVIEW_LABEL_FAILED}. No other code names a single review: run rows name a factory run, and the
-     * cost rows count calls across reviews.
+     * {@code REVIEW_HARNESS_REFUSED}, {@code REVIEW_LABEL_FAILED} and {@code REVIEW_CHECKS_UNREADABLE}. No other code
+     * names a single review: run rows name a factory run, and the cost rows count calls across reviews.
      */
     static final String REVIEW_PREFIX = "REVIEW_";
 

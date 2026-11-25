@@ -53,8 +53,9 @@ class ChecksWaitDecisionTest {
 
     @Test
     void anUnreadableForgeWaitsToTheTimeoutAndNeverSkips() {
-        assertEquals(Action.KEEP_WAITING, ChecksWaitDecision.decide(WAIT, ChecksVerdict.UNREADABLE, SINCE));
-        assertEquals(Action.START_UNFINISHED, ChecksWaitDecision.decide(WAIT, ChecksVerdict.UNREADABLE,
+        assertEquals(Action.KEEP_WAITING, ChecksWaitDecision.decide(WAIT, ChecksVerdict.unreadable("TEST-HTTP-403"),
+                SINCE));
+        assertEquals(Action.START_UNFINISHED, ChecksWaitDecision.decide(WAIT, ChecksVerdict.unreadable("TEST-HTTP-403"),
                 SINCE.plus(ChecksWaitDecision.TIMEOUT)));
     }
 

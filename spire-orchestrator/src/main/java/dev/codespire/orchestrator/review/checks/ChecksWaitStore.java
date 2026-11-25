@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.review.checks;
 
 import dev.codespire.orchestrator.review.checks.ChecksWait.Stage;
+import dev.codespire.orchestrator.llm.ReviewRuns;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -36,7 +37,7 @@ public class ChecksWaitStore {
      * row, says whether a row's run is still the review's.
      */
     private static final String CURRENT_ROUND = "(SELECT count(*) FROM event_log e WHERE e.stream_id = review_checks_wait"
-            + ".review_id AND e.event_type = 'ReviewRequested')";
+            + ".review_id AND e.event_type = '" + ReviewRuns.REQUEST_EVENT + "')";
     /** The header columns a run's first header write sets, kept when the locked row already holds the run's round. */
     private static final String UNINITIALISED_HEADER = String.join(", ", once("commit_sha", "r.head_commit"),
             once("attempt", "1"), once("error_detail", "NULL"), once("answering", "FALSE"), once("posted_verdict", "NULL"),
@@ -50,11 +51,6 @@ public class ChecksWaitStore {
     /** {@code column} set to {@code value} only while the locked header row holds an earlier round than the run's. */
     private static String once(String column, String value) {
         return column + " = CASE WHEN COALESCE(s.run_round, 0) < r.round THEN " + value + " ELSE s." + column + " END";
-    }
-
-    /** Records a waiting run; see {@link #register}. */
-    public void startWaiting(ChecksWait wait) {
-        register(wait.at(Stage.WAITING));
     }
 
     /**
@@ -179,14 +175,27 @@ public class ChecksWaitStore {
         });
     }
 
-    /** Whether this very run (review, head and round) started, or is starting, before its checks finished. */
-    public boolean startedUnfinished(ChecksWait.Run run) {
-        return exists("SELECT 1 FROM review_checks_wait WHERE review_id = ? AND head_commit = ? AND round = ?"
-                + " AND state IN ('starting_unfinished', 'timed_out')", statement -> {
-            statement.setString(1, run.reviewId());
-            statement.setString(2, run.head());
-            statement.setInt(3, run.round());
-        });
+    /**
+     * The CI hold on {@code head}: the review's run that started there before its checks finished (V121), with why its
+     * last read of them failed (null when the read answered). Empty for a review that never waited on this head.
+     */
+    public java.util.Optional<Hold> holdOn(String reviewId, String head) {
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(
+                "SELECT round, read_failure FROM review_checks_wait WHERE review_id = ? AND head_commit = ?"
+                        + " AND state IN ('starting_unfinished', 'timed_out')")) {
+            statement.setString(1, reviewId);
+            statement.setString(2, head);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? java.util.Optional.of(new Hold(rows.getInt(1), rows.getString(2)))
+                        : java.util.Optional.empty();
+            }
+        } catch (SQLException failure) {
+            throw new IllegalStateException("Check wait read failed", failure);
+        }
+    }
+
+    /** A run held for unfinished checks: its round, and its last read failure or null. */
+    public record Hold(int round, String readFailure) {
     }
 
     /** Whether the review waits for checks now (admitted or waiting), on any head. */

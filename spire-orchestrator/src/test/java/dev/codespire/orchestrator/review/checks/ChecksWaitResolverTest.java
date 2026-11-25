@@ -45,6 +45,18 @@ class ChecksWaitResolverTest extends ChecksWaitFixture {
         assertEquals(ChecksWait.Stage.STARTED, waits.rowOf(REVIEW_ID).stage());
     }
 
+    /** A refused read is recorded on the wait at once (the bell), and the next read that answers clears it. */
+    @Test
+    void anUnreadableReadIsRecordedAndClearedByTheNextAnswer() {
+        waiting();
+        verdict = ChecksVerdict.unreadable("HTTP 403");
+        wake(HEAD);
+        assertTrue(fetches().isEmpty(), "the wait goes on");
+        verdict = ChecksVerdict.PENDING;
+        wake(HEAD);
+        assertEquals(java.util.Arrays.asList("HTTP 403", null), readFailures);
+    }
+
     @Test
     void theSweepStartsItWhenNoWebhookArrives() {
         waiting();

@@ -18,20 +18,29 @@ import java.util.List;
  *   <li>{@link Kind#GREEN}: every check finished and passed.</li>
  *   <li>{@link Kind#RED}: every check finished and at least one did not pass ({@code failed} names them). A cancelled,
  *   timed-out or errored check is red too: only green starts a review.</li>
- *   <li>{@link Kind#UNREADABLE}: the forge could not be read; the wait goes on until the timeout.</li>
+ *   <li>{@link Kind#UNREADABLE}: the forge could not be read ({@code reason} says why); the wait goes on until the
+ *   timeout, and the operator is told at once.</li>
  * </ul>
  */
-public record ChecksVerdict(Kind kind, List<String> failed) {
+public record ChecksVerdict(Kind kind, List<String> failed, String reason) {
 
     public enum Kind { PENDING, NO_CHECKS, GREEN, RED, UNREADABLE }
 
     public static final ChecksVerdict PENDING = new ChecksVerdict(Kind.PENDING, List.of());
-    public static final ChecksVerdict UNREADABLE = new ChecksVerdict(Kind.UNREADABLE, List.of());
     /** The land reader's mark for a check history it could not read in full (GitHubPullRequestLander). */
     static final String HISTORY_INCOMPLETE = "history_incomplete";
 
     public ChecksVerdict {
         failed = List.copyOf(failed);
+    }
+
+    public ChecksVerdict(Kind kind, List<String> failed) {
+        this(kind, failed, null);
+    }
+
+    /** A read that failed, and why (an HTTP status when the forge gave one). */
+    public static ChecksVerdict unreadable(String reason) {
+        return new ChecksVerdict(Kind.UNREADABLE, List.of(), reason);
     }
 
     /** The verdict on {@code head} from a read of its pull request. */

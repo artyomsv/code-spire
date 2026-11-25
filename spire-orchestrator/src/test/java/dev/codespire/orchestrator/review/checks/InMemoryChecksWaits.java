@@ -30,6 +30,11 @@ class InMemoryChecksWaits extends ChecksWaitStore {
     /** The rounds a review was shown waiting for, in order. */
     final List<Integer> shownWaiting = new ArrayList<>();
 
+    /** A run recorded already waiting: a test's shortcut past admission and readying. */
+    void startWaiting(ChecksWait wait) {
+        register(wait.at(Stage.WAITING));
+    }
+
     @Override
     public void register(ChecksWait wait) {
         if (registerFailure != null) {
@@ -102,10 +107,16 @@ class InMemoryChecksWaits extends ChecksWaitStore {
     }
 
     @Override
-    public boolean startedUnfinished(ChecksWait.Run run) {
-        ChecksWait row = rows.get(run.reviewId());
-        return row != null && row.head().equals(run.head()) && row.round() == run.round()
+    public java.util.Optional<Hold> holdOn(String reviewId, String head) {
+        ChecksWait row = rows.get(reviewId);
+        boolean held = row != null && row.head().equals(head)
                 && (row.stage() == Stage.STARTING_UNFINISHED || row.stage() == Stage.TIMED_OUT);
+        return held ? java.util.Optional.of(new Hold(row.round(), null)) : java.util.Optional.empty();
+    }
+
+    /** Whether this very run started, or is starting, before its checks finished. */
+    boolean startedUnfinished(ChecksWait.Run run) {
+        return holdOn(run.reviewId(), run.head()).filter(hold -> hold.round() == run.round()).isPresent();
     }
 
     @Override

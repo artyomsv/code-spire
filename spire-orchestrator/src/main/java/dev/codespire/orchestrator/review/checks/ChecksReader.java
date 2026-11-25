@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.review.checks;
 
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.port.PullRequestLander;
+import dev.codespire.contract.scm.ScmApiException;
 import dev.codespire.orchestrator.provider.ProviderClients;
 import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -32,18 +33,26 @@ public class ChecksReader {
         return reader(reviewId).map(PullRequestLander::available).orElse(false);
     }
 
-    /** One read of the wait's head; {@link ChecksVerdict#UNREADABLE} when the forge or the account cannot answer. */
+    /** One read of the wait's head; {@link ChecksVerdict#unreadable} when the forge or the account cannot answer. */
     public ChecksVerdict read(ChecksWait wait) {
         Optional<PullRequestLander> reader = reader(wait.reviewId()).filter(PullRequestLander::available);
-        if (reader.isEmpty()) return ChecksVerdict.UNREADABLE;
+        if (reader.isEmpty()) return ChecksVerdict.unreadable("no check read for this forge");
         ReviewIds.Parsed review = ReviewIds.parse(wait.reviewId());
         try {
             return ChecksVerdict.of(reader.orElseThrow().read(review.repo(), review.prId()), wait.head());
         } catch (RuntimeException unreadable) {
             LOG.warnf(unreadable, "review %s: the checks on %s could not be read; the wait goes on", wait.reviewId(),
                     wait.head());
-            return ChecksVerdict.UNREADABLE;
+            return ChecksVerdict.unreadable(reasonOf(unreadable));
         }
+    }
+
+    /** The forge's HTTP status when one is in the cause chain, else the failure's type. */
+    static String reasonOf(Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof ScmApiException api) return "HTTP " + api.status();
+        }
+        return failure.getClass().getSimpleName();
     }
 
     private Optional<PullRequestLander> reader(String reviewId) {

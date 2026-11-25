@@ -40,6 +40,10 @@ public class ChecksWaitResolver {
     @Inject
     ReviewProjection projection;
 
+    /** Why a read failed, kept on the wait for the bell and the timeout's notice. */
+    @Inject
+    ChecksReadFailures readFailures;
+
     /** A webhook said the checks on {@code event.headCommit()} changed; every review waiting on it reads them now. */
     public void wake(UUID repositoryId, ChecksChanged event) {
         for (ChecksWait wait : waits.waitingOn(repositoryId, event.headCommit())) {
@@ -66,6 +70,7 @@ public class ChecksWaitResolver {
             return;
         }
         ChecksVerdict verdict = reader.read(wait);
+        readFailures.record(wait.run(), verdict.kind() == ChecksVerdict.Kind.UNREADABLE ? verdict.reason() : null);
         switch (ChecksWaitDecision.decide(wait, verdict, Instant.now())) {
             case KEEP_WAITING -> LOG.debugf("review %s: checks on %s are %s", wait.reviewId(), wait.head(), verdict.kind());
             case START -> outcomes.start(wait);

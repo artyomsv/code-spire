@@ -126,6 +126,18 @@ class WorkReviewIT extends WorkPreparedFixture {
         execute("UPDATE review_status SET status='failed',last_posted_commit=NULL WHERE review_id=?",review);
         waiting(id,"review_failed");
     }
+    /** V121: a review waiting for its head's checks is on its way, not over. */
+    @Test void aReviewWaitingForChecksSaysItIsInProgress() throws Exception {
+        String id=delivered();reviewResult(id,"b".repeat(40),false,false);
+        execute("UPDATE review_status SET status='waiting_for_checks',last_posted_commit=NULL WHERE review_id=?",review);
+        waiting(id,"review_in_progress");
+    }
+    /** V121: a review skipped because its checks failed is over, and says so. */
+    @Test void aSkippedReviewSaysItWasSkipped() throws Exception {
+        String id=delivered();reviewResult(id,"b".repeat(40),false,false);
+        execute("UPDATE review_status SET status='skipped',last_posted_commit=NULL WHERE review_id=?",review);
+        waiting(id,"review_skipped");
+    }
     /** Review of PR #184 (I2): a review that is over but not completed names what happened, not "in progress". */
     @Test void aRefusedReviewOfThisHeadSaysItWasRefused() throws Exception {
         String id=delivered();reviewResult(id,"b".repeat(40),false,false);

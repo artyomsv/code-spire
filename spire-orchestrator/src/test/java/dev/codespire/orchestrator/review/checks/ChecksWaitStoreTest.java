@@ -27,6 +27,7 @@ class ChecksWaitStoreTest {
     private static final String NEXT_HEAD = "b".repeat(40);
 
     @Inject ChecksWaitStore store;
+    @Inject ChecksReadFailures readFailures;
     @Inject DataSource dataSource;
 
     private final String workspace = "TEST-" + UUID.randomUUID();
@@ -77,7 +78,7 @@ class ChecksWaitStoreTest {
     @Test
     void aRunIsClaimedOnceAndOnlyWhileWaiting() {
         ChecksWait wait = wait(HEAD, 1, Instant.now());
-        store.startWaiting(wait);
+        startWaiting(wait);
         assertTrue(store.isWaiting(reviewId));
         assertFalse(store.claim(wait(HEAD, 2, Instant.now()).at(Stage.STARTING)), "another run's claim is refused");
         assertTrue(store.claim(wait.at(Stage.STARTING)));
@@ -157,7 +158,7 @@ class ChecksWaitStoreTest {
     @Test
     void theWaitingStatusIsShownOnlyWhileThatRoundWaits() {
         ChecksWait wait = wait(HEAD, 1, Instant.now());
-        store.startWaiting(wait);
+        startWaiting(wait);
         assertFalse(store.markWaiting(reviewId, 2), "another round");
         assertTrue(store.markWaiting(reviewId, 1));
         store.claim(wait.at(Stage.STARTING));
@@ -168,36 +169,40 @@ class ChecksWaitStoreTest {
     @Test
     void anOlderRunNeverTouchesANewerRunsWait() {
         ChecksWait first = wait(HEAD, 1, Instant.now());
-        store.startWaiting(first);
+        startWaiting(first);
         store.claim(first.at(Stage.STARTING));
-        store.startWaiting(wait(NEXT_HEAD, 2, Instant.now()));
+        startWaiting(wait(NEXT_HEAD, 2, Instant.now()));
         store.finish(first.at(Stage.STARTING));
         store.drop(first);
         assertEquals(List.of(NEXT_HEAD), store.waitingOn(repositoryId, NEXT_HEAD).stream().map(ChecksWait::head).toList());
         assertTrue(store.waitingOn(UUID.randomUUID(), NEXT_HEAD).isEmpty(), "a wake-up reads its own repository only");
     }
 
+    /** The hold names its round and the last read failure, which a read that answered clears. */
     @Test
     void aTimedOutStartHoldsItsHeadFromTheClaimOn() {
         ChecksWait wait = wait(HEAD, 1, Instant.now());
-        store.startWaiting(wait);
+        startWaiting(wait);
+        readFailures.record(wait.run(), "HTTP 403");
+        readFailures.record(wait.run(), null);
+        readFailures.record(wait.run(), "HTTP 404");
         assertTrue(store.claim(wait.at(Stage.STARTING_UNFINISHED)));
-        assertTrue(store.startedUnfinished(new ChecksWait.Run(reviewId, HEAD, 1)), "held while the start is pending");
+        ChecksWaitStore.Hold held = new ChecksWaitStore.Hold(1, "HTTP 404");
+        assertEquals(java.util.Optional.of(held), store.holdOn(reviewId, HEAD), "held while the start is pending");
         store.finish(wait.at(Stage.STARTING_UNFINISHED));
-        assertTrue(store.startedUnfinished(new ChecksWait.Run(reviewId, HEAD, 1)));
-        assertFalse(store.startedUnfinished(new ChecksWait.Run(reviewId, NEXT_HEAD, 1)));
-        assertFalse(store.startedUnfinished(new ChecksWait.Run(reviewId, HEAD, 2)), "a later round of the head is not held");
+        assertEquals(java.util.Optional.of(held), store.holdOn(reviewId, HEAD));
+        assertTrue(store.holdOn(reviewId, NEXT_HEAD).isEmpty());
         store.register(wait(HEAD, 1, Instant.now()).at(Stage.STARTED));
-        assertTrue(store.startedUnfinished(new ChecksWait.Run(reviewId, HEAD, 1)), "the same round is never registered again");
+        assertEquals(java.util.Optional.of(held), store.holdOn(reviewId, HEAD), "the same round is never registered again");
         store.register(wait(HEAD, 2, Instant.now()).at(Stage.STARTED));
-        assertFalse(store.startedUnfinished(new ChecksWait.Run(reviewId, HEAD, 1)), "a later run started at once replaces the hold");
+        assertTrue(store.holdOn(reviewId, HEAD).isEmpty(), "a later run started at once replaces the hold");
     }
 
     /** A late registration of an earlier run never replaces a later run's row. */
     @Test
     void aLateRegistrationOfAnEarlierRunIsRefused() {
-        store.startWaiting(wait(NEXT_HEAD, 3, Instant.now()));
-        store.startWaiting(wait(HEAD, 1, Instant.now()));
+        startWaiting(wait(NEXT_HEAD, 3, Instant.now()));
+        startWaiting(wait(HEAD, 1, Instant.now()));
         assertEquals(List.of(NEXT_HEAD), store.waitingOn(repositoryId, NEXT_HEAD).stream().map(ChecksWait::head).toList());
         assertTrue(store.waitingOn(repositoryId, HEAD).isEmpty());
     }
@@ -206,7 +211,7 @@ class ChecksWaitStoreTest {
     @Test
     void aStaleSnapshotNeverDropsAClaim() {
         ChecksWait wait = wait(HEAD, 1, Instant.now());
-        store.startWaiting(wait);
+        startWaiting(wait);
         assertTrue(store.claim(wait.skipping("TEST-build")));
         store.drop(wait);
         assertEquals("skipping:1:TEST-build", row(), "the claim, the winner's recovery intent, survives");
@@ -217,7 +222,7 @@ class ChecksWaitStoreTest {
     /** Due after the grace period; the claim pushes the next read out, so a second sweep claims nothing. */
     @Test
     void theSweepClaimsADueWaitOnce() {
-        store.startWaiting(wait(HEAD, 1, Instant.now().minus(ChecksWaitDecision.GRACE).minusSeconds(1)));
+        startWaiting(wait(HEAD, 1, Instant.now().minus(ChecksWaitDecision.GRACE).minusSeconds(1)));
         List<ChecksWait> claimed = mine(store.claimDue(1000));
         assertEquals(1, claimed.size());
         assertTrue(claimed.getFirst().untrusted());
@@ -227,7 +232,7 @@ class ChecksWaitStoreTest {
 
     @Test
     void aWaitInsideItsGracePeriodIsNotDue() {
-        store.startWaiting(wait(HEAD, 1, Instant.now()));
+        startWaiting(wait(HEAD, 1, Instant.now()));
         assertTrue(mine(store.claimDue(1000)).isEmpty());
     }
 
@@ -235,7 +240,7 @@ class ChecksWaitStoreTest {
     @Test
     void aClaimedSkipCarriesItsFailedChecks() throws Exception {
         ChecksWait wait = wait(HEAD, 1, Instant.now());
-        store.startWaiting(wait);
+        startWaiting(wait);
         assertTrue(store.claim(wait.skipping("TEST-build, TEST-lint")));
         execute("UPDATE review_checks_wait SET next_read_at = now() - interval '1 second' WHERE review_id = ?", reviewId);
         ChecksWait resumed = mine(store.claimDue(1000)).getFirst();
@@ -259,6 +264,11 @@ class ChecksWaitStoreTest {
 
     private List<ChecksWait> mine(List<ChecksWait> claimed) {
         return claimed.stream().filter(w -> w.reviewId().equals(reviewId)).toList();
+    }
+
+    /** A run recorded already waiting: a shortcut past admission and readying. */
+    private void startWaiting(ChecksWait wait) {
+        store.register(wait.at(Stage.WAITING));
     }
 
     private ChecksWait wait(String head, int round, Instant since) {

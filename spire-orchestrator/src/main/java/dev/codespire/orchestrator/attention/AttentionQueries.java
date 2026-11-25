@@ -80,6 +80,10 @@ public class AttentionQueries {
     @ConfigProperty(name = "spire.attention.stuck-minutes")
     int stuckMinutes;
 
+    /** Minutes past the stuck limit before a review waiting for its checks counts as stalled (V121). */
+    static final int CHECKS_WAIT_MARGIN = (int) dev.codespire.orchestrator.review.checks.ChecksWaitDecision.TIMEOUT
+            .plus(dev.codespire.orchestrator.review.checks.ChecksWaitDecision.SWEEP).toMinutes();
+
     /** In {@link AttentionOrder}: blockers, then review problems, then newest first, then code and subject. */
     public List<AttentionView> collect() {
         List<AttentionView> rows = new ArrayList<>();
@@ -96,6 +100,7 @@ public class AttentionQueries {
             degradedReviewRows(c, rows);
             HarnessRefusalAttentionRows.collect(c, rows);
             LabelFailureAttentionRows.collect(c, rows);
+            ChecksUnreadableAttentionRows.collect(c, rows);
             runRows.collect(c, rows);
             credentialRows(c, rows);
             costRows(c, rows);
@@ -209,36 +214,31 @@ public class AttentionQueries {
     /**
      * Non-terminal reviews that have stopped moving, and recent terminal failures.
      *
-     * <p>Restricted to {@code pr_state = 'OPEN'}: cancel-on-close should already have ended a
-     * review whose PR was merged or closed, and a row about yesterday's merged PR is not
-     * actionable. Both rows are aggregates carrying a count — one stalled broker should not
-     * produce thirty identical rows.
+     * <p>Restricted to {@code pr_state = 'OPEN'}: cancel-on-close should already have ended a review whose PR was
+     * merged or closed. Both rows are aggregates carrying a count: one stalled broker should not produce thirty rows.
      *
-     * <p>{@code review_status.status} is the READ MODEL's own lowercase vocabulary — written by
-     * {@link dev.codespire.orchestrator.readmodel.ReviewProjection} as {@code reviewing},
-     * {@code completed}, {@code failed}, {@code cancelled}, {@code superseded} — and is NOT
-     * {@code ReviewState.Status}'s uppercase enum names. Comparing against the enum spelling made
-     * every completed review on an open PR read as stuck and made a genuinely failed review
-     * invisible, so both predicates fold case and the terminal set names all four terminal values.
-     * {@code superseded} is terminal: a run replaced by a newer commit is finished, not stalled, and
-     * so is {@code refused} — a review a spend cap declined to run has reached its end state, and
-     * reporting it here would blame a delivery path for a deliberate policy decision.
+     * <p>{@code review_status.status} is the READ MODEL's lowercase vocabulary ({@code ReviewProjection}), NOT
+     * {@code ReviewState.Status}'s enum names: comparing against the enum spelling made every completed review on an
+     * open PR read as stuck and hid a failed one, so both predicates fold case. {@code superseded}, {@code refused} and
+     * {@code skipped} (checks failed, V121) are terminal too. A review {@code waiting_for_checks} is expected to sit
+     * until CI finishes or the 60-minute timeout, so it counts as stalled only {@link #CHECKS_WAIT_MARGIN} minutes
+     * later (the timeout plus a missed sweep).
      *
-     * <p>EVERY query here excludes archived reviews, not just the stuck one. Nothing an operator does makes
-     * a failed review un-fail, so archiving it IS the resolution — and a {@code REVIEW_FAILED} row
-     * that survived it would be this panel's first permanently-lit row, against the contract that
-     * fixing the cause removes the row.
+     * <p>EVERY query here excludes archived reviews: nothing makes a failed review un-fail, so archiving it IS the
+     * resolution, and a row that survived it would be permanently lit, against the contract that fixing the cause
+     * removes the row.
      */
     private void reviewRows(Connection c, List<AttentionView> rows) throws SQLException {
         rows.addAll(perReviewRows(c, """
                 SELECT workspace, slug, pr_id, updated_at FROM review_status
-                 WHERE lower(status) NOT IN ('completed', 'failed', 'cancelled', 'superseded', 'refused')
+                 WHERE lower(status) NOT IN ('completed', 'failed', 'cancelled', 'superseded', 'refused', 'skipped')
                    AND pr_state = 'OPEN'
                    AND archived_at IS NULL
-                   AND updated_at < now() - make_interval(mins => ?)
+                   AND updated_at < now() - make_interval(mins => ? + CASE lower(status)
+                       WHEN 'waiting_for_checks' THEN %d ELSE 0 END)
                    AND (attention_ack_at IS NULL OR updated_at > attention_ack_at)
                  ORDER BY updated_at DESC, review_id
-                """, stuckMinutes, "REVIEW_STUCK",
+                """.formatted(CHECKS_WAIT_MARGIN), stuckMinutes, "REVIEW_STUCK",
                 "This review has not progressed for over " + stuckMinutes
                         + " minutes — a webhook delivery path or a worker may be down.",
                 "review(s) stalled"));

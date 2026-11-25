@@ -62,6 +62,27 @@ class ResultSagaChecksTimeoutTest {
         assertEquals(Boolean.TRUE, post.verdictLabels());
     }
 
+    /** No run ever waited on this head ("Immediately", or a forge with no check read): an unreadable round is master's. */
+    @Test
+    void anUnreadableRoundWithNoHoldOnTheHeadApprovesAsBefore() {
+        fx.round = ReviewRuns.UNKNOWN_RUN;
+        fx.saga().on(generated());
+        ActionCommand.PostComments post = assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast());
+        assertEquals(ReviewVerdict.APPROVE, post.verdict());
+        assertEquals("s", post.findings().summary());
+    }
+
+    /** The checks could not be read for the whole wait: the notice says so, and blames no build. */
+    @Test
+    void aTimeoutWhoseChecksWereUnreadableSaysSo() {
+        fx.unfinishedChecksOn = COMMIT;
+        fx.checksReadFailure = "HTTP 403";
+        fx.saga().on(generated());
+        ActionCommand.PostComments post = assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast());
+        assertEquals(ReviewVerdict.COMMENT, post.verdict());
+        assertTrue(post.findings().summary().startsWith(ReviewPostSettings.CHECKS_UNREADABLE_NOTICE));
+    }
+
     /**
      * A real timeout hold on this head, and the run's round cannot be read while the verdict is decided: the hold is
      * unresolved, so there is no native approval and no approved label, and the summary says so.

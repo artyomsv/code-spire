@@ -11,7 +11,7 @@ public final class ChecksWaitStatus {
     public static final String WAITING = "waiting_for_checks";
     /** The checks on the head failed, so no review ran. Terminal for that head; a new commit waits again. */
     public static final String SKIPPED = "skipped";
-    /** {@code CancelReview}'s reason for a skip. */
+    /** {@code SkipReview}'s reason, which its {@code ReviewCancelled} carries. */
     public static final String CHECKS_FAILED = "CHECKS_FAILED";
 
     private ChecksWaitStatus() {

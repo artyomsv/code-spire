@@ -110,7 +110,7 @@ public class ReviewStartGate {
 
     private static ChecksWait admitted(Admission admission, ReviewState state, UUID repositoryId) {
         return ChecksWait.admitted(new ChecksWait.Run(admission.reviewId(), state.currentCommit(), state.round()),
-                repositoryId, Stage.ADMITTED).withUntrusted(admission.untrusted());
+                repositoryId).withUntrusted(admission.untrusted());
     }
 
     /**

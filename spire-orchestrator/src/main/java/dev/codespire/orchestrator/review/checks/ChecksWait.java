@@ -29,9 +29,10 @@ public record ChecksWait(String reviewId, UUID repositoryId, String head, int ro
         }
     }
 
-    /** A new run of the review in {@code stage}. */
-    public static ChecksWait admitted(Run run, UUID repositoryId, Stage stage) {
-        return new ChecksWait(run.reviewId(), repositoryId, run.head(), run.round(), false, Instant.now(), stage, null);
+    /** A newly admitted run of the review: nothing reads it until it is made ready. */
+    public static ChecksWait admitted(Run run, UUID repositoryId) {
+        return new ChecksWait(run.reviewId(), repositoryId, run.head(), run.round(), false, Instant.now(), Stage.ADMITTED,
+                null);
     }
 
     /** The same run with the fork flag its review's start sends. */

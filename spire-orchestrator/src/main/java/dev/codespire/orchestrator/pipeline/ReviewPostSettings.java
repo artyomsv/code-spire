@@ -8,7 +8,6 @@ import dev.codespire.orchestrator.repository.BlockApprovalAt;
 import dev.codespire.orchestrator.repository.RepositoryAccounts;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
 import dev.codespire.orchestrator.llm.ReviewRuns;
-import dev.codespire.orchestrator.review.checks.ChecksWait;
 import dev.codespire.orchestrator.review.checks.ChecksWaitStore;
 
 import java.util.Objects;
@@ -30,12 +29,17 @@ final class ReviewPostSettings {
     /** What a review started on the check timeout says before its own summary (review waits for CI). */
     static final String CHECKS_UNFINISHED_NOTICE = "**CI had not finished when this review started.** The checks on "
             + "this commit were still pending after 60 minutes, so this review does not approve.\n\n";
+    /** What a review started on the timeout says when its checks could not be read at all (V121). */
+    static final String CHECKS_UNREADABLE_NOTICE = "**The checks on this commit could not be read** for 60 minutes, so "
+            + "whether CI passed is unknown and this review does not approve.
+
+";
     /** What a review says when its run could not be identified, so whether its CI had finished is unknown. */
     static final String CHECKS_UNCONFIRMED_NOTICE = "**Whether CI had finished could not be confirmed for this review,** "
             + "so it does not approve.\n\n";
 
     /** The CI hold of the run being posted (V121), resolved once for the verdict, the notice and the label. */
-    private enum CiHold { NONE, UNFINISHED, UNCONFIRMED }
+    private enum CiHold { NONE, UNFINISHED, UNREADABLE, UNCONFIRMED }
 
     /** The saga's collaborators this reads. */
     record Sources(ReviewProjection projection, RepositoryRegistry repositories, RepositoryAccounts repositoryAccounts,
@@ -66,7 +70,7 @@ final class ReviewPostSettings {
                 visible.degraded(), sources.projection().openBlocking(reviewId, level), level, setting, identityKnown));
         return switch (ciHold(generated)) {
             case NONE -> decision;
-            case UNFINISHED -> ReviewVerdictDecision.holdForUnfinishedChecks(decision);
+            case UNFINISHED, UNREADABLE -> ReviewVerdictDecision.holdForUnfinishedChecks(decision);
             case UNCONFIRMED -> ReviewVerdictDecision.holdForUnconfirmedChecks(decision);
         };
     }
@@ -75,7 +79,11 @@ final class ReviewPostSettings {
     ReviewResult posted(ReviewGenerated generated, ReviewResult visible) {
         CiHold held = ciHold(generated);
         if (held == CiHold.NONE) return visible;
-        String notice = held == CiHold.UNFINISHED ? CHECKS_UNFINISHED_NOTICE : CHECKS_UNCONFIRMED_NOTICE;
+        String notice = switch (held) {
+            case UNFINISHED -> CHECKS_UNFINISHED_NOTICE;
+            case UNREADABLE -> CHECKS_UNREADABLE_NOTICE;
+            default -> CHECKS_UNCONFIRMED_NOTICE;
+        };
         return visible.withSummary(notice + Objects.toString(visible.summary(), ""));
     }
 
@@ -94,8 +102,10 @@ final class ReviewPostSettings {
 
     /**
      * Whether this very run (its head and round) started on the check timeout (V121); never for an unknown repository.
-     * An earlier round's hold on the same head, left by a run before the repository switched to "Immediately", is not
-     * this run's. A round that cannot be read leaves the hold unresolved, which never approves. Resolved once.
+     * A review that never started a run on this head before its checks finished (every "Immediately" repository and
+     * every forge with no check read) takes master's path with no further read. An earlier round's hold on the same
+     * head is not this run's. A round that cannot be read leaves a hold on the head unresolved, which never approves.
+     * Resolved once.
      */
     private CiHold ciHold(ReviewGenerated generated) {
         if (hold == null) {
@@ -106,9 +116,11 @@ final class ReviewPostSettings {
     }
 
     private CiHold resolveHold(ReviewGenerated generated) {
+        Optional<ChecksWaitStore.Hold> held = sources.checksWaits().holdOn(generated.reviewId(), generated.commit());
+        if (held.isEmpty()) return CiHold.NONE;
         int round = sources.runs().roundOrUnknown(generated.reviewId());
         if (round == ReviewRuns.UNKNOWN_RUN) return CiHold.UNCONFIRMED;
-        ChecksWait.Run run = new ChecksWait.Run(generated.reviewId(), generated.commit(), round);
-        return sources.checksWaits().startedUnfinished(run) ? CiHold.UNFINISHED : CiHold.NONE;
+        if (held.orElseThrow().round() != round) return CiHold.NONE;
+        return held.orElseThrow().readFailure() == null ? CiHold.UNFINISHED : CiHold.UNREADABLE;
     }
 }
