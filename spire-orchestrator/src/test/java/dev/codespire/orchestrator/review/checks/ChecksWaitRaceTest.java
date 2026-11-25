@@ -103,21 +103,21 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
     }
 
     /**
-     * A late reader holding a waiting snapshot, while the winning skip is between ending the run and its label, drops
-     * nothing: the claim is the winner's recovery intent, and the sweep still finishes the skip after its crash.
+     * A late reader holding a waiting snapshot, while the winning skip has ended the run but not completed its claim,
+     * drops nothing: the claim is the winner's recovery intent, and the sweep still finishes the skip after its crash.
      */
     @Test
     void aLateReadersStaleSnapshotNeverDropsTheWinningClaim() {
         ChecksWait stale = waiting(0);
         verdict = red("TEST-build");
-        duringSend = () -> {
+        waits.duringFinish = () -> {
             resolver().resolve(stale);
             throw new IllegalStateException(LOST_ACK);
         };
         assertThrows(IllegalStateException.class, () -> resolver().resolve(stale));
         assertEquals(Stage.SKIPPING, waits.rowOf(REVIEW_ID).stage(), "the stale snapshot did not drop the claim");
         sweep().sweep();
-        assertEquals(1, notes.size());
+        assertTrue(emitted.isEmpty(), "a skip sends nothing, before or after the crash");
         assertEquals(Stage.SKIPPED, waits.rowOf(REVIEW_ID).stage());
     }
 
@@ -167,12 +167,12 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
     void aSkipLostBeforeItCompletedIsFinishedByTheSweep() {
         ChecksWait wait = waiting(0);
         verdict = red("TEST-build");
-        duringSend = lostAck();
+        waits.duringFinish = lostAck();
         assertThrows(IllegalStateException.class, () -> resolver().resolve(wait));
         assertEquals(Stage.SKIPPING, waits.rowOf(REVIEW_ID).stage());
         assertEquals(ReviewState.Status.CANCELLED, state.status());
         sweep().sweep();
-        assertEquals(1, skips());
+        assertEquals(ReviewState.Status.CANCELLED, state.status(), "the recovered skip ends the same run, once");
         assertTrue(notes.getLast().contains("TEST-build"), "the failed checks survive the restart in the row");
         assertEquals(Stage.SKIPPED, waits.rowOf(REVIEW_ID).stage());
     }

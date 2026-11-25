@@ -25,6 +25,8 @@ class InMemoryChecksWaits extends ChecksWaitStore {
     java.util.function.IntSupplier currentRound = () -> Integer.MIN_VALUE;
     /** Fails the next registration once, as a lost database would after the aggregate accepted the run. */
     RuntimeException registerFailure;
+    /** Runs once at the start of the next completion; it may throw, as a crash before the claim completes would. */
+    Runnable duringFinish;
     /** The rounds a review was shown waiting for, in order. */
     final List<Integer> shownWaiting = new ArrayList<>();
 
@@ -76,6 +78,11 @@ class InMemoryChecksWaits extends ChecksWaitStore {
 
     @Override
     public void finish(ChecksWait claimed) {
+        if (duringFinish != null) {
+            Runnable once = duringFinish;
+            duringFinish = null;
+            once.run();
+        }
         ChecksWait row = rows.get(claimed.reviewId());
         if (row == null || row.round() != claimed.round() || row.stage() != claimed.stage()) return;
         Stage done = switch (claimed.stage()) {
