@@ -30,6 +30,13 @@ public class ChecksWaitStore {
     private static final String COLUMNS =
             "review_id, repository_id, head_commit, round, untrusted, waiting_since, state, failed_checks";
     private static final String ROUND = " WHERE review_id = ? AND round = ?";
+    /**
+     * The review's current round, read in the same statement as the write it fences: the count of its folded
+     * ReviewRequested, as the aggregate and ReviewRuns count it. A run started at once records no row, so this, not the
+     * row, says whether a row's run is still the review's.
+     */
+    private static final String CURRENT_ROUND = "(SELECT count(*) FROM event_log e WHERE e.stream_id = review_checks_wait"
+            + ".review_id AND e.event_type = 'ReviewRequested')";
     private static final String DUE_STAGES = "('admitted', 'waiting', 'starting', 'starting_unfinished', 'skipping')";
 
     @Inject
@@ -68,7 +75,8 @@ public class ChecksWaitStore {
 
     /**
      * Makes an admitted run readable and initialises its review header, in ONE statement: the run leaves 'admitted'
-     * (compare-and-set on the review, the round and the stage) and, only then, the header takes the run's head, the
+     * (compare-and-set on the review, the round, the stage, and the round still being the review's current one, so a
+     * newer run started at once, which records no row, is never reset) and, only then, the header takes the run's head, the
      * status 'waiting_for_checks' and a fresh run token. Before this no wake-up reads the run and nothing can claim it.
      * The original caller ({@link ReviewStartGate#begin}) and the sweep's recovery share it, so whichever comes second
      * matches no row, writes no header and treats the run as already resolved; a skip or start in between is never undone.
@@ -77,13 +85,14 @@ public class ChecksWaitStore {
         return update("""
                 WITH readied AS (UPDATE review_checks_wait SET state = 'waiting'
                                   WHERE review_id = ? AND round = ? AND head_commit = ? AND state = 'admitted'
+                                    AND round = %s
                                   RETURNING review_id, head_commit)
                 UPDATE review_status s SET commit_sha = r.head_commit, status = ?, stage = 1, attempt = 1,
                        error_detail = NULL, answering = FALSE, posted_verdict = NULL, posted_review_ref = NULL,
                        posted_review_url = NULL, run_token = md5(random()::text || clock_timestamp()::text),
                        updated_at = now()
                   FROM readied r WHERE s.review_id = r.review_id
-                """, statement -> {
+                """.formatted(CURRENT_ROUND), statement -> {
             statement.setString(1, run.reviewId());
             statement.setInt(2, run.round());
             statement.setString(3, run.head());
@@ -102,7 +111,8 @@ public class ChecksWaitStore {
      */
     public boolean markWaiting(String reviewId, int round) {
         return update("UPDATE review_status SET status = ?, updated_at = now() WHERE review_id = ? AND EXISTS (SELECT 1"
-                + " FROM review_checks_wait w WHERE w.review_id = ? AND w.round = ? AND w.state = 'waiting')", statement -> {
+                + " FROM review_checks_wait WHERE review_id = ? AND round = ? AND state = 'waiting' AND round = "
+                + CURRENT_ROUND + ")", statement -> {
             statement.setString(1, ChecksWaitStatus.WAITING);
             statement.setString(2, reviewId);
             statement.setString(3, reviewId);
@@ -116,7 +126,8 @@ public class ChecksWaitStore {
      */
     public boolean claim(ChecksWait claimed) {
         return update("UPDATE review_checks_wait SET state = ?, failed_checks = ?,"
-                + " next_read_at = now() + make_interval(secs => ?)" + ROUND + " AND state = 'waiting'", statement -> {
+                + " next_read_at = now() + make_interval(secs => ?)" + ROUND + " AND state = 'waiting' AND round = "
+                + CURRENT_ROUND, statement -> {
             statement.setString(1, claimed.stage().stored());
             statement.setString(2, claimed.failedChecks());
             statement.setDouble(3, ChecksWaitDecision.SWEEP.toSeconds());

@@ -37,11 +37,41 @@ class ChecksWaitStoreTest {
     void seedReview() throws Exception {
         execute("INSERT INTO review_status (review_id, workspace, slug, pr_id, status) VALUES (?, ?, 'TEST-repo', 7, ?)",
                 reviewId, workspace, ChecksWaitStatus.WAITING);
+        appendRequest(1);
     }
 
     @AfterEach
     void removeReview() throws Exception {
         execute("DELETE FROM review_status WHERE workspace = ?", workspace);
+        execute("DELETE FROM event_log WHERE stream_id = ?", reviewId);
+    }
+
+    /** The aggregate accepted another run: its ReviewRequested, which the current round counts. */
+    private void appendRequest(int sequence) throws Exception {
+        execute("INSERT INTO event_log (event_id, stream_id, sequence, event_type, payload, occurred_at)"
+                + " VALUES (?, ?, ?, 'ReviewRequested', '\x7b7d'::bytea, now())", UUID.randomUUID(), reviewId,
+                (long) sequence);
+    }
+
+    /**
+     * A waiting run r was admitted and paused before begin; the repository switched to "Immediately" and r+1 re-ran the
+     * same head, which records no row. Resuming, r's readying, claim and status write all find r no longer current.
+     */
+    @Test
+    void aRunNoLongerCurrentIsNeverReadiedClaimedOrShown() throws Exception {
+        ChecksWait admitted = wait(HEAD, 1, Instant.now()).at(Stage.ADMITTED);
+        store.register(admitted);
+        appendRequest(2);
+        execute("UPDATE review_status SET status = 'reviewing', run_token = 'TEST-immediate' WHERE review_id = ?",
+                reviewId);
+        String header = header();
+        assertFalse(store.ready(admitted.run()), "begin of the paused run");
+        assertEquals(header, header(), "the immediate run's status, head and token survive");
+        assertEquals("admitted:1:null", row());
+        execute("UPDATE review_checks_wait SET state = 'waiting' WHERE review_id = ?", reviewId);
+        assertFalse(store.claim(admitted.at(Stage.STARTING)), "no outcome for a run that is not current");
+        assertFalse(store.markWaiting(reviewId, 1));
+        assertEquals(header, header());
     }
 
     @Test
