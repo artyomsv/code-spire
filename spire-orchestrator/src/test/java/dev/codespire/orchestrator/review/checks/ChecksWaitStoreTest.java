@@ -55,6 +55,19 @@ class ChecksWaitStoreTest {
         assertFalse(store.isWaiting(reviewId));
         store.finish(wait.at(Stage.STARTING));
         assertTrue(store.waitingOn(repositoryId, HEAD).isEmpty());
+        assertEquals("started:1:null", row(), "a completed start stays as the run's admission record");
+        assertEquals(1, store.admittedRound(reviewId));
+    }
+
+    /** The waiting status is written only while that very round waits, never over a later status. */
+    @Test
+    void theWaitingStatusIsShownOnlyWhileThatRoundWaits() {
+        ChecksWait wait = wait(HEAD, 1, Instant.now());
+        store.startWaiting(wait);
+        assertFalse(store.markWaiting(reviewId, 2), "another round");
+        assertTrue(store.markWaiting(reviewId, 1));
+        store.claim(wait.at(Stage.STARTING));
+        assertFalse(store.markWaiting(reviewId, 1), "its start was claimed");
     }
 
     /** A newer run's wait replaces the row; the older run's completion and drop leave it alone. */
@@ -79,10 +92,10 @@ class ChecksWaitStoreTest {
         store.finish(wait.at(Stage.STARTING_UNFINISHED));
         assertTrue(store.startedUnfinished(reviewId, HEAD));
         assertFalse(store.startedUnfinished(reviewId, NEXT_HEAD));
-        store.clearBefore(reviewId, 1);
-        assertTrue(store.startedUnfinished(reviewId, HEAD), "only earlier runs are cleared");
-        store.clearBefore(reviewId, 2);
-        assertFalse(store.startedUnfinished(reviewId, HEAD), "a later run started at once drops the hold");
+        store.register(wait(HEAD, 1, Instant.now()).at(Stage.STARTED));
+        assertTrue(store.startedUnfinished(reviewId, HEAD), "the same round is never registered again");
+        store.register(wait(HEAD, 2, Instant.now()).at(Stage.STARTED));
+        assertFalse(store.startedUnfinished(reviewId, HEAD), "a later run started at once replaces the hold");
     }
 
     /** A late registration of an earlier run never replaces a later run's row. */
@@ -101,10 +114,9 @@ class ChecksWaitStoreTest {
         store.startWaiting(wait);
         assertTrue(store.claim(wait.skipping("TEST-build")));
         store.drop(wait);
-        assertFalse(store.claim(wait.skipping("TEST-build")), "the claim is still there, not a fresh wait");
+        assertEquals("skipping:1:TEST-build", row(), "the claim, the winner's recovery intent, survives");
         store.drop(wait.skipping("TEST-build"));
-        store.startWaiting(wait(HEAD, 1, Instant.now()));
-        assertTrue(store.isWaiting(reviewId), "the claim was dropped as observed");
+        assertEquals("none", row(), "dropping the snapshot as observed removes it");
     }
 
     /** Due after the grace period; the claim pushes the next read out, so a second sweep claims nothing. */
@@ -135,6 +147,19 @@ class ChecksWaitStoreTest {
         assertEquals(Stage.SKIPPING, resumed.stage());
         assertEquals("TEST-build, TEST-lint", resumed.failedChecks());
         assertEquals(1, resumed.round());
+    }
+
+    /** The review's persisted row as {@code state:round:failed_checks}, or {@code none}. */
+    private String row() {
+        try (var connection = dataSource.getConnection(); var statement = connection.prepareStatement(
+                "SELECT state, round, failed_checks FROM review_checks_wait WHERE review_id = ?")) {
+            statement.setString(1, reviewId);
+            try (var rows = statement.executeQuery()) {
+                return rows.next() ? rows.getString(1) + ":" + rows.getInt(2) + ":" + rows.getString(3) : "none";
+            }
+        } catch (java.sql.SQLException failure) {
+            throw new IllegalStateException(failure);
+        }
     }
 
     private List<ChecksWait> mine(List<ChecksWait> claimed) {

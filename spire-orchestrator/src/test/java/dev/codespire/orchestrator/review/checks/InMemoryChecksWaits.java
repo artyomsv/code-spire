@@ -1,32 +1,45 @@
 package dev.codespire.orchestrator.review.checks;
 
 import dev.codespire.orchestrator.review.checks.ChecksWait.Stage;
-import dev.codespire.orchestrator.review.checks.ChecksWaitStore.PendingAdmission;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
- * The wait table in memory, with the real one's guards: a claim moves only a waiting row of the same round, and every
- * later change names the round, so it never touches a newer run's row. Every method the gate, the resolver and the
- * outcomes reach is overridden; the real ones open a database. The sweep claims every row but the timed-out hold.
+ * The admission table in memory, with the real one's guards: registration never replaces a row of the same or a later
+ * round, a claim moves only a waiting row of the same round, every later change names the round and the stage it
+ * observed, and a completed outcome stays in its terminal stage. Every method the gate, the resolver and the outcomes
+ * reach is overridden; the real ones open a database. The sweep claims every waiting or claimed row.
  */
 class InMemoryChecksWaits extends ChecksWaitStore {
 
+    private static final Set<Stage> DUE = Set.of(Stage.WAITING, Stage.STARTING, Stage.STARTING_UNFINISHED, Stage.SKIPPING);
     private final Map<String, ChecksWait> rows = new LinkedHashMap<>();
+    /** The rounds a review was shown waiting for, in order. */
+    final List<Integer> shownWaiting = new ArrayList<>();
 
     @Override
-    public void startWaiting(ChecksWait wait) {
+    public void register(ChecksWait wait) {
         ChecksWait row = rows.get(wait.reviewId());
-        if (row == null || row.round() < wait.round()) rows.put(wait.reviewId(), wait.at(Stage.WAITING));
+        if (row == null || row.round() < wait.round()) rows.put(wait.reviewId(), wait);
     }
 
     @Override
-    public void clearBefore(String reviewId, int round) {
+    public int admittedRound(String reviewId) {
         ChecksWait row = rows.get(reviewId);
-        if (row != null && row.round() < round) rows.remove(reviewId);
+        return row == null ? 0 : row.round();
+    }
+
+    @Override
+    public boolean markWaiting(String reviewId, int round) {
+        ChecksWait row = rows.get(reviewId);
+        boolean waiting = row != null && row.round() == round && row.stage() == Stage.WAITING;
+        if (waiting) shownWaiting.add(round);
+        return waiting;
     }
 
     @Override
@@ -41,8 +54,12 @@ class InMemoryChecksWaits extends ChecksWaitStore {
     public void finish(ChecksWait claimed) {
         ChecksWait row = rows.get(claimed.reviewId());
         if (row == null || row.round() != claimed.round() || row.stage() != claimed.stage()) return;
-        if (claimed.stage() == Stage.STARTING_UNFINISHED) rows.put(claimed.reviewId(), row.at(Stage.TIMED_OUT));
-        else rows.remove(claimed.reviewId());
+        Stage done = switch (claimed.stage()) {
+            case STARTING_UNFINISHED -> Stage.TIMED_OUT;
+            case SKIPPING -> Stage.SKIPPED;
+            default -> Stage.STARTED;
+        };
+        rows.put(claimed.reviewId(), row.at(done));
     }
 
     @Override
@@ -76,18 +93,7 @@ class InMemoryChecksWaits extends ChecksWaitStore {
 
     @Override
     public List<ChecksWait> claimDue(int limit) {
-        return rows.values().stream().filter(row -> row.stage() != Stage.TIMED_OUT).toList();
-    }
-
-    /** Admissions whose wait is not recorded; the tests name them. */
-    final List<PendingAdmission> pending = new java.util.ArrayList<>();
-
-    @Override
-    public List<PendingAdmission> pendingAdmissions(int limit) {
-        List<PendingAdmission> taken = pending.stream()
-                .filter(admission -> !rows.containsKey(admission.reviewId())).toList();
-        pending.clear();
-        return taken;
+        return rows.values().stream().filter(row -> DUE.contains(row.stage())).toList();
     }
 
     /** The review's row, or null. */

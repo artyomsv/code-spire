@@ -48,13 +48,43 @@ public class ReviewLifecycleService {
         return fold(eventStore.load(reviewId));
     }
 
-    private List<DomainEvent> handleOnce(String reviewId, RecordCommand command) {
+    /**
+     * A run requested, and the state the request left: folded from the very history the append was made on, so its
+     * round is the accepted run's identity (review waits for CI), never a later read's.
+     */
+    public record Requested(List<DomainEvent> events, ReviewState state) {
+        public boolean accepted() {
+            return events.stream().anyMatch(DomainEvent.ReviewRequested.class::isInstance);
+        }
+    }
+
+    /** Handles a run request like {@link #handle}, answering the state it left as well. */
+    public Requested request(String reviewId, RecordCommand.RequestReview command) {
+        try {
+            return requestOnce(reviewId, command);
+        } catch (EventStore.ConcurrencyException conflict) {
+            LOG.debugf("Concurrency conflict on %s, retrying once", reviewId);
+            return requestOnce(reviewId, command);
+        }
+    }
+
+    private Requested requestOnce(String reviewId, RecordCommand command) {
         List<EventEnvelope> history = eventStore.load(reviewId);
         ReviewState state = fold(history);
+        List<DomainEvent> appended = append(reviewId, history, decider.decide(command, state));
+        for (DomainEvent event : appended) state = decider.evolve(state, event);
+        return new Requested(appended, state);
+    }
 
-        List<DomainEvent> newEvents = decider.decide(command, state);
+    private List<DomainEvent> handleOnce(String reviewId, RecordCommand command) {
+        List<EventEnvelope> history = eventStore.load(reviewId);
+        return append(reviewId, history, decider.decide(command, fold(history)));
+    }
+
+    /** Appends {@code newEvents} after {@code history} (optimistic) and publishes them; empty is a no-op. */
+    private List<DomainEvent> append(String reviewId, List<EventEnvelope> history, List<DomainEvent> newEvents) {
         if (newEvents.isEmpty()) {
-            LOG.debugf("%s on %s: no-op", command.getClass().getSimpleName(), reviewId);
+            LOG.debugf("%s: no-op", reviewId);
             return newEvents;
         }
 

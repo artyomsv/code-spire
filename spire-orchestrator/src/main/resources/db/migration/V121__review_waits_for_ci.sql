@@ -9,16 +9,19 @@
 ALTER TABLE repository ADD COLUMN start_review TEXT NOT NULL DEFAULT 'IMMEDIATELY'
     CONSTRAINT repository_start_review_known CHECK (start_review IN ('IMMEDIATELY', 'AFTER_CHECKS'));
 
--- One row per review that waits for checks on a head, keyed by the review and identified by its run (round: the
--- count of ReviewRequested in the review's stream when the wait began, so a re-run on the same head is another run).
+-- One row per review: its latest admitted run, identified by its round (the count of ReviewRequested folded when the
+-- run was accepted, so a re-run on the same head is another run). The row is written in the round lock that admits
+-- the run and is never replaced by an earlier round, so it is the durable admission state every later write fences on.
 --   waiting             nothing has run; the webhook wake-up and the sweep read the head's checks.
---   starting            the review was claimed to start; its FetchDiff is sent, then the row is deleted.
+--   starting            the review was claimed to start; its FetchDiff is sent, then the row becomes started.
 --   starting_unfinished the same after the 60-minute timeout; the row then becomes timed_out.
---   skipping            the checks failed; the run is ended, noted and labelled, then the row is deleted.
---   timed_out           the review started before its checks finished, so its verdict never approves.
+--   skipping            the checks failed; the run is ended, noted and labelled, then the row becomes skipped.
+--   started             the run's review started (at once, or after its checks); terminal.
+--   skipped             the run was skipped on red checks; terminal.
+--   timed_out           the review started before its checks finished, so its verdict never approves; terminal.
 -- Moving a waiting row to a claimed state (guarded on state = 'waiting' and the round) is the permit to act, so only
 -- one resolver ever acts on a run. A claimed row is the recoverable intent: a process that dies before the outcome is
--- complete leaves it for the sweep, which finishes it. A new head's or a re-run's wait replaces the row.
+-- complete leaves it for the sweep, which finishes it. A later run's admission replaces the row.
 -- next_read_at is the sweep's due time: 60 s after the wait starts (the grace read), then every 5 minutes; for a
 -- claimed row, 5 minutes after the claim. It is pushed forward in the statement that claims the row for a sweep.
 -- failed_checks names the failed checks of a skip, so a skip finished after a restart still says which.
@@ -29,11 +32,12 @@ CREATE TABLE review_checks_wait (
     round         INT         NOT NULL,
     untrusted     BOOLEAN     NOT NULL,
     state         TEXT        NOT NULL CONSTRAINT review_checks_wait_state_known
-        CHECK (state IN ('waiting', 'starting', 'starting_unfinished', 'skipping', 'timed_out')),
+        CHECK (state IN ('waiting', 'starting', 'starting_unfinished', 'skipping', 'started', 'skipped', 'timed_out')),
     waiting_since TIMESTAMPTZ NOT NULL,
     next_read_at  TIMESTAMPTZ NOT NULL,
     failed_checks TEXT
 );
 
-CREATE INDEX review_checks_wait_due ON review_checks_wait (next_read_at) WHERE state <> 'timed_out';
+CREATE INDEX review_checks_wait_due ON review_checks_wait (next_read_at)
+    WHERE state IN ('waiting', 'starting', 'starting_unfinished', 'skipping');
 CREATE INDEX review_checks_wait_head ON review_checks_wait (repository_id, head_commit) WHERE state = 'waiting';

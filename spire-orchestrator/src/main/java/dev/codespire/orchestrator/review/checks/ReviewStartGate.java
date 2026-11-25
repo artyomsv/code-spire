@@ -1,12 +1,14 @@
 package dev.codespire.orchestrator.review.checks;
 
 import dev.codespire.contract.command.ActionCommand.FetchDiff;
+import dev.codespire.contract.command.RecordCommand.RequestReview;
 import dev.codespire.contract.lifecycle.ReviewState;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.pipeline.CommandsEmitter;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.repository.StartReview;
-import dev.codespire.orchestrator.review.checks.ChecksWaitStore.PendingAdmission;
+import dev.codespire.orchestrator.review.checks.ChecksWait.Stage;
+import dev.codespire.orchestrator.review.run.ReviewRoundLock;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -15,16 +17,15 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Where a review of a new head starts: at once, or after its checks finish (V121,
- * docs/superpowers/specs/2026-11-24-review-waits-for-ci-design.md). Called where the aggregate has just accepted the
- * run (a pull request opened or updated, a re-run), in place of sending the run's first command.
+ * Admits a review run and starts it at once or after its checks finish (V121,
+ * docs/superpowers/specs/2026-11-24-review-waits-for-ci-design.md).
  *
- * <p>With "after checks finish" nothing is sent. The run's identity is read from one fold of the aggregate (its
- * current head and round, {@link ReviewState#round}); a run the aggregate no longer reviews is stale and registers
- * nothing, and the store keeps a later run's row against a late registration. A fold that fails keeps the gate
- * closed: the review shows "Waiting for checks" with no row, and the sweep admits it again ({@link #admit}). Nothing
- * here ever starts a review at once on a failure. The aggregate stays REVIEWING on the head, so a new commit
- * supersedes the wait, a close cancels it, and a redelivered event for the head is a no-op.
+ * <p>{@link #admit} is one critical section under the review's round lock: the aggregate accepts the run, the round it
+ * accepted (folded from the history the append was made on) is recorded as the review's admission row, waiting or
+ * started, and every earlier run's open ci-failed receipt is closed. A failure there fails the admission, so its event
+ * is redelivered, and a redelivery that finds the run accepted but unrecorded records it. {@link #begin} then only acts
+ * on the run it was handed: it starts it, or shows it waiting while that very round still waits. Nothing re-reads a
+ * "current" round, so a late caller never takes a newer run's identity.
  */
 @ApplicationScoped
 public class ReviewStartGate {
@@ -52,74 +53,76 @@ public class ReviewStartGate {
     @Inject
     SkippedRunReceipts receipts;
 
-    /** Sends {@code fetch}, or admits the review to wait for the checks on {@code fetch.commit()}. */
-    public void begin(FetchDiff fetch) {
-        String reviewId = fetch.reviewId();
-        supersedeLabels(reviewId);
-        Optional<UUID> repository = waitingRepository(reviewId);
-        if (repository.isEmpty()) {
+    @Inject
+    ReviewRoundLock rounds;
+
+    /** A run to admit: its request, and the fork flag its review's start sends. */
+    public record Admission(String reviewId, RequestReview request, boolean untrusted) {
+    }
+
+    /** The run the aggregate accepted: its round, and whether it waits for its checks. */
+    public record AcceptedRun(int round, boolean waits) {
+    }
+
+    /** Admits the run under the review's round lock; empty when the aggregate declined it. */
+    public Optional<AcceptedRun> admit(Admission admission) {
+        return rounds.holding(admission.reviewId(), () -> admitHolding(admission));
+    }
+
+    /** {@link #admit} for a caller that already holds the review's round lock (a re-run). */
+    public Optional<AcceptedRun> admitHolding(Admission admission) {
+        ReviewLifecycleService.Requested requested = lifecycle.request(admission.reviewId(), admission.request());
+        if (!requested.accepted()) {
+            recordIfUnrecorded(admission, requested.state());
+            return Optional.empty();
+        }
+        return Optional.of(record(admission, requested.state()));
+    }
+
+    /** Starts the accepted run at once, or shows it waiting while that round still waits. */
+    public void begin(FetchDiff fetch, AcceptedRun run) {
+        if (!run.waits()) {
             commands.emit(fetch);
-            clearEarlierRuns(reviewId);
             return;
         }
-        admit(new PendingAdmission(reviewId, repository.orElseThrow(), fetch.commit(), fetch.untrustedPullRequest()));
-    }
-
-    /** Records the wait of the admitted run; also the sweep's retry of an admission whose identity was not read. */
-    public void admit(PendingAdmission admission) {
-        Optional<ChecksWait> wait;
-        try {
-            wait = identify(admission);
-        } catch (RuntimeException unreadable) {
-            LOG.warnf(unreadable, "review %s: the run waiting on %s could not be identified; it stays waiting and the"
-                    + " sweep admits it again", admission.reviewId(), admission.head());
-            markWaiting(admission, "ChecksWaitPending");
+        if (!waits.markWaiting(fetch.reviewId(), run.round())) {
+            LOG.infof("review %s: round %d no longer waits; its status stays", fetch.reviewId(), run.round());
             return;
         }
-        if (wait.isEmpty()) {
-            LOG.infof("review %s: no wait for %s, which the review no longer runs", admission.reviewId(), admission.head());
-            return;
-        }
-        waits.startWaiting(wait.orElseThrow());
-        markWaiting(admission, "ChecksWaitStarted");
-        LOG.infof("review %s: waiting for the checks on %s before reviewing", admission.reviewId(), admission.head());
+        projection.touch(fetch.reviewId());
+        projection.appendEvent(fetch.reviewId(), "integration", "ChecksWaitStarted", "waiting for checks on " + fetch.commit());
+        LOG.infof("review %s: waiting for the checks on %s before reviewing", fetch.reviewId(), fetch.commit());
     }
 
-    /** The current run's wait when it is the admitted head's; empty for a run a newer one replaced. */
-    private Optional<ChecksWait> identify(PendingAdmission admission) {
-        ReviewState state = lifecycle.currentState(admission.reviewId());
-        if (!state.isReviewing() || !admission.head().equals(state.currentCommit())) return Optional.empty();
-        return Optional.of(ChecksWait.waiting(new ChecksWait.Run(admission.reviewId(), admission.head(), state.round()),
-                admission.repositoryId(), admission.untrusted()));
+    /** Under the round lock: the accepted round's admission row and the earlier runs' closed label receipts. */
+    private AcceptedRun record(Admission admission, ReviewState state) {
+        receipts.supersede(admission.reviewId());
+        Optional<UUID> repository = projection.repositoryIdOf(admission.reviewId());
+        boolean waitsForChecks = repository.filter(id -> waitsForChecks(admission.reviewId(), id)).isPresent();
+        Stage stage = waitsForChecks ? Stage.WAITING : Stage.STARTED;
+        repository.ifPresent(id -> waits.register(ChecksWait.admitted(new ChecksWait.Run(admission.reviewId(),
+                state.currentCommit(), state.round()), id, stage).withUntrusted(admission.untrusted())));
+        return new AcceptedRun(state.round(), waitsForChecks);
     }
 
-    private void markWaiting(PendingAdmission admission, String type) {
-        projection.updateStatus(admission.reviewId(), ChecksWaitStatus.WAITING);
-        projection.appendEvent(admission.reviewId(), "integration", type, "waiting for checks on " + admission.head());
+    /**
+     * A redelivered request whose first admission failed after the aggregate accepted it: the current run is this head's
+     * and no row records it. A waiting run is recorded and shown waiting; a run that starts at once is left as before.
+     */
+    private void recordIfUnrecorded(Admission admission, ReviewState state) {
+        boolean current = state.isReviewing() && admission.request().commit().equals(state.currentCommit());
+        if (!current || waits.admittedRound(admission.reviewId()) >= state.round()) return;
+        Optional<UUID> repository = projection.repositoryIdOf(admission.reviewId())
+                .filter(id -> waitsForChecks(admission.reviewId(), id));
+        if (repository.isEmpty()) return;
+        record(admission, state);
+        if (waits.markWaiting(admission.reviewId(), state.round())) projection.touch(admission.reviewId());
+        LOG.infof("review %s: recorded round %d's wait, which its first admission missed", admission.reviewId(),
+                state.round());
     }
 
-    /** The repository when this review waits; empty when it starts at once (setting, or a forge with no check read). */
-    private Optional<UUID> waitingRepository(String reviewId) {
-        return projection.repositoryIdOf(reviewId)
-                .filter(id -> setting.of(id) == StartReview.AFTER_CHECKS)
-                .filter(id -> reader.available(reviewId));
-    }
-
-    /** A run started at once leaves no earlier run's wait or hold; one missed here is dropped as stale when read. */
-    private void clearEarlierRuns(String reviewId) {
-        try {
-            waits.clearBefore(reviewId, lifecycle.currentState(reviewId).round());
-        } catch (RuntimeException failure) {
-            LOG.warnf(failure, "review %s: an earlier run's check wait could not be cleared", reviewId);
-        }
-    }
-
-    /** A new run of the review closes the earlier runs' open ci-failed receipts; a miss only weakens that fence. */
-    private void supersedeLabels(String reviewId) {
-        try {
-            receipts.supersede(reviewId);
-        } catch (RuntimeException failure) {
-            LOG.warnf(failure, "review %s: earlier skipped runs' label receipts could not be closed", reviewId);
-        }
+    /** Whether this review waits: the setting asks for it and its forge can report its checks. */
+    private boolean waitsForChecks(String reviewId, UUID repositoryId) {
+        return setting.of(repositoryId) == StartReview.AFTER_CHECKS && reader.available(reviewId);
     }
 }

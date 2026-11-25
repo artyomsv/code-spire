@@ -225,9 +225,17 @@ abstract class IntegrationSagaFixture {
         };
         saga.policy = policy;
         // The repository starts reviews at once: the run's first command is sent as before (V121).
+        // Admission asks the (faked) aggregate as the saga did; the start sends the run's first command at once.
         saga.reviewStart = new dev.codespire.orchestrator.review.checks.ReviewStartGate() {
             @Override
-            public void begin(ActionCommand.FetchDiff fetch) {
+            public Optional<AcceptedRun> admit(Admission admission) {
+                boolean accepted = saga.lifecycle.handle(admission.reviewId(), admission.request()).stream()
+                        .anyMatch(DomainEvent.ReviewRequested.class::isInstance);
+                return accepted ? Optional.of(new AcceptedRun(1, false)) : Optional.empty();
+            }
+
+            @Override
+            public void begin(ActionCommand.FetchDiff fetch, AcceptedRun run) {
                 emitted.add(fetch);
             }
         };

@@ -3,9 +3,6 @@ package dev.codespire.orchestrator.pipeline;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import dev.codespire.contract.command.ActionCommand;
-import dev.codespire.contract.command.RecordCommand;
-import dev.codespire.contract.event.DomainEvent;
-import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.provider.ProviderInput;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
@@ -76,10 +73,14 @@ class ArchivedReviewGateTest {
         List<String> clearedClaims = new ArrayList<>();
         ReviewRerunService service = new ReviewRerunService();
         service.projection = fakeArchivedProjection(clearedClaims);
-        service.lifecycle = fakeLifecycleThatStartsARun();
         service.reviewStart = new dev.codespire.orchestrator.review.checks.ReviewStartGate() {
             @Override
-            public void begin(ActionCommand.FetchDiff fetch) {
+            public Optional<AcceptedRun> admitHolding(Admission admission) {
+                throw new AssertionError("an archived rerun must never admit a run");
+            }
+
+            @Override
+            public void begin(ActionCommand.FetchDiff fetch, AcceptedRun run) {
                 throw new AssertionError("an archived rerun must never dispatch a command");
             }
         };
@@ -133,16 +134,6 @@ class ArchivedReviewGateTest {
 
             @Override
             public void markRerunStarted(String reviewId) {
-            }
-        };
-    }
-
-    /** A decider that claims a run, so a missing gate would be exercised end to end, not skipped early. */
-    private static ReviewLifecycleService fakeLifecycleThatStartsARun() {
-        return new ReviewLifecycleService() {
-            @Override
-            public List<DomainEvent> handle(String reviewId, RecordCommand command) {
-                return List.of(new DomainEvent.ReviewRequested("TESTSHA1", "rerun"));
             }
         };
     }

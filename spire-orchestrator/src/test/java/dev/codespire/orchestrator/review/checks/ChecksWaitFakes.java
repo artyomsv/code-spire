@@ -64,6 +64,11 @@ abstract class ChecksWaitFakes {
                 notes.add(text);
             }
 
+            /** The dashboard push after the store showed the review waiting. */
+            @Override
+            public void touch(String reviewId) {
+            }
+
             @Override
             public boolean archived(String reviewId) {
                 return false;

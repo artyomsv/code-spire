@@ -13,7 +13,6 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -24,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ChecksWaitResolverTest extends ChecksWaitFixture {
 
     private void waiting() {
-        gate().begin(fetch(HEAD));
+        requestRun(HEAD);
         statuses.clear();
         history.clear();
     }
@@ -43,7 +42,7 @@ class ChecksWaitResolverTest extends ChecksWaitFixture {
         assertEquals("TEST-packed-at-start", started.scmCredential(), "the credential is packed when the review starts");
         assertTrue(started.untrustedPullRequest());
         assertEquals(List.of("reviewing"), statuses);
-        assertNull(waits.rowOf(REVIEW_ID), "a completed start leaves no row");
+        assertEquals(ChecksWait.Stage.STARTED, waits.rowOf(REVIEW_ID).stage());
     }
 
     @Test
@@ -85,14 +84,14 @@ class ChecksWaitResolverTest extends ChecksWaitFixture {
         verdict = red("TEST-build", "TEST-lint");
         wake(HEAD);
         assertTrue(fetches().isEmpty(), "no review runs, so nothing is charged");
-        assertEquals(new RecordCommand.SkipReview(HEAD, 1, ChecksWaitStatus.CHECKS_FAILED), recorded.getLast());
+        assertEquals(new RecordCommand.SkipReview(HEAD, round(), ChecksWaitStatus.CHECKS_FAILED), recorded.getLast());
         assertEquals(ReviewState.Status.CANCELLED, state.status());
         ActionCommand.LabelChecksFailed label = labels().getFirst();
         assertEquals(HEAD, label.commit());
         assertEquals(round(), label.round());
         assertTrue(notes.getLast().contains("TEST-build, TEST-lint"), notes.toString());
         assertEquals(List.of("ChecksFailed"), history);
-        assertNull(waits.rowOf(REVIEW_ID));
+        assertEquals(ChecksWait.Stage.SKIPPED, waits.rowOf(REVIEW_ID).stage());
     }
 
     @Test

@@ -41,8 +41,8 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
     final InMemoryChecksWaits waits = new InMemoryChecksWaits();
     /** The aggregate: its head, status and round, folded by the real decider. */
     ReviewState state = reviewing(HEAD, 1);
-    /** Reads of the aggregate that fail before it answers again, as a lost database would. */
-    int failingStateReads;
+    /** Fails the next admission after the aggregate accepted its run, as a lost database would. */
+    RuntimeException admissionFailure;
     StartReview setting = StartReview.AFTER_CHECKS;
     boolean checksReadable = true;
     ChecksVerdict verdict = ChecksVerdict.PENDING;
@@ -71,15 +71,19 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
                 ChecksWait.Stage.WAITING, null);
     }
 
-    /** A new commit or a re-run: the aggregate's next round, as the saga and the re-run service ask for it. */
+    /** A new commit or a re-run, admitted and begun, as the saga and the re-run service do. */
     void requestRun(String head) {
-        admitRun(head);
-        gate().begin(fetch(head));
+        gate().begin(fetch(head), admitRun(head));
     }
 
-    /** Only the aggregate's half of {@link #requestRun}: the run is accepted, its wait not registered yet. */
-    void admitRun(String head) {
-        state = reviewing(head, round() + 1);
+    /** Only the admission half of {@link #requestRun}: the run is accepted and recorded; begin has not run. */
+    ReviewStartGate.AcceptedRun admitRun(String head) {
+        return gate().admit(admission(head)).orElseThrow();
+    }
+
+    /** A forced request, so it is accepted on any head, the same one included (a re-run). */
+    static ReviewStartGate.Admission admission(String head) {
+        return new ReviewStartGate.Admission(REVIEW_ID, new RecordCommand.RequestReview(head, "TEST", true), true);
     }
 
     ReviewStartGate gate() {
@@ -96,6 +100,7 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
         gate.commands = commands();
         gate.lifecycle = lifecycle();
         gate.receipts = receipts();
+        gate.rounds = roundLock();
         return gate;
     }
 
@@ -113,7 +118,6 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
         ChecksWaitSweep sweep = new ChecksWaitSweep();
         sweep.waits = waits;
         sweep.resolver = resolver();
-        sweep.gate = gate();
         return sweep;
     }
 
@@ -135,14 +139,18 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
                 return Optional.of(verdictLabels);
             }
         };
-        outcomes.rounds = new ReviewRoundLock() {
+        outcomes.rounds = roundLock();
+        outcomes.receipts = receipts();
+        return outcomes;
+    }
+
+    private static ReviewRoundLock roundLock() {
+        return new ReviewRoundLock() {
             @Override
             public <T> T holding(String reviewId, Supplier<T> work) {
                 return work.get();
             }
         };
-        outcomes.receipts = receipts();
-        return outcomes;
     }
 
     private SkippedRunReceipts receipts() {
@@ -155,6 +163,10 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
             @Override
             public void supersede(String reviewId) {
                 receiptLog.add("supersede");
+                if (admissionFailure == null) return;
+                RuntimeException failure = admissionFailure;
+                admissionFailure = null;
+                throw failure;
             }
         };
     }
@@ -187,11 +199,12 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
             }
 
             @Override
+            public Requested request(String reviewId, RecordCommand.RequestReview command) {
+                return new Requested(handle(reviewId, command), state);
+            }
+
+            @Override
             public ReviewState currentState(String reviewId) {
-                if (failingStateReads > 0) {
-                    failingStateReads--;
-                    throw new IllegalStateException("TEST-event-store-unavailable");
-                }
                 return state;
             }
         };

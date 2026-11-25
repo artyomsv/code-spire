@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -43,7 +42,7 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
         assertEquals(1, skips());
         assertEquals(1, notes.size());
         assertEquals(1, labels().size());
-        assertNull(waits.rowOf(REVIEW_ID));
+        assertEquals(Stage.SKIPPED, waits.rowOf(REVIEW_ID).stage());
     }
 
     /** The timeout start wins; the red reader that read first never cancels the started run. */
@@ -100,7 +99,8 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
         outcomes().finishSkip(claimed);
         assertEquals(0, skips());
         assertEquals(ReviewState.Status.REVIEWING, state.status());
-        assertNull(waits.rowOf(REVIEW_ID), "the stale claim is dropped");
+        assertEquals(round(), waits.rowOf(REVIEW_ID).round(), "the re-run's own record is untouched");
+        assertEquals(Stage.WAITING, waits.rowOf(REVIEW_ID).stage());
     }
 
     /**
@@ -120,7 +120,7 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
         assertEquals(Stage.SKIPPING, waits.rowOf(REVIEW_ID).stage(), "the stale snapshot did not drop the claim");
         sweep().sweep();
         assertEquals(1, labels().size());
-        assertNull(waits.rowOf(REVIEW_ID));
+        assertEquals(Stage.SKIPPED, waits.rowOf(REVIEW_ID).stage());
     }
 
     /** A recovered start of round 1, after a re-run of the same head installed round 2's wait, sends nothing. */
@@ -136,7 +136,6 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
             assertEquals(round(), newer.round(), stage.name());
             assertEquals(Stage.WAITING, newer.stage(), "the re-run's own wait is unchanged");
             assertTrue(!waits.startedUnfinished(REVIEW_ID, HEAD), "no earlier run's hold on the new run");
-            waits.clearBefore(REVIEW_ID, round() + 1);
         }
     }
 
@@ -151,7 +150,7 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
         assertTrue(fetches().isEmpty());
         sweep().sweep();
         assertEquals(List.of(HEAD), fetches().stream().map(fetch -> fetch.commit()).toList());
-        assertNull(waits.rowOf(REVIEW_ID));
+        assertEquals(Stage.STARTED, waits.rowOf(REVIEW_ID).stage());
     }
 
     @Test
@@ -178,7 +177,7 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
         sweep().sweep();
         assertEquals(1, labels().size());
         assertTrue(notes.getLast().contains("TEST-build"), "the failed checks survive the restart in the row");
-        assertNull(waits.rowOf(REVIEW_ID));
+        assertEquals(Stage.SKIPPED, waits.rowOf(REVIEW_ID).stage());
     }
 
     /** A push lands while a start's send fails: the new head's wait is kept, never overwritten, and still starts. */

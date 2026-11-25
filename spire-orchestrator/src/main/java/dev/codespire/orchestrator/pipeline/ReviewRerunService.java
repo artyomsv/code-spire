@@ -2,12 +2,11 @@ package dev.codespire.orchestrator.pipeline;
 
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
-import dev.codespire.contract.event.DomainEvent;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.scm.RepoRef;
-import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
+import dev.codespire.orchestrator.review.checks.ReviewStartGate;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.ClientErrorException;
@@ -15,7 +14,7 @@ import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 
-import java.util.List;
+import java.util.Optional;
 
 /**
  * Restarts an existing review's pipeline on its stored commit — the operator-triggered analog of the
@@ -38,9 +37,6 @@ public class ReviewRerunService {
     ReviewProjection projection;
 
     @Inject
-    ReviewLifecycleService lifecycle;
-
-    @Inject
     WorkerCredentials workerCredentials;
 
     @Inject
@@ -50,9 +46,9 @@ public class ReviewRerunService {
     @Inject
     dev.codespire.orchestrator.factory.FixTargets targets;
 
-    /** A re-run waits for the head's checks too when the repository says so (V121). */
+    /** Admits the re-run's round and starts it, at once or after its checks (V121). */
     @Inject
-    dev.codespire.orchestrator.review.checks.ReviewStartGate reviewStart;
+    ReviewStartGate reviewStart;
 
     /**
      * @return true if the run was (re)started; false if the aggregate declined it (should not happen
@@ -80,12 +76,12 @@ public class ReviewRerunService {
         // (CallRefs.reviewSlot), or the second call's charges collide with the first's and are dropped.
         projection.clearWorkerIdempotency(reviewId);
 
-        boolean started = rounds.holding(reviewId, () -> requestRound(reviewId, commit));
-        if (!started) {
+        boolean untrusted = targets.isUntrustedReview(reviewId);
+        Optional<ReviewStartGate.AcceptedRun> run = rounds.holding(reviewId, () -> requestRound(reviewId, commit, untrusted));
+        if (run.isEmpty()) {
             return false;
         }
-        reviewStart.begin(new ActionCommand.FetchDiff(reviewId, repo, pr, commit, scmCredential,
-                targets.isUntrustedReview(reviewId)));
+        reviewStart.begin(new ActionCommand.FetchDiff(reviewId, repo, pr, commit, scmCredential, untrusted), run.orElseThrow());
         LOG.infof("Re-run requested for %s on commit %s", reviewId, commit);
         return true;
     }
@@ -104,13 +100,14 @@ public class ReviewRerunService {
      * The next round and its run token, under the review's round lock (review of PR #368, code-quality/H-1). A harness
      * outcome reads its round and acts under the same lock, so it never takes this round's number and token for the
      * round its answer belongs to: a forced re-run keeps the commit, which is all the outcome path's other checks see.
+     * The run is admitted in the same critical section (V121): its round, its admission row and its label fence.
      */
-    private boolean requestRound(String reviewId, String commit) {
-        List<DomainEvent> emitted = lifecycle.handle(reviewId, new RecordCommand.RequestReview(commit, "rerun", true));
-        boolean started = emitted.stream().anyMatch(DomainEvent.ReviewRequested.class::isInstance);
-        if (started) {
+    private Optional<ReviewStartGate.AcceptedRun> requestRound(String reviewId, String commit, boolean untrusted) {
+        Optional<ReviewStartGate.AcceptedRun> run = reviewStart.admitHolding(new ReviewStartGate.Admission(reviewId,
+                new RecordCommand.RequestReview(commit, "rerun", true), untrusted));
+        if (run.isPresent()) {
             projection.markRerunStarted(reviewId);
         }
-        return started;
+        return run;
     }
 }

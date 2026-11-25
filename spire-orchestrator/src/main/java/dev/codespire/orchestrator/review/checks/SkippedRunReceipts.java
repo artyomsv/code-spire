@@ -7,6 +7,7 @@ import org.jboss.logging.Logger;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 
 /**
@@ -18,14 +19,15 @@ import java.sql.SQLException;
  * receipt still open is marked {@code superseded}, so the earlier run's command, delayed or replayed, labels nothing.
  * A re-run keeps these receipts when it clears the worker's other claims (ReviewProjection.deleteWorkerClaims).
  *
- * <p>A database with no worker schema (an orchestrator run without a worker) has nothing to open or close.
+ * <p>Both run in the round lock that admits a run or ends a skipped one, and a failure fails that critical section.
+ * A database with no worker schema (an orchestrator run without a worker) has nothing to open or close.
  */
 @ApplicationScoped
 public class SkippedRunReceipts {
 
     static final String PREFIX = "CI_FAILED:";
     static final String SUPERSEDED = "superseded";
-    private static final String UNDEFINED_TABLE = "42P01";
+    private static final String TABLE = "worker.comment_idempotency";
     private static final Logger LOG = Logger.getLogger(SkippedRunReceipts.class);
 
     @Inject
@@ -49,15 +51,26 @@ public class SkippedRunReceipts {
     }
 
     private void write(String sql, Binder binder) {
-        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
-            binder.bind(statement);
-            statement.executeUpdate();
-        } catch (SQLException failure) {
-            if (UNDEFINED_TABLE.equals(failure.getSQLState())) {
+        try (Connection connection = dataSource.getConnection()) {
+            if (!workerTableExists(connection)) {
                 LOG.debugf("No worker schema here, so there is no ci-failed receipt to write");
                 return;
             }
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                binder.bind(statement);
+                statement.executeUpdate();
+            }
+        } catch (SQLException failure) {
             throw new IllegalStateException("The ci-failed label receipt could not be written", failure);
+        }
+    }
+
+    private static boolean workerTableExists(Connection connection) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("SELECT to_regclass(?) IS NOT NULL")) {
+            statement.setString(1, TABLE);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() && rows.getBoolean(1);
+            }
         }
     }
 

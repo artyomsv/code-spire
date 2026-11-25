@@ -12,9 +12,12 @@ import java.util.UUID;
 public record ChecksWait(String reviewId, UUID repositoryId, String head, int round, boolean untrusted,
                          Instant waitingSince, Stage stage, String failedChecks) {
 
-    /** Where the wait is: its claimed stages are the recoverable intent of an outcome not yet complete. */
+    /**
+     * Where the run is: its claimed stages are the recoverable intent of an outcome not yet complete; STARTED, SKIPPED
+     * and TIMED_OUT are terminal and stay as the admission record later writes fence on.
+     */
     public enum Stage {
-        WAITING, STARTING, STARTING_UNFINISHED, SKIPPING, TIMED_OUT;
+        WAITING, STARTING, STARTING_UNFINISHED, SKIPPING, STARTED, SKIPPED, TIMED_OUT;
 
         /** The stored form ({@code review_checks_wait.state}). */
         public String stored() {
@@ -26,10 +29,14 @@ public record ChecksWait(String reviewId, UUID repositoryId, String head, int ro
         }
     }
 
-    /** A new wait, not yet read. */
-    public static ChecksWait waiting(Run run, UUID repositoryId, boolean untrusted) {
-        return new ChecksWait(run.reviewId(), repositoryId, run.head(), run.round(), untrusted, Instant.now(),
-                Stage.WAITING, null);
+    /** A new run of the review in {@code stage}: WAITING for its checks, or STARTED at once. */
+    public static ChecksWait admitted(Run run, UUID repositoryId, Stage stage) {
+        return new ChecksWait(run.reviewId(), repositoryId, run.head(), run.round(), false, Instant.now(), stage, null);
+    }
+
+    /** The same run with the fork flag its review's start sends. */
+    public ChecksWait withUntrusted(boolean value) {
+        return new ChecksWait(reviewId, repositoryId, head, round, value, waitingSince, stage, failedChecks);
     }
 
     /** The same wait in another stage, after a successful claim. */

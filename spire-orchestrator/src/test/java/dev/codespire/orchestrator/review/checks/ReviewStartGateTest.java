@@ -1,120 +1,115 @@
 package dev.codespire.orchestrator.review.checks;
 
 import dev.codespire.contract.command.ActionCommand;
+import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.event.IntegrationEvent.ChecksChanged;
 import dev.codespire.orchestrator.repository.StartReview;
+import dev.codespire.orchestrator.review.checks.ChecksWait.Stage;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Where a review starts: at once, as before, or as a wait of the admitted run for the head's checks (V121). */
+/**
+ * Admission and start (V121): the run is accepted, recorded with the round the aggregate accepted and its label fence
+ * closed, all in the round lock; begin then acts on that run only.
+ */
 class ReviewStartGateTest extends ChecksWaitFixture {
 
-    /** "Immediately" behaves exactly as today: the run's own first command, unchanged, and no wait. */
+    /** "Immediately" sends the run's own first command, unchanged; the run is recorded as started. */
     @Test
     void immediatelySendsTheRunsFirstCommandUnchanged() {
         setting = StartReview.IMMEDIATELY;
-        ActionCommand.FetchDiff fetch = fetch(HEAD);
-        gate().begin(fetch);
+        ActionCommand.FetchDiff fetch = fetch(NEXT_HEAD);
+        gate().begin(fetch, admitRun(NEXT_HEAD));
         assertEquals(List.of(fetch), emitted);
-        assertNull(waits.rowOf(REVIEW_ID));
+        assertEquals(Stage.STARTED, waits.rowOf(REVIEW_ID).stage());
         assertTrue(statuses.isEmpty(), statuses.toString());
     }
 
-    /** A repository switched back to "immediately" drops the wait an earlier run left. */
+    /** A run admitted to start at once replaces an earlier run's wait or hold. */
     @Test
-    void immediatelyDropsAnEarlierRunsWait() {
+    void immediatelyReplacesAnEarlierRunsWait() {
         waits.startWaiting(waitOn(HEAD, 0));
         setting = StartReview.IMMEDIATELY;
-        admitRun(NEXT_HEAD);
-        gate().begin(fetch(NEXT_HEAD));
-        assertNull(waits.rowOf(REVIEW_ID));
+        requestRun(NEXT_HEAD);
+        assertEquals(Stage.STARTED, waits.rowOf(REVIEW_ID).stage());
+        assertEquals(round(), waits.rowOf(REVIEW_ID).round());
         assertEquals(1, fetches().size());
     }
 
     @Test
-    void afterChecksRecordsAWaitOfTheAdmittedRunAndSendsNothing() {
-        gate().begin(fetch(HEAD));
+    void afterChecksRecordsTheAcceptedRoundsWaitAndSendsNothing() {
+        ReviewStartGate.AcceptedRun run = admitRun(NEXT_HEAD);
+        assertEquals(round(), run.round(), "the round the aggregate accepted, folded from its own append");
+        assertEquals(List.of("supersede"), receiptLog, "the earlier runs' label receipts are closed at admission");
+        gate().begin(fetch(NEXT_HEAD), run);
         assertTrue(emitted.isEmpty(), "nothing runs and nothing is charged while the review waits");
         ChecksWait wait = waits.rowOf(REVIEW_ID);
-        assertEquals(HEAD, wait.head());
-        assertEquals(round(), wait.round());
+        assertEquals(NEXT_HEAD, wait.head());
+        assertEquals(run.round(), wait.round());
         assertTrue(wait.untrusted(), "the start sends the fork flag the event carried");
-        assertEquals(List.of(ChecksWaitStatus.WAITING), statuses);
+        assertEquals(List.of(run.round()), waits.shownWaiting);
         assertEquals(List.of("ChecksWaitStarted"), history);
-        assertEquals(List.of("supersede"), receiptLog, "every admission closes the earlier runs' label receipts");
     }
 
     /** A forge with no check read (GitLab, Bitbucket) reviews at once whatever the setting says. */
     @Test
     void aForgeWithoutACheckReadStartsAtOnce() {
         checksReadable = false;
-        gate().begin(fetch(HEAD));
+        requestRun(NEXT_HEAD);
         assertEquals(1, fetches().size());
         assertFalse(waits.isWaiting(REVIEW_ID));
     }
 
     /**
-     * A run that cannot be identified keeps the gate closed: nothing is sent, the review shows waiting, and the sweep
-     * admits it again once the aggregate answers. CI still decides the start.
+     * Same head, two re-runs: A is admitted (round 2) and pauses before begin; B is admitted (round 3), shown waiting,
+     * reads green and starts, completing its row. A then begins: its round no longer waits, so it shows nothing, sends
+     * nothing and leaves B's record and status alone.
      */
     @Test
-    void anUnreadableRunKeepsTheGateClosedUntilTheSweepAdmitsIt() {
-        failingStateReads = 1;
-        gate().begin(fetch(HEAD));
-        assertTrue(emitted.isEmpty(), "never an immediate start on a failed read");
-        assertNull(waits.rowOf(REVIEW_ID));
-        assertEquals(List.of(ChecksWaitStatus.WAITING), statuses);
-        assertEquals(List.of("ChecksWaitPending"), history);
-        waits.pending.add(new ChecksWaitStore.PendingAdmission(REVIEW_ID, REPOSITORY_ID, HEAD, true));
-        sweep().sweep();
-        assertEquals(round(), waits.rowOf(REVIEW_ID).round());
-        assertTrue(emitted.isEmpty(), "pending checks still hold the review");
+    void aPausedRerunBeginsNothingAfterTheNewerRunStarted() {
+        ReviewStartGate.AcceptedRun first = admitRun(HEAD);
+        requestRun(HEAD);
         verdict = green();
         resolver().wake(REPOSITORY_ID, new ChecksChanged(REPO, HEAD));
+        gate().begin(fetch(HEAD), first);
         assertEquals(1, fetches().size());
+        assertEquals(Stage.STARTED, waits.rowOf(REVIEW_ID).stage());
+        assertEquals(first.round() + 1, waits.rowOf(REVIEW_ID).round());
+        assertEquals(List.of(first.round() + 1), waits.shownWaiting, "the paused run never showed waiting");
+        assertEquals(List.of("reviewing"), statuses);
     }
 
-    /** A new commit while waiting replaces the wait for the old head (the aggregate superseded it). */
+    /** A later run's record is never replaced by an earlier round, whatever order the writes arrive in. */
     @Test
-    void aNewCommitReplacesTheWait() {
-        gate().begin(fetch(HEAD));
-        requestRun(NEXT_HEAD);
+    void anEarlierRunsLateRegistrationKeepsTheLaterRow() {
+        admitRun(NEXT_HEAD);
+        ChecksWait later = waits.rowOf(REVIEW_ID);
+        waits.startWaiting(new ChecksWait(REVIEW_ID, REPOSITORY_ID, HEAD, later.round() - 1, true, later.waitingSince(),
+                Stage.WAITING, null));
         assertEquals(NEXT_HEAD, waits.rowOf(REVIEW_ID).head());
-        assertEquals(2, waits.rowOf(REVIEW_ID).round());
-        assertTrue(emitted.isEmpty());
     }
 
     /**
-     * A re-run of HEAD is accepted and pauses before registering; a push of NEXT_HEAD is accepted and registers. The
-     * paused re-run then registers nothing: its run is not the review's any more. NEXT_HEAD's wait survives and starts.
+     * The admission fails after the aggregate accepted the run (closing the label receipts failed), so its event is
+     * redelivered; the redelivery finds the run accepted and unrecorded, records it and shows it waiting.
      */
     @Test
-    void aPausedRerunNeverOverwritesALaterPushsWait() {
-        gate().begin(fetch(HEAD));
-        admitRun(HEAD);
-        requestRun(NEXT_HEAD);
-        gate().begin(fetch(HEAD));
-        ChecksWait wait = waits.rowOf(REVIEW_ID);
-        assertEquals(NEXT_HEAD, wait.head());
-        assertEquals(3, wait.round());
-        verdict = green();
-        resolver().wake(REPOSITORY_ID, new ChecksChanged(REPO, NEXT_HEAD));
-        assertEquals(List.of(NEXT_HEAD), fetches().stream().map(ActionCommand.FetchDiff::commit).toList());
-    }
-
-    /** A registration that arrives after a later run's never replaces it, whatever the order of the writes. */
-    @Test
-    void anEarlierRunsLateRegistrationKeepsTheLaterRow() {
-        waits.startWaiting(waitOn(NEXT_HEAD, 0).at(ChecksWait.Stage.WAITING));
-        ChecksWait later = waits.rowOf(REVIEW_ID);
-        waits.startWaiting(new ChecksWait(REVIEW_ID, REPOSITORY_ID, HEAD, later.round() - 1, true, later.waitingSince(),
-                ChecksWait.Stage.WAITING, null));
-        assertEquals(NEXT_HEAD, waits.rowOf(REVIEW_ID).head());
+    void aFailedAdmissionIsRecordedByItsRedelivery() {
+        admissionFailure = new IllegalStateException("TEST-database-unavailable");
+        assertThrows(IllegalStateException.class, () -> admitRun(NEXT_HEAD));
+        assertEquals(0, waits.admittedRound(REVIEW_ID), "nothing recorded for the accepted round");
+        ReviewStartGate.Admission redelivered = new ReviewStartGate.Admission(REVIEW_ID,
+                new RecordCommand.RequestReview(NEXT_HEAD, "UPDATED", false), true);
+        assertTrue(gate().admit(redelivered).isEmpty(), "the aggregate already accepted it");
+        assertEquals(round(), waits.rowOf(REVIEW_ID).round());
+        assertEquals(List.of(round()), waits.shownWaiting);
+        assertTrue(gate().admit(redelivered).isEmpty());
+        assertEquals(List.of(round()), waits.shownWaiting, "a recorded run is not recorded again");
     }
 }

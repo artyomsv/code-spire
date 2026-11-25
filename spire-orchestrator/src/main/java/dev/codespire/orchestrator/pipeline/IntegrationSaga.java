@@ -26,6 +26,7 @@ import dev.codespire.orchestrator.readmodel.FindingProjection;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
+import dev.codespire.orchestrator.review.checks.ReviewStartGate;
 
 import java.util.List;
 import java.util.Locale;
@@ -94,7 +95,7 @@ public class IntegrationSaga {
     @Inject
     dev.codespire.orchestrator.review.run.ReviewRunCancellation reviewRunCancellation;
 
-    @Inject dev.codespire.orchestrator.review.checks.ReviewStartGate reviewStart; // at once, or after checks (V121)
+    @Inject ReviewStartGate reviewStart; // admits a run; starts it at once, or after checks (V121)
 
     @Incoming("integration-in")
     @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
@@ -725,10 +726,10 @@ public class IntegrationSaga {
         // Observe-only must not advance the aggregate at all: emitting ReviewRequested here would lock
         // the review into REVIEWING, so a later active registration of the same commit would find it
         // "already requested" and never dispatch FetchDiff. The review must stay un-started so
-        // activating it later runs a fresh pipeline.
-        boolean started = !observe && lifecycle.handle(reviewId,
-                        new RecordCommand.RequestReview(commit, e.action().name(), false))
-                .stream().anyMatch(DomainEvent.ReviewRequested.class::isInstance);
+        // activating it later runs a fresh pipeline. Admitted in the review's round lock, with its round (V121).
+        var run = observe ? java.util.Optional.<ReviewStartGate.AcceptedRun>empty() : reviewStart.admit(new ReviewStartGate
+                .Admission(reviewId, new RecordCommand.RequestReview(commit, e.action().name(), false), !Boolean.FALSE.equals(e.fromFork())));
+        boolean started = run.isPresent();
 
         // Make the review visible on the dashboard whether or not any work runs — but a re-delivered
         // event for a commit the aggregate has already reviewed only refreshes the PR metadata. Claiming
@@ -771,7 +772,7 @@ public class IntegrationSaga {
         }
 
         reviewStart.begin(new ActionCommand.FetchDiff(reviewId, e.repo(), e.prId(), commit,
-                workerCredentials.pack(provider.get(), e.repo().workspace()), !Boolean.FALSE.equals(e.fromFork())));
+                workerCredentials.pack(provider.get(), e.repo().workspace()), !Boolean.FALSE.equals(e.fromFork())), run.orElseThrow());
     }
 
     /**

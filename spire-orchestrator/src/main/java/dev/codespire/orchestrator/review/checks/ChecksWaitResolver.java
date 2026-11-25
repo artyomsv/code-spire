@@ -54,7 +54,8 @@ public class ChecksWaitResolver {
             // Fenced by the run's round under the round lock in dispatch: an earlier run's claim never starts a later one.
             case STARTING, STARTING_UNFINISHED -> outcomes.dispatch(wait);
             case SKIPPING -> outcomes.finishSkip(wait);
-            case TIMED_OUT -> LOG.debugf("review %s: the timed-out hold on %s needs no sweep", wait.reviewId(), wait.head());
+            case STARTED, SKIPPED, TIMED_OUT -> LOG.debugf("review %s: run %d on %s is done", wait.reviewId(), wait.round(),
+                    wait.head());
         }
     }
 
