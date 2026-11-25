@@ -6,6 +6,7 @@ import dev.codespire.contract.llm.ModelParamProfile;
 import dev.codespire.contract.llm.ModelParamProfile.OutputTokenParam;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.TokenType;
+import dev.codespire.llmcatalog.CatalogModel;
 import dev.codespire.orchestrator.llm.catalog.LlmModelCatalog;
 import dev.codespire.orchestrator.llm.catalog.ModelSource;
 import dev.codespire.orchestrator.llm.catalog.ResolvedModel;
@@ -244,6 +245,22 @@ public class LlmModelRegistry {
             return catalog.resolve(name).map(ResolvedModel::profile);
         } catch (LlmModelCatalog.CatalogueReadFailed e) {
             LOG.warnf(e, "profile lookup failed for model %s", name);
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * The model's context window in tokens, from the catalog. Empty for a manual model (it has no window), a name
+     * nobody has, and a read fault: unknown means the review keeps today's fixed diff budgets, never a larger one.
+     */
+    public Optional<Long> contextWindowForName(String name) {
+        if (name == null || name.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            return catalog.resolve(name).map(ResolvedModel::catalogEntry).map(CatalogModel::contextWindow);
+        } catch (LlmModelCatalog.CatalogueReadFailed e) {
+            LOG.warnf(e, "context window lookup failed for model %s", name);
             return Optional.empty();
         }
     }

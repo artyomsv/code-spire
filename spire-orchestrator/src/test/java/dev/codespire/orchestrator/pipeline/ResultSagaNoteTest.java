@@ -101,4 +101,27 @@ class ResultSagaNoteTest {
         }
         assertTrue(ResultSaga.noteFor(clean().withTruncated(true)).contains("not reviewed"));
     }
+
+    /** Review input limit: the note names the files the model did not fully see, as the posted summary does. */
+    @Test
+    void aClippedDiffNamesTheOmittedFiles() {
+        String note = ResultSaga.noteFor(clean().withTruncated(true)
+                .withOmittedFiles(List.of("src/TEST-a.lock", "src/TEST-b.java")));
+
+        assertTrue(note.contains("review input limit"), note);
+        assertTrue(note.contains("2 files: src/TEST-a.lock, src/TEST-b.java."), note);
+    }
+
+    @Test
+    void aLongListOfOmittedFilesIsCounted() {
+        List<String> omitted = new java.util.ArrayList<>();
+        for (int i = 1; i <= 25; i++) {
+            omitted.add("src/TEST-" + i + ".java");
+        }
+
+        String note = ResultSaga.noteFor(clean().withTruncated(true).withOmittedFiles(omitted));
+
+        assertTrue(note.contains("src/TEST-20.java and 5 more."), note);
+        assertFalse(note.contains("src/TEST-21.java"), note);
+    }
 }
