@@ -31,9 +31,7 @@ final class ReviewPostSettings {
             + "this commit were still pending after 60 minutes, so this review does not approve.\n\n";
     /** What a review started on the timeout says when its checks could not be read at all (V121). */
     static final String CHECKS_UNREADABLE_NOTICE = "**The checks on this commit could not be read** for 60 minutes, so "
-            + "whether CI passed is unknown and this review does not approve.
-
-";
+            + "whether CI passed is unknown and this review does not approve.\n\n";
     /** What a review says when its run could not be identified, so whether its CI had finished is unknown. */
     static final String CHECKS_UNCONFIRMED_NOTICE = "**Whether CI had finished could not be confirmed for this review,** "
             + "so it does not approve.\n\n";
