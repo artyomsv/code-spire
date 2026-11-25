@@ -67,13 +67,27 @@ public class ChecksWaitStore {
     }
 
     /**
-     * Makes an admitted run readable once its review header is set up: before this no wake-up reads it and nothing can
-     * claim it, so a start or a skip never lands before the header write that would undo its status and token.
+     * Makes an admitted run readable and initialises its review header, in ONE statement: the run leaves 'admitted'
+     * (compare-and-set on the review, the round and the stage) and, only then, the header takes the run's head, the
+     * status 'waiting_for_checks' and a fresh run token. Before this no wake-up reads the run and nothing can claim it.
+     * The original caller ({@link ReviewStartGate#begin}) and the sweep's recovery share it, so whichever comes second
+     * matches no row, writes no header and treats the run as already resolved; a skip or start in between is never undone.
      */
-    public boolean ready(String reviewId, int round) {
-        return update("UPDATE review_checks_wait SET state = 'waiting'" + ROUND + " AND state = 'admitted'", statement -> {
-            statement.setString(1, reviewId);
-            statement.setInt(2, round);
+    public boolean ready(ChecksWait.Run run) {
+        return update("""
+                WITH readied AS (UPDATE review_checks_wait SET state = 'waiting'
+                                  WHERE review_id = ? AND round = ? AND head_commit = ? AND state = 'admitted'
+                                  RETURNING review_id, head_commit)
+                UPDATE review_status s SET commit_sha = r.head_commit, status = ?, stage = 1, attempt = 1,
+                       error_detail = NULL, answering = FALSE, posted_verdict = NULL, posted_review_ref = NULL,
+                       posted_review_url = NULL, run_token = md5(random()::text || clock_timestamp()::text),
+                       updated_at = now()
+                  FROM readied r WHERE s.review_id = r.review_id
+                """, statement -> {
+            statement.setString(1, run.reviewId());
+            statement.setInt(2, run.round());
+            statement.setString(3, run.head());
+            statement.setString(4, ChecksWaitStatus.WAITING);
         }) == 1;
     }
 
@@ -148,21 +162,6 @@ public class ChecksWaitStore {
             statement.setString(2, run.head());
             statement.setInt(3, run.round());
         });
-    }
-
-    /**
-     * Sets up the review header for an admitted run whose caller died before it did (V121): the run's head, status
-     * "reviewing" and a fresh run token, as the saga's header write would. The caller's own write, if it comes late, is
-     * then fenced by ReviewProjection because the run has left 'admitted'.
-     */
-    public void startHeader(ChecksWait admitted) {
-        update("UPDATE review_status SET commit_sha = ?, status = 'reviewing', stage = 1, attempt = 1, error_detail = NULL,"
-                + " answering = FALSE, posted_verdict = NULL, posted_review_ref = NULL, posted_review_url = NULL,"
-                + " run_token = md5(random()::text || clock_timestamp()::text), updated_at = now() WHERE review_id = ?",
-                statement -> {
-                    statement.setString(1, admitted.head());
-                    statement.setString(2, admitted.reviewId());
-                });
     }
 
     /** Whether the review waits for checks now (admitted or waiting), on any head. */

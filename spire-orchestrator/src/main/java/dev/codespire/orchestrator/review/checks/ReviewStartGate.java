@@ -79,7 +79,7 @@ public class ReviewStartGate {
             commands.emit(fetch);
             return;
         }
-        if (!waits.ready(fetch.reviewId(), run.round()) || !waits.markWaiting(fetch.reviewId(), run.round())) {
+        if (!waits.ready(new ChecksWait.Run(fetch.reviewId(), fetch.commit(), run.round()))) {
             LOG.infof("review %s: round %d no longer waits; its status stays", fetch.reviewId(), run.round());
             return;
         }

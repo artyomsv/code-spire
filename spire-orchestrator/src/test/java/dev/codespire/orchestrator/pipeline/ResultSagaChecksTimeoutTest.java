@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.pipeline;
 
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.review.ReviewVerdict;
+import dev.codespire.orchestrator.llm.ReviewRuns;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
@@ -59,6 +60,25 @@ class ResultSagaChecksTimeoutTest {
         assertEquals(ReviewVerdict.APPROVE, post.verdict());
         assertEquals("s", post.findings().summary());
         assertEquals(Boolean.TRUE, post.verdictLabels());
+    }
+
+    /**
+     * A real timeout hold on this head, and the run's round cannot be read while the verdict is decided: the hold is
+     * unresolved, so there is no native approval and no approved label, and the summary says so.
+     */
+    @Test
+    void anUnreadableRoundNeverApproves() {
+        fx.unfinishedChecksOn = COMMIT;
+        fx.round = ReviewRuns.UNKNOWN_RUN;
+        fx.labels = Optional.of(true);
+        fx.saga().on(generated());
+        ActionCommand.PostComments post = assertInstanceOf(ActionCommand.PostComments.class, fx.emitted.getLast());
+        assertEquals(ReviewVerdict.APPROVE, post.assessment());
+        assertEquals(ReviewVerdict.COMMENT, post.verdict());
+        assertEquals(Boolean.FALSE, post.verdictLabels());
+        assertTrue(post.findings().summary().startsWith(ReviewPostSettings.CHECKS_UNCONFIRMED_NOTICE));
+        assertTrue(fx.timelineLines.contains("ReviewVerdictDecided verdict:COMMENT · assessment:APPROVE · "
+                + "no_open_blockers · checks_unconfirmed"), fx.timelineLines.toString());
     }
 
     /** With Verdict labels on, an approval the timeout held back never reaches the label either. */

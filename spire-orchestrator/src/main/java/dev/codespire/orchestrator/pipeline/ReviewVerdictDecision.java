@@ -18,6 +18,7 @@ public final class ReviewVerdictDecision {
     public static final String REASON_REPOSITORY_UNKNOWN = "repository_unknown";
     public static final String REASON_IDENTITY_UNKNOWN = "reviewer_identity_unknown";
     public static final String REASON_CHECKS_UNFINISHED = "checks_unfinished";
+    public static final String REASON_CHECKS_UNCONFIRMED = "checks_unconfirmed";
 
     public record Decision(ReviewVerdict assessment, ReviewVerdict verdict, boolean mayApprove, String reason) {
         /** The timeline line: what is posted, what the findings said, and why they differ when they do. */
@@ -77,8 +78,16 @@ public final class ReviewVerdictDecision {
      * is posted as a Comment whatever the findings say, as with "Reviewer may approve" off. The assessment is kept.
      */
     public static Decision holdForUnfinishedChecks(Decision decision) {
-        String reason = decision.reason() == null ? REASON_CHECKS_UNFINISHED
-                : decision.reason() + " · " + REASON_CHECKS_UNFINISHED;
+        return heldForChecks(decision, REASON_CHECKS_UNFINISHED);
+    }
+
+    /** The same hold when the run could not be identified, so whether its CI had finished is unknown (V121). */
+    public static Decision holdForUnconfirmedChecks(Decision decision) {
+        return heldForChecks(decision, REASON_CHECKS_UNCONFIRMED);
+    }
+
+    private static Decision heldForChecks(Decision decision, String hold) {
+        String reason = decision.reason() == null ? hold : decision.reason() + " · " + hold;
         return new Decision(decision.assessment(), ReviewVerdict.COMMENT, false, reason);
     }
 

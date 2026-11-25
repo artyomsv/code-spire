@@ -2623,7 +2623,8 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   a head with no checks starts after the 60 s grace read; red skips it: no review, no charge, status `skipped` with
   the failed check names, and `review: ci-failed` (posted with no comment) when Verdict labels is on. Checks still
   pending at the first read after 60 minutes start a review that never approves (posted as a Comment, its summary
-  opening with "CI had not finished", and no `review: approved` label; the hold is that run's alone, by round; a blocking one still labels
+  opening with "CI had not finished", and no `review: approved` label; the hold is that run's alone, by round, and a round that cannot be read never
+  approves; a blocking one still labels
   `review: changes-requested`). The wait is a row of `review_checks_wait` keyed by the run (its round). Claiming the
   waiting row (start, timed-out start or skip) is the permit to act, so only one resolver acts on a run; the claimed row
   stays until its effects are done, and the sweep finishes a claim a crash left, which can send a run's FetchDiff or
@@ -2631,8 +2632,8 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   as before V121, with no lock, row or receipt. For one that waits, a run is admitted in one critical section under the
   review's round lock, for a pull request event and a re-run alike: the aggregate accepts it, its round (`ReviewState.round`, folded from the
   history the append was made on) is recorded as the review's admission row, `admitted` (no reader acts on it until the caller has set up the review
-  header and run token and begins it; a header write for a run already made readable is skipped in SQL, and the sweep
-  sets up the header of an admitted run whose caller died), and every
+  header and run token and begins it; a header write for a run already made readable is skipped in SQL, and readying a run
+  and setting up its header is one compare-and-set shared by the caller and the sweep's recovery), and every
   earlier run's open ci-failed receipt is closed; a failure there fails the admission, and the redelivered event
   records a run accepted but unrecorded. Completed outcomes stay as terminal rows (started, skipped, timed out), so a
   late caller is fenced by the recorded round, not by row presence; begin acts only on the run it was handed and shows

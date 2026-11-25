@@ -67,10 +67,59 @@ class ChecksWaitStoreTest {
         assertTrue(store.waitingOn(repositoryId, HEAD).isEmpty());
         assertFalse(store.claim(wait.at(Stage.STARTING)));
         assertFalse(store.markWaiting(reviewId, 1));
-        assertFalse(store.ready(reviewId, 2));
-        assertTrue(store.ready(reviewId, 1));
-        assertFalse(store.ready(reviewId, 1), "once");
+        assertFalse(store.ready(new ChecksWait.Run(reviewId, HEAD, 2)));
+        assertFalse(store.ready(new ChecksWait.Run(reviewId, NEXT_HEAD, 1)));
+        assertTrue(store.ready(new ChecksWait.Run(reviewId, HEAD, 1)));
+        assertFalse(store.ready(new ChecksWait.Run(reviewId, HEAD, 1)), "once");
         assertEquals(List.of(HEAD), store.waitingOn(repositoryId, HEAD).stream().map(ChecksWait::head).toList());
+    }
+
+    /**
+     * The recovery writer paused past its read: the caller made the run ready (header, status, token), a red read
+     * skipped it and the skip was projected. The recovery then resumes: its readying matches no row and writes no
+     * header, so the status stays skipped and the token is the one the caller's readying set.
+     */
+    @Test
+    void aPausedRecoveryNeverRewritesTheHeaderOfARunThatMovedOn() throws Exception {
+        ChecksWait admitted = wait(HEAD, 1, Instant.now()).at(Stage.ADMITTED);
+        store.register(admitted);
+        execute("UPDATE review_status SET status = 'reviewing', run_token = 'TEST-caller' WHERE review_id = ?", reviewId);
+        assertTrue(store.ready(admitted.run()), "the caller's begin");
+        String readied = header();
+        assertTrue(readied.startsWith(ChecksWaitStatus.WAITING + ":" + HEAD + ":"), readied);
+        assertFalse(readied.endsWith(":TEST-caller"), "the readying set the run's token");
+        ChecksWait waiting = admitted.at(Stage.WAITING);
+        assertTrue(store.claim(waiting.skipping("TEST-build")));
+        store.finish(waiting.skipping("TEST-build"));
+        execute("UPDATE review_status SET status = 'skipped' WHERE review_id = ?", reviewId);
+        String skipped = header();
+        assertFalse(store.ready(admitted.run()), "the paused recovery");
+        assertEquals(skipped, header(), "status, head and token untouched");
+        assertTrue(skipped.startsWith("skipped:"), skipped);
+    }
+
+    /** A newer admission in the gap: an earlier run's readying writes nothing over it. */
+    @Test
+    void aStaleReadyingNeverTouchesANewerAdmission() throws Exception {
+        store.register(wait(HEAD, 1, Instant.now()).at(Stage.ADMITTED));
+        store.register(wait(NEXT_HEAD, 2, Instant.now()).at(Stage.ADMITTED));
+        execute("UPDATE review_status SET status = 'reviewing', run_token = 'TEST-newer' WHERE review_id = ?", reviewId);
+        assertFalse(store.ready(new ChecksWait.Run(reviewId, HEAD, 1)));
+        assertEquals("reviewing:", header().substring(0, "reviewing:".length()));
+        assertTrue(header().endsWith(":TEST-newer"));
+        assertEquals("admitted:2:null", row());
+    }
+
+    /** The review's header as {@code status:commit_sha:run_token}. */
+    private String header() throws Exception {
+        try (java.sql.Connection connection = dataSource.getConnection(); java.sql.PreparedStatement statement =
+                connection.prepareStatement("SELECT status, commit_sha, run_token FROM review_status WHERE review_id = ?")) {
+            statement.setString(1, reviewId);
+            try (java.sql.ResultSet rows = statement.executeQuery()) {
+                rows.next();
+                return rows.getString(1) + ":" + rows.getString(2) + ":" + rows.getString(3);
+            }
+        }
     }
 
     /** The waiting status is written only while that very round waits, never over a later status. */

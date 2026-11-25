@@ -31,10 +31,14 @@ class InMemoryChecksWaits extends ChecksWaitStore {
     }
 
     @Override
-    public boolean ready(String reviewId, int round) {
-        ChecksWait row = rows.get(reviewId);
-        if (row == null || row.round() != round || row.stage() != Stage.ADMITTED) return false;
-        rows.put(reviewId, row.at(Stage.WAITING));
+    public boolean ready(ChecksWait.Run run) {
+        ChecksWait row = rows.get(run.reviewId());
+        if (row == null || row.round() != run.round() || !row.head().equals(run.head()) || row.stage() != Stage.ADMITTED) {
+            return false;
+        }
+        rows.put(run.reviewId(), row.at(Stage.WAITING));
+        headersStarted.add(run.round());
+        shownWaiting.add(run.round());
         return true;
     }
 
@@ -112,13 +116,8 @@ class InMemoryChecksWaits extends ChecksWaitStore {
                 && !java.time.Instant.now().isBefore(row.waitingSince().plus(ChecksWaitDecision.GRACE));
     }
 
-    /** The runs whose header the sweep set up, by round. */
+    /** The runs whose header was set up as they were made ready, by round. */
     final List<Integer> headersStarted = new ArrayList<>();
-
-    @Override
-    public void startHeader(ChecksWait admitted) {
-        headersStarted.add(admitted.round());
-    }
 
     /** Ages the review's row, as time passing would. */
     void age(String reviewId, java.time.Duration by) {
