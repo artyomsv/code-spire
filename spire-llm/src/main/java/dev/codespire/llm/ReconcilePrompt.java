@@ -7,6 +7,7 @@ import dev.codespire.contract.llm.PromptTemplate;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.scm.ThreadMessage;
 import dev.codespire.contract.scm.ThreadTranscript;
+import dev.codespire.diff.TokenBudget;
 
 import java.util.HashMap;
 import java.util.List;
@@ -34,13 +35,47 @@ public final class ReconcilePrompt {
 
     public static Prompt render(List<PriorFinding> findings, Map<String, ThreadTranscript> transcripts,
                                 String diffText, boolean incremental, PromptTemplate template) {
+        return build(findings, transcripts, diffText, incremental, template, DiffBudget.Limits.UNKNOWN).prompt();
+    }
+
+    /**
+     * The built reconcile prompt and what was cut to fit it.
+     *
+     * @param truncated    any fenced input was clipped
+     * @param omittedFiles the files of the diff the model will not fully see; a finding on one of them is never
+     *                     judged from this call
+     * @param largePrompt  more diff was sent than today's fixed budget allowed, so a timeout must not re-send the call
+     */
+    public record Built(Prompt prompt, boolean truncated, List<String> omittedFiles, boolean largePrompt) {
+
+        public Built {
+            omittedFiles = List.copyOf(omittedFiles);
+        }
+    }
+
+    /**
+     * The reconcile prompt with the diff sized to the model ({@link DiffBudget}). The diff is a raw compare string,
+     * so it keeps line clipping; {@link DiffCoverage} recovers which files the cut reached.
+     *
+     * @throws DiffBudget.NoRoomForDiff when the model's window cannot hold a diff beside the rest of the prompt
+     */
+    public static Built build(List<PriorFinding> findings, Map<String, ThreadTranscript> transcripts,
+                              String diffText, boolean incremental, PromptTemplate template,
+                              DiffBudget.Limits limits) {
         PromptTemplate effective = template != null
                 ? template : PromptCatalog.defaultTemplate(PromptKind.RECONCILE);
         Map<String, String> values = new HashMap<>();
         values.put("prior_findings", numberedFindings(findings, transcripts));
-        values.put("diff", diffText == null ? "" : diffText);
         values.put("diff_kind", incremental ? INCREMENTAL_DIFF_KIND : FULL_DIFF_KIND);
-        return PromptRenderer.render(effective, values).prompt();
+        int budget = DiffBudget.forTemplate(effective, values, limits);
+        String diff = diffText == null ? "" : diffText;
+        List<String> omitted = TokenBudget.estimateTokens(diff) > budget
+                ? DiffCoverage.omittedPaths(diff, TokenBudget.clip(diff, budget))
+                : List.of();
+        values.put(DiffBudget.DIFF, diff);
+        PromptRenderer.Rendered rendered = PromptRenderer.render(effective, values, Map.of(DiffBudget.DIFF, budget));
+        return new Built(rendered.prompt(), rendered.truncated(), omitted,
+                DiffBudget.isLarge(diff, budget, PromptKind.RECONCILE));
     }
 
     static String numberedFindings(List<PriorFinding> findings, Map<String, ThreadTranscript> transcripts) {

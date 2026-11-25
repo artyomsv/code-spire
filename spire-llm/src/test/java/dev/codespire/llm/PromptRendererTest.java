@@ -6,7 +6,9 @@ import dev.codespire.contract.llm.PromptTemplate;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
+import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -50,5 +52,31 @@ class PromptRendererTest {
                 "diff", "@@",
                 "diff_kind", "Changes since the prior review (incremental diff)"));
         assertTrue(r.prompt().user().contains("## Changes since the prior review (incremental diff)"));
+    }
+
+    /** Which value was clipped, not only that one was: only a clipped diff hides changed files. */
+    @Test
+    void reportsWhichVariableWasClipped() {
+        PromptTemplate t = new PromptTemplate(PromptKind.REVIEW, "persona", "ctx[{{context}}] diff[{{diff}}]");
+        PromptRenderer.Rendered r = PromptRenderer.render(t, Map.of("context", "TEST ".repeat(20_000), "diff", "@@"));
+
+        assertEquals(Set.of("context"), r.clippedVariables());
+        assertTrue(r.truncated());
+    }
+
+    @Test
+    void aBudgetOverrideReplacesThePalettesBudget() {
+        PromptTemplate t = new PromptTemplate(PromptKind.REVIEW, "persona", "{{diff}}");
+        String diff = "TEST line\n".repeat(10_000); // about 31,250 tokens: over the palette's 24,000
+
+        assertEquals(Set.of("diff"), PromptRenderer.render(t, Map.of("diff", diff)).clippedVariables());
+        assertEquals(Set.of(), PromptRenderer.render(t, Map.of("diff", diff), Map.of("diff", 40_000)).clippedVariables(),
+                "the model's window, not the palette, decides");
+    }
+
+    @Test
+    void countsEachUseOfAVariable() {
+        assertEquals(2, PromptRenderer.uses(new PromptTemplate(PromptKind.REVIEW, "persona", "{{diff}} and {{ diff }}"), "diff"));
+        assertEquals(1, PromptRenderer.uses(PromptCatalog.defaultTemplate(PromptKind.REVIEW), "diff"));
     }
 }

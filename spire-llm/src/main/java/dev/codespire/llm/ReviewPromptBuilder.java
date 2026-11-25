@@ -7,7 +7,6 @@ import dev.codespire.contract.llm.PromptTemplate;
 import dev.codespire.contract.review.ContextItem;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.scm.PullRequest;
-import dev.codespire.diff.DiffRenderer;
 import dev.codespire.contract.scm.FilePatch;
 
 import java.util.HashMap;
@@ -25,8 +24,18 @@ public final class ReviewPromptBuilder {
     private ReviewPromptBuilder() {
     }
 
-    /** The built prompt plus whether the diff/context had to be clipped to fit the budget. */
-    public record Built(Prompt prompt, boolean truncated) {
+    /**
+     * The built prompt and what was cut to fit it.
+     *
+     * @param truncated    any fenced input was clipped (the diff, the context, the prior findings)
+     * @param omittedFiles the changed files the model will not fully see; empty when the whole diff went in
+     * @param largePrompt  more diff was sent than today's fixed budget allowed, so a timeout must not re-send the call
+     */
+    public record Built(Prompt prompt, boolean truncated, List<String> omittedFiles, boolean largePrompt) {
+
+        public Built {
+            omittedFiles = List.copyOf(omittedFiles);
+        }
     }
 
     public static Built build(PullRequest pr, List<FilePatch> patches, List<ContextItem> context) {
@@ -40,6 +49,18 @@ public final class ReviewPromptBuilder {
 
     public static Built build(PullRequest pr, List<FilePatch> patches, List<ContextItem> context,
                               List<PriorFinding> alreadyReported, PromptTemplate template) {
+        return build(pr, patches, context, alreadyReported, template, DiffBudget.Limits.UNKNOWN);
+    }
+
+    /**
+     * The review prompt with the diff sized to the model ({@link DiffBudget}) and cut at file boundaries
+     * ({@link DiffSelection}).
+     *
+     * @throws DiffBudget.NoRoomForDiff when the model's window cannot hold a diff beside the rest of the prompt
+     */
+    public static Built build(PullRequest pr, List<FilePatch> patches, List<ContextItem> context,
+                              List<PriorFinding> alreadyReported, PromptTemplate template,
+                              DiffBudget.Limits limits) {
         PromptTemplate effective = template != null ? template : PromptCatalog.defaultTemplate(PromptKind.REVIEW);
         Map<String, String> values = new HashMap<>();
         values.put("pr_title", pr.title() == null ? "" : pr.title());
@@ -47,9 +68,13 @@ public final class ReviewPromptBuilder {
         values.put("context", renderContext(context, false));
         values.put("code_context", renderContext(context, true));
         values.put("prior_findings", renderAlreadyReported(alreadyReported));
-        values.put("diff", DiffRenderer.render(patches));
-        PromptRenderer.Rendered rendered = PromptRenderer.render(effective, values);
-        return new Built(rendered.prompt(), rendered.truncated());
+        int budget = DiffBudget.forTemplate(effective, values, limits);
+        DiffSelection selection = DiffSelection.byFile(patches, budget);
+        values.put(DiffBudget.DIFF, selection.text());
+        PromptRenderer.Rendered rendered = PromptRenderer.render(effective, values, Map.of(DiffBudget.DIFF, budget));
+        boolean truncated = rendered.truncated() || !selection.omittedFiles().isEmpty();
+        return new Built(rendered.prompt(), truncated, selection.omittedFiles(),
+                DiffBudget.isLarge(selection.text(), budget, PromptKind.REVIEW));
     }
 
     /**

@@ -73,4 +73,29 @@ class ReconcilePromptTest {
 
         assertEquals(implicit, viaExplicitTemplate);
     }
+
+    // ---- review input limit (design 2026-11-26) ----
+
+    @Test
+    void aClippedDiffIsPartialAndNamesTheFilesItCut() {
+        String diff = DiffSelectionTest.fileDiff("src/TEST-a.java", 10) + DiffSelectionTest.fileDiff("src/TEST-b.java", 3_000);
+
+        ReconcilePrompt.Built built = ReconcilePrompt.build(findings, Map.of(), diff, true, null, DiffBudget.Limits.UNKNOWN);
+
+        assertTrue(built.truncated(), "today's 12,000 cannot hold about 19,000 tokens of diff");
+        assertEquals(List.of("src/TEST-b.java"), built.omittedFiles());
+        assertFalse(built.largePrompt());
+    }
+
+    @Test
+    void aKnownLargeWindowReconcilesOnTheWholeDiff() {
+        String diff = DiffSelectionTest.fileDiff("src/TEST-a.java", 10) + DiffSelectionTest.fileDiff("src/TEST-b.java", 3_000);
+
+        ReconcilePrompt.Built built = ReconcilePrompt.build(findings, Map.of(), diff, true, null,
+                new DiffBudget.Limits(983_616, null));
+
+        assertFalse(built.truncated());
+        assertTrue(built.omittedFiles().isEmpty());
+        assertTrue(built.largePrompt());
+    }
 }
