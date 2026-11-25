@@ -37,10 +37,20 @@ public class ChecksWaitStore {
      */
     private static final String CURRENT_ROUND = "(SELECT count(*) FROM event_log e WHERE e.stream_id = review_checks_wait"
             + ".review_id AND e.event_type = 'ReviewRequested')";
+    /** The header columns a run's first header write sets, kept when the locked row already holds the run's round. */
+    private static final String UNINITIALISED_HEADER = String.join(", ", once("commit_sha", "r.head_commit"),
+            once("attempt", "1"), once("error_detail", "NULL"), once("answering", "FALSE"), once("posted_verdict", "NULL"),
+            once("posted_review_ref", "NULL"), once("posted_review_url", "NULL"),
+            once("run_token", "md5(random()::text || clock_timestamp()::text)"), once("run_round", "r.round"));
     private static final String DUE_STAGES = "('admitted', 'waiting', 'starting', 'starting_unfinished', 'skipping')";
 
     @Inject
     DataSource dataSource;
+
+    /** {@code column} set to {@code value} only while the locked header row holds an earlier round than the run's. */
+    private static String once(String column, String value) {
+        return column + " = CASE WHEN COALESCE(s.run_round, 0) < r.round THEN " + value + " ELSE s." + column + " END";
+    }
 
     /** Records a waiting run; see {@link #register}. */
     public void startWaiting(ChecksWait wait) {
@@ -74,15 +84,16 @@ public class ChecksWaitStore {
     }
 
     /**
-     * Makes an admitted run readable and initialises its review header, in ONE statement. It first locks the review's
-     * header row, only while no later round wrote it ({@code run_round}, which every accepted run's header write sets,
-     * one started at once included); a concurrent header write of a newer run either waits for this statement and then
-     * replaces its header, or committed first, and the lock re-reads the row and matches nothing. Then the run leaves
-     * 'admitted' (compare-and-set on the review, the round, the stage, and the round still being the review's current
-     * one) and the header takes the run's head, round, the status 'waiting_for_checks' and a fresh run token. Before
-     * this no wake-up reads the run and nothing can claim it. The original caller ({@link ReviewStartGate#begin}) and the
-     * sweep's recovery share it, so whichever comes second matches no row, writes no header and treats the run as
-     * already resolved; a skip or start in between is never undone.
+     * Makes an admitted run readable and shows it waiting, in ONE statement. It first locks the review's header row, only
+     * while no later round wrote it ({@code run_round}, which every accepted run's header write sets, one started at
+     * once included); a concurrent header write of a newer run either waits for this statement and then replaces its
+     * header, or committed first, and the lock re-reads the row and matches nothing. Then the run leaves 'admitted'
+     * (compare-and-set on the review, the round, the stage, and the round still being the review's current one) and the
+     * header shows 'waiting_for_checks'. The header is initialised for the round (head, round, a fresh run token, the
+     * outcome cleared) only if the locked row holds an earlier round: when the caller's own header write came first, its
+     * token stays; when this came first, the caller's late write finds the round set and writes nothing. Before this no
+     * wake-up reads the run and nothing can claim it. The caller ({@link ReviewStartGate#begin}) and the sweep's recovery
+     * share it, so whichever comes second matches no row; a skip or start in between is never undone.
      */
     public boolean ready(ChecksWait.Run run) {
         return update("""
@@ -92,12 +103,9 @@ public class ChecksWaitStore {
                                   WHERE review_id IN (SELECT review_id FROM header) AND round = ? AND head_commit = ?
                                     AND state = 'admitted' AND round = %s
                                   RETURNING review_id, head_commit, round)
-                UPDATE review_status s SET commit_sha = r.head_commit, status = ?, stage = 1, attempt = 1,
-                       error_detail = NULL, answering = FALSE, posted_verdict = NULL, posted_review_ref = NULL,
-                       posted_review_url = NULL, run_token = md5(random()::text || clock_timestamp()::text),
-                       run_round = r.round, updated_at = now()
+                UPDATE review_status s SET status = ?, stage = 1, updated_at = now(), %s
                   FROM readied r WHERE s.review_id = r.review_id
-                """.formatted(CURRENT_ROUND), statement -> {
+                """.formatted(CURRENT_ROUND, UNINITIALISED_HEADER), statement -> {
             statement.setString(1, run.reviewId());
             statement.setInt(2, run.round());
             statement.setInt(3, run.round());

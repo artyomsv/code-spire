@@ -140,9 +140,9 @@ public class ReviewProjection {
     }
 
     /**
-     * {@link #registerHeader} for an accepted run, which records its round in {@code run_round}. Fenced on the row it
-     * writes (V121): a header a later round already wrote is never replaced (a waiting run's caller that paused while a
-     * newer run started at once), and a waiting run already made readable keeps its status and token.
+     * {@link #registerHeader} for an accepted run, which records its round in {@code run_round}. Written once per round,
+     * on the row it writes (V121): a header a later round wrote, or this round's already set up by the sweep's readying,
+     * is never replaced (a caller that paused while a newer run started at once, or while the sweep readied its run).
      */
     public void registerRunHeader(RunHeader h) {
         upsertHeader(h.reviewId(), h.repo(), h.prId(), h.title(), h.author(), h.authorId(), h.sourceBranch(),
@@ -186,8 +186,7 @@ public class ReviewProjection {
                         commit_sha = EXCLUDED.commit_sha, html_url = EXCLUDED.html_url,
                         provider_type = EXCLUDED.provider_type,
                         %s updated_at = now() %s
-                """.formatted(NEW_RUN_TOKEN, outcomeColumns, claimRun ? HEADER_FENCE
-                + (claimRound > NO_ROUND ? " AND " + LATER_ROUND_KEPT : "") : "");
+                """.formatted(NEW_RUN_TOKEN, outcomeColumns, claimRound > NO_ROUND ? ONCE_PER_ROUND : "");
         update(sql, ps -> {
             ps.setString(1, reviewId);
             ps.setString(2, repo.workspace());
@@ -1490,7 +1489,7 @@ public class ReviewProjection {
 
     /**
      * Reset the row to an in-progress state for a manual re-run of {@code round}, clearing any prior terminal error;
-     * never over a header a later round wrote (V121).
+     * once per round, never over a header this or a later round wrote (V121).
      *
      * <p>Deliberately does NOT touch {@code attempt}, which is NOT the run identity a charge is keyed under: only the
      * ADR-016 auto-retry paths ({@link #retryPipeline}, {@link #scheduleRetry}) write it, and they keep the worker's
@@ -1502,7 +1501,7 @@ public class ReviewProjection {
         update("""
                 UPDATE review_status SET status = 'reviewing', stage = ?, error_detail = NULL,
                        note = 'Re-run requested.', run_token = %s, run_round = ?, updated_at = now()
-                WHERE review_id = ? AND COALESCE(run_round, 0) <= ?
+                WHERE review_id = ? AND COALESCE(run_round, 0) < ?
                 """.formatted(NEW_RUN_TOKEN), ps -> {
             ps.setInt(1, STAGE_DIFF);
             ps.setInt(2, round);
@@ -1514,12 +1513,12 @@ public class ReviewProjection {
 
     private static final int REFRESH = -1; // upsertHeader's claimRound: a refresh
     private static final int NO_ROUND = 0; // a header with no run (observe-only)
-    /** A run's header write never replaces a header a later round wrote; evaluated on the locked row (V121). */
-    private static final String LATER_ROUND_KEPT = "COALESCE(review_status.run_round, 0) <= EXCLUDED.run_round";
-    /** A claimed header write is skipped once the current round's check wait has left 'admitted' (V121). */
-    private static final String HEADER_FENCE = "WHERE NOT EXISTS (SELECT 1 FROM review_checks_wait w WHERE w.review_id ="
-            + " EXCLUDED.review_id AND w.state <> 'admitted' AND w.round = (SELECT count(*) FROM event_log e WHERE"
-            + " e.stream_id = EXCLUDED.review_id AND e.event_type = 'ReviewRequested'))";
+    /**
+     * A run's header is initialised once per round (V121): it writes only while the row holds an earlier round, checked
+     * on the locked row itself, so neither a later round's header nor this round's, already set by the sweep's readying
+     * and then perhaps skipped, is ever replaced. Other tables are not read: their snapshot could be stale here.
+     */
+    private static final String ONCE_PER_ROUND = "WHERE COALESCE(review_status.run_round, 0) < EXCLUDED.run_round";
     /** SQL for a fresh, opaque run token; a retry ({@link #retryPipeline}) and a refresh never write one. */
     private static final String NEW_RUN_TOKEN = "md5(random()::text || clock_timestamp()::text)";
 

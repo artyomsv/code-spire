@@ -45,7 +45,8 @@ CREATE INDEX review_checks_wait_due ON review_checks_wait (next_read_at)
 CREATE INDEX review_checks_wait_head ON review_checks_wait (repository_id, head_commit) WHERE state = 'waiting';
 
 -- run_round: the round of the run whose header this row holds. Every accepted run writes it with its status and run
--- token (a run started at once, a re-run, a waiting run's header and its readying), and each of those writes matches
--- only while the row's run_round is not later than its own, evaluated on the locked row. So a run whose caller paused
--- never replaces the header of a later run, whatever the repository's start setting. NULL: no run since V121.
+-- token (a run started at once, a re-run, a waiting run's header and its readying). A run's header is initialised once
+-- per round: only while the row's run_round is earlier than its own, evaluated on the locked row (a readying that
+-- finds its round already set only shows the run waiting). So a run whose caller paused never replaces the header of
+-- this or a later run, whatever the repository's start setting. NULL: no run since V121.
 ALTER TABLE review_status ADD COLUMN run_round INT;

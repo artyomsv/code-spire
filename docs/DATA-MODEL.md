@@ -148,8 +148,10 @@ waits for checks, written `admitted` in the round lock that admits it, made `wai
 and never replaced by an earlier round; a repository that starts reviews at once writes no row. The read model shows `waiting_for_checks` and
 `skipped` (a red build: no review, no charge, no label). V121 also adds `review_status.run_round` (int, nullable): the round
 of the run whose header the row holds. Every accepted run's header write sets it (a run started at once, a re-run, a
-waiting run's header and its readying) and matches only while the row's value is not later than its own, evaluated
-on the locked row, so a paused run never replaces a later run's status, posted verdict or run token. V105 adds nullable
+waiting run's header and its readying). A run's header is initialised once per round, only while the row holds an
+earlier round, evaluated on the locked row: whichever of a waiting run's caller and its readying comes second keeps
+the first one's token (the readying then only shows the run waiting), and a paused run never replaces this or a later
+run's status, posted verdict or run token. V105 adds nullable
 `review_llm_provider_id` (FK to `llm_provider`, no ON DELETE action): the LLM provider the
 repository's reviews and replies use, null meaning the global default. Deleting a provider a
 repository names is refused (409); a switched-off one refuses the repository's reviews rather than

@@ -2633,8 +2633,8 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   as before V121, with no lock or row. For one that waits, a run is admitted in one critical section under the
   review's round lock, for a pull request event and a re-run alike: the aggregate accepts it, its round (`ReviewState.round`, folded from the
   history the append was made on) is recorded as the review's admission row, `admitted` (no reader acts on it until the caller has set up the review
-  header and run token and begins it; a header write for a run already made readable is skipped in SQL, and readying a run
-  and setting up its header is one compare-and-set shared by the caller and the sweep's recovery), and a
+  header and run token and begins it; readying a run is one compare-and-set shared by the caller and the sweep's
+  recovery), and a
   failure there fails the admission, and the redelivered event
   records a run accepted but unrecorded. Completed outcomes stay as terminal rows (started, skipped, timed out), so a
   late caller is fenced by the recorded round, not by row presence; begin acts only on the run it was handed and shows
@@ -2644,9 +2644,9 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   `skipped`), only while the claimed round is still the review's, so a re-run on the same head is never cancelled. Every write to a wait (readying, claims, the waiting status) also requires
   its round to be the review's current one, read from the event log in the same statement. Every accepted run, one
   started at once included, writes its round into `review_status.run_round` with its status and run token, and every
-  such header write (the run's header, a re-run's, a waiting run's readying) matches only while the row holds no
-  later round, evaluated on the locked row: a waiting run whose caller paused while the repository switched to
-  "Immediately" and the same head re-ran never replaces that newer run's status, posted verdict or token. New wire
+  run's header is initialised once per round, only while the row holds an earlier round, evaluated on the locked row
+  (never on another table's snapshot): a caller that paused while the sweep readied and skipped its run, or while the
+  repository switched to "Immediately" and the same head re-ran, never replaces that status, posted verdict or token. New wire
   type: `IntegrationEvent.ChecksChanged` (repository and head sha only). Interleavings are proven single-threaded against
   fakes only (docs/UNVERIFIED.md). Upgrading: V121 adds `repository.start_review` (default `IMMEDIATELY`) and the
   `review_checks_wait` table. Add the **Check suites** and **Statuses** events to each GitHub Reviewer webhook (an

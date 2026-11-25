@@ -18,10 +18,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 /**
- * The header fence against the real schema (V121): a caller whose header write comes after the sweep readied its run
- * and a red read skipped it never resets the status or the run token. A run still admitted, and a newer round on the
- * same head (a re-run started at once), get their header as before; an earlier run's late write never replaces a later
- * run's header.
+ * The header fence against the real schema (V121): a run's header is written once per round, so a caller whose header
+ * write comes after the sweep readied its run and a red read skipped it never resets the status or the run token. A run
+ * still admitted, and a newer round on the same head (a re-run started at once), get their header as before; an
+ * earlier run's late write never replaces a later run's header.
  */
 @QuarkusTest
 class ReviewHeaderFenceTest {
@@ -48,12 +48,16 @@ class ReviewHeaderFenceTest {
         execute("DELETE FROM event_log WHERE stream_id = ?", reviewId);
     }
 
-    /** The sweep readied run 1 and it was skipped: the late caller's header write changes nothing it owns. */
+    /**
+     * The sweep readied run 1 (which set the header's round) and it was skipped: the late caller's header write for the
+     * same round changes nothing it owns.
+     */
     @Test
     void aLateHeaderWriteNeverResetsARunTheSweepResolved() throws Exception {
         execute("INSERT INTO review_checks_wait (review_id, repository_id, head_commit, round, untrusted, state,"
                 + " waiting_since, next_read_at) VALUES (?, ?, ?, 1, false, 'skipped', now(), now())",
                 reviewId, UUID.randomUUID(), HEAD);
+        execute("UPDATE review_status SET run_round = 1 WHERE review_id = ?", reviewId);
         registerHeader(1);
         assertEquals("skipped:TEST-token", statusAndToken());
     }

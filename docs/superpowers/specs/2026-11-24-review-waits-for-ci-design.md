@@ -45,7 +45,8 @@ finished green; a red build gets no review until a new commit (operator decision
    under the review's round lock (pull request events and re-runs alike): the aggregate accepts it, the accepted round is
    recorded as the review's admission row. Completed outcomes stay as terminal rows, and every later write compares
    the round and the stage it observed. Every accepted run, one started at once included, writes its round into the
-   review header (`run_round`) with its status and token, and no header write of an earlier round replaces it.
+   review header (`run_round`) with its status and token, once per round: neither a header write of an earlier round
+   nor a second initialisation of the same round (the caller and the sweep's readying) replaces it.
 
 ## Webhook setup
 
