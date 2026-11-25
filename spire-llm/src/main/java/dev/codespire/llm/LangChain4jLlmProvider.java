@@ -52,8 +52,11 @@ public class LangChain4jLlmProvider implements LlmProvider {
      * reported the run as clean. A small diff used 2106 by comparison, so the headroom here is what
      * a large one actually needs rather than a guess. Still a hard bound, and still only the
      * fallback: an operator who wants a different one sets max_tokens on their LLM provider.
+     *
+     * <p>The value lives in {@link ModelParams#DEFAULT_MAX_OUTPUT_TOKENS}: the orchestrator reserves the same
+     * number out of the model's context window when it sizes a review's input.
      */
-    static final int DEFAULT_MAX_OUTPUT_TOKENS = 16384;
+    private static final int DEFAULT_MAX_OUTPUT_TOKENS = ModelParams.DEFAULT_MAX_OUTPUT_TOKENS;
 
     private final ChatModel model;
     private final String id;

@@ -7,6 +7,15 @@ package dev.codespire.contract.llm;
  */
 public record ModelParams(String model, double temperature, Integer maxTokens, ModelParamProfile profile) {
 
+    /**
+     * Output cap applied when {@link #maxTokens()} is unset: the paid call never runs without a bound.
+     *
+     * <p>Here rather than in {@code spire-llm} because two modules read it: the provider sends it, and the
+     * orchestrator subtracts it from the model's context window to learn how much input a review may send.
+     * Was 4096, which a reasoning model exhausts before it answers (DECISIONS.md, 2026-08-28).
+     */
+    public static final int DEFAULT_MAX_OUTPUT_TOKENS = 16384;
+
     public ModelParams {
         if (profile == null) {
             profile = ModelParamProfile.legacyDefault();
