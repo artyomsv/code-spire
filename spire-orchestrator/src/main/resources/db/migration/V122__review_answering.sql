@@ -25,3 +25,9 @@ $$;
 
 CREATE TRIGGER review_answering_cleared AFTER UPDATE ON review_status FOR EACH ROW
     WHEN (OLD.answering AND NOT NEW.answering) EXECUTE FUNCTION review_answering_cleared();
+
+-- The person's reply a conversation event belongs to: the reply itself on AuthorReplied, the reply answered or
+-- declined on FollowUpGenerated and FollowUpDeclined. The dashboard ends each pending reply with its own ending, so a
+-- late decline of an older reply cannot end a newer one. NULL on every other event and on rows stored before V122,
+-- which the dashboard pairs by their order, as before.
+ALTER TABLE review_event ADD COLUMN comment_id TEXT;

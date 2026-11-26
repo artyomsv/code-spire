@@ -27,7 +27,7 @@ final class ReplyDispatchFakes {
             }
 
             @Override
-            public void finish(ReplyKey reply, Runnable recordEnding) {
+            public void finish(ReplyKey reply, dev.codespire.orchestrator.readmodel.EventLine ending) {
                 throw new AssertionError("dispatching a reply finishes no mark");
             }
         };

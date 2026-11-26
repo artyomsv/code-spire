@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.pipeline;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.event.IntegrationEvent.AuthorReplied;
 import dev.codespire.orchestrator.readmodel.AnsweringMarks;
+import dev.codespire.orchestrator.readmodel.EventLine;
 import dev.codespire.orchestrator.readmodel.ReplyKey;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -29,9 +30,10 @@ public class ReplyDispatch {
         String author = reply.author() == null ? "unknown" : reply.author().username();
         // The COMMAND's threadRef, not the event's: the saga normalized it to the conversation root, so every turn of
         // one conversation is stored under the same ref — the review detail nests them all under the finding instead
-        // of spilling later turns into a bogus "General discussion" with an under-counted label.
-        projection.appendEvent(reply.reviewId(), "integration", "AuthorReplied",
-                "@" + author + ": " + Previews.of(reply.text()), threadRefOf(command));
+        // of spilling later turns into a bogus "General discussion" with an under-counted label. The reply's own comment
+        // id rides along (V122), so the dashboard can end this reply with its own answer or decline and no other.
+        projection.appendEvent(new EventLine(reply.reviewId(), "integration", "AuthorReplied",
+                "@" + author + ": " + Previews.of(reply.text()), threadRefOf(command), reply.commentId()));
         // Only for a real answer: the cap notice is fixed text with no LLM call, and flagging it would leave a
         // "responding…" mark up for a reply that never comes. Also bumps the live dashboard (fix #5).
         if (command instanceof ActionCommand.AnswerFollowUp || command instanceof ActionCommand.PrepareHarnessReply) {

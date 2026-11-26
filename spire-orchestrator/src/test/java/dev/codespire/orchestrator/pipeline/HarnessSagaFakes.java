@@ -125,9 +125,14 @@ final class HarnessSagaFakes {
         endings.projection = projection;
         endings.answering = new AnsweringMarks() {
             @Override
-            public void finish(ReplyKey reply, Runnable recordEnding) {
+            public void finish(ReplyKey reply) {
                 finished.add(reply.reviewId() + ":" + reply.commentId());
-                recordEnding.run();
+            }
+
+            @Override
+            public void finish(ReplyKey reply, dev.codespire.orchestrator.readmodel.EventLine ending) {
+                finish(reply);
+                projection.appendEvent(ending);
             }
         };
         return endings;

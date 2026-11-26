@@ -6,6 +6,7 @@ import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.event.IntegrationEvent.TurnCapNotified;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.readmodel.AnsweringMarks;
+import dev.codespire.orchestrator.readmodel.EventLine;
 import dev.codespire.orchestrator.readmodel.ReplyKey;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
@@ -47,7 +48,9 @@ public class FollowUpEndings {
      * Said under the conversation root, and only this comment's outstanding reply ended (V122, review of PR #457):
      * reply B's decline must not clear the mark while reply A is still being answered. The line is recorded only by
      * the decline that consumed the reply's outstanding row, so a redelivered decline, or one arriving after the reply
-     * was answered, after the pull request closed or after a newer ask, adds no line (code-quality/M-1). {@code
+     * was answered, after the pull request closed or after a newer ask, adds no line (code-quality/M-1). The line is
+     * inserted in the transaction that consumes the row (code-quality/M-5), and it names the declined comment, so the
+     * dashboard ends that reply and no other. The root is read first: a failed read has consumed nothing. {@code
      * ALREADY_ANSWERED} is a redelivery of a comment the bot did answer, so its reply ends but nothing is recorded: the
      * history would otherwise say an answered reply went unanswered.
      */
@@ -57,14 +60,15 @@ public class FollowUpEndings {
             answering.finish(reply);
             return;
         }
-        answering.finish(reply, () -> record(declined));
+        answering.finish(reply, lineOf(declined));
     }
 
-    private void record(FollowUpDeclined declined) {
+    private EventLine lineOf(FollowUpDeclined declined) {
         // A null thread only from a hand-built record (a DLQ replay): rootOf binds it into a statement.
         String root = declined.threadRef() == null
                 ? null : threads.rootOf(declined.reviewId(), declined.threadRef()).value();
-        projection.appendEvent(declined.reviewId(), "result", DECLINED, detail(declined.reason()), root);
+        return new EventLine(declined.reviewId(), "result", DECLINED, detail(declined.reason()), root,
+                declined.triggeringCommentId());
     }
 
     /**

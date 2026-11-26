@@ -17,8 +17,10 @@ import java.sql.SQLException;
  *
  * <p>Both run in one transaction that first locks the review's {@code review_status} row, so two finishes cannot each
  * see the other's row and leave the flag up with none left. Removing the row is how a result is consumed: only the one
- * finish that removed it may record the reply's ending, so a redelivered or late result records nothing. Every write
- * that changed a row or the flag broadcasts the review (code-quality/M-3), also while another reply keeps the flag up.
+ * finish that removed it records the reply's ending, so a redelivered or late result records nothing. The ending's
+ * line is inserted in that same transaction (code-quality/M-5): a failed insert rolls the removal back, so the reply
+ * stays outstanding and the redelivery records it. Every write that changed a row or the flag broadcasts the review
+ * after its commit (code-quality/M-3), also while another reply keeps the flag up.
  * A clear that names no comment (a new run, an archive, a closed pull request, an answer posted before V122) sets the
  * flag false through {@link ReviewProjection}, and V122's trigger drops the review's rows in that statement.
  */
@@ -36,13 +38,15 @@ public class AnsweringMarks {
              WHERE review_id = ?
                AND answering <> EXISTS (SELECT 1 FROM review_answering a WHERE a.review_id = review_status.review_id)
             """;
-    private static final Runnable RECORD_NOTHING = () -> { };
-
     @Inject
     DataSource dataSource;
 
     @Inject
     ReviewProjection projection;
+
+    /** One write: the statement on the reply's own row, and the line to insert when it removed the row (or null). */
+    private record Change(String rowSql, ReplyKey reply, EventLine ending) {
+    }
 
     /** What one write changed: the reply's own row, and the review-wide flag. */
     private record Written(int rows, int flipped) {
@@ -56,40 +60,36 @@ public class AnsweringMarks {
 
     /** The bot is answering this reply: the mark shows until this reply and every other one has finished. */
     public void start(ReplyKey reply) {
-        if (write(ADD, reply).changed()) {
-            projection.touch(reply.reviewId());
-        }
+        writeAndBroadcast(new Change(ADD, reply, null));
     }
 
     /** This reply ended with nothing of its own to record (an answer, whose turn is filed elsewhere). */
     public void finish(ReplyKey reply) {
-        finish(reply, RECORD_NOTHING);
+        writeAndBroadcast(new Change(REMOVE, reply, null));
     }
 
     /**
-     * This reply ended: its row goes, and the mark clears when no other reply is outstanding. {@code recordEnding}
-     * runs only when this call removed the row, so a result for a reply already finished, or one cleared with the rest
-     * (a close, a new run), records and changes nothing. The broadcast follows the record, so a dashboard that re-reads
-     * on it sees the recorded line.
+     * This reply ended: its row goes, and the mark clears when no other reply is outstanding. {@code ending} is
+     * inserted only when this call removed the row, in the same transaction, so a result for a reply already finished,
+     * or one cleared with the rest (a close, a new run), records and changes nothing, and a failed insert leaves the
+     * reply outstanding. The broadcast follows the commit, so a dashboard that re-reads on it sees the line.
      */
-    public void finish(ReplyKey reply, Runnable recordEnding) {
-        Written written = write(REMOVE, reply);
-        try {
-            if (written.rows() > 0) {
-                recordEnding.run();
-            }
-        } finally {
-            if (written.changed()) {
-                projection.touch(reply.reviewId());
-            }
+    public void finish(ReplyKey reply, EventLine ending) {
+        writeAndBroadcast(new Change(REMOVE, reply, ending));
+    }
+
+    private void writeAndBroadcast(Change change) {
+        if (write(change).changed()) {
+            projection.touch(change.reply().reviewId());
         }
     }
 
-    private Written write(String rowSql, ReplyKey reply) {
+    private Written write(Change change) {
+        ReplyKey reply = change.reply();
         try (Connection c = dataSource.getConnection()) {
             c.setAutoCommit(false);
             try {
-                Written written = apply(c, rowSql, reply);
+                Written written = apply(c, change);
                 c.commit();
                 return written;
             } catch (SQLException | RuntimeException e) {
@@ -102,15 +102,19 @@ public class AnsweringMarks {
     }
 
     /** Nothing when the read model does not hold the review yet: its row is the lock. */
-    private static Written apply(Connection c, String rowSql, ReplyKey reply) throws SQLException {
+    private static Written apply(Connection c, Change change) throws SQLException {
+        ReplyKey reply = change.reply();
         if (!locked(c, reply.reviewId())) {
             return Written.NOTHING;
         }
         int rows;
-        try (PreparedStatement row = c.prepareStatement(rowSql)) {
+        try (PreparedStatement row = c.prepareStatement(change.rowSql())) {
             row.setString(1, reply.reviewId());
             row.setString(2, reply.commentId());
             rows = row.executeUpdate();
+        }
+        if (rows > 0 && change.ending() != null) {
+            EventLines.insertInTransaction(c, change.ending());
         }
         try (PreparedStatement match = c.prepareStatement(MATCH)) {
             match.setString(1, reply.reviewId());

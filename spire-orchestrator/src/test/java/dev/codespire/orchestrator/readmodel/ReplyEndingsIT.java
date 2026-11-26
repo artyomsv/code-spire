@@ -20,6 +20,7 @@ import java.sql.SQLException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -159,6 +160,29 @@ class ReplyEndingsIT {
         assertTrue(bumped(reviewId));
     }
 
+    /**
+     * code-quality/M-5: the line is inserted in the transaction that removes the reply's row. An insert that fails
+     * (here a line with no type, which review_event refuses) rolls the removal back: the reply stays outstanding, so
+     * the redelivered decline consumes it and files exactly one line, naming its comment.
+     */
+    @Test
+    void aFailedLineLeavesTheReplyOutstandingForTheRedelivery() {
+        String reviewId = registered(9);
+        marks.start(new ReplyKey(reviewId, A));
+        stopTheClock(reviewId);
+        EventLine refused = new EventLine(reviewId, "result", null, "TEST-refused", THREAD.value(), A);
+
+        assertThrows(IllegalStateException.class, () -> marks.finish(new ReplyKey(reviewId, A), refused));
+
+        assertTrue(answering(reviewId), "the removal rolled back with the failed line");
+        assertFalse(bumped(reviewId), "nothing committed, so nothing is broadcast");
+        endings.declined(declined(reviewId, A));
+        assertEquals(1, declinesOf(reviewId));
+        assertEquals(A, declinedComment(reviewId));
+        assertFalse(answering(reviewId));
+        assertTrue(bumped(reviewId));
+    }
+
     private static FollowUpDeclined declined(String reviewId, String commentId) {
         return new FollowUpDeclined(reviewId, THREAD, commentId, FollowUpDeclineReason.MULTI_PARTY_NO_MENTION);
     }
@@ -194,6 +218,19 @@ class ReplyEndingsIT {
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Could not count the declines of " + reviewId, e);
+        }
+    }
+
+    private String declinedComment(String reviewId) {
+        String sql = "SELECT comment_id FROM review_event WHERE review_id = ? AND type = 'FollowUpDeclined'";
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getString(1);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Could not read the decline of " + reviewId, e);
         }
     }
 

@@ -198,9 +198,8 @@ class HarnessReplyResultsTest {
     private AnsweringMarks marks() {
         return new AnsweringMarks() {
             @Override
-            public void finish(ReplyKey reply, Runnable recordEnding) {
+            public void finish(ReplyKey reply) {
                 answering.add(reply.commentId());
-                recordEnding.run();
             }
         };
     }
@@ -209,8 +208,8 @@ class HarnessReplyResultsTest {
     private ReviewProjection projection() {
         return new ReviewProjection() {
             @Override
-            public void appendEvent(String reviewId, String lane, String type, String detail, String threadRef) {
-                events.add(type + "@" + threadRef + ": " + detail);
+            public void appendEvent(dev.codespire.orchestrator.readmodel.EventLine line) {
+                events.add(line.type() + "@" + line.threadRef() + ": " + line.detail());
             }
 
             @Override

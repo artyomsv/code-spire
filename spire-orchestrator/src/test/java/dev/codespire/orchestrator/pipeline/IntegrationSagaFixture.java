@@ -151,8 +151,8 @@ abstract class IntegrationSagaFixture {
             }
 
             @Override
-            public void appendEvent(String reviewId, String lane, String type, String detail, String threadRef) {
-                appendedEvents.add(type + ":" + detail);
+            public void appendEvent(dev.codespire.orchestrator.readmodel.EventLine line) {
+                appendedEvents.add(line.type() + ":" + line.detail());
             }
 
             @Override

@@ -283,9 +283,11 @@ review behind an hour-long build would wait an hour.
   them all (a trigger drops the rows). Removing the row is how a decline is consumed: only the decline that removed
   its reply's row files the line, so a redelivered decline, or one after the answer, the close or a newer ask, files
   nothing. Every ending that changed a row, the flag or the history broadcasts the review, also while another reply
-  keeps the flag up, and so does a cap notice. Limits that remain, not live-proven (docs/UNVERIFIED.md): the line is
-  written after the row's removal commits, so a crash between the two loses the line (at most once, never twice); a
-  harness reply's refusal or failure still files its line on every delivery.
+  keeps the flag up, and so does a cap notice. The line is inserted in the transaction that removes the row, so a
+  failed insert leaves the reply outstanding for the redelivery, and the broadcast follows the commit. The reply, its
+  answer and its decline carry the reply's comment id (V122, `review_event.comment_id`), and the dashboard ends each
+  reply only with its own ending. Limits that remain, not live-proven (docs/UNVERIFIED.md): a harness reply's refusal
+  or failure still files its line on every delivery.
 - **The answer mentions the person it answers.** On the live proof the bot named the author as plain text, which
   notifies nobody, because the reply prompt forbids hand-written mentions (the syntax differs per forge, and a wrong
   one fails to link or notifies the wrong account). Code Spire now opens every reply, API and harness, with the

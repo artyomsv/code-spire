@@ -52,15 +52,11 @@ public class ReviewProjection {
 
     private static final Logger LOG = Logger.getLogger(ReviewProjection.class);
     private static final List<String> STEPS = List.of("Received", "Diff", "Context", "Review", "Comments", "Done");
-    private static final String UNIQUE_VIOLATION = "23505";
     /** {@link ReviewDetail.FindingView#origin()} for a finding a human filed with {@code /finding};
      *  null is a finding the review produced, and is what every row stored before the field existed
      *  reads back as. Named once because it is now a value three methods agree on, one of which
      *  ({@link #unionConversationFindings}) decides what the dashboard shows by it. */
     static final String CONVERSATION_ORIGIN = "conversation";
-    // Generous: each lost race costs one DB round trip, and N concurrent writers
-    // can make one writer lose up to N-1 rounds in a row.
-    private static final int SEQ_RETRY_LIMIT = 50;
 
     // Active-step index for the pipeline stepper (6 = every step done).
     public static final int STAGE_RECEIVED = 0;
@@ -1538,13 +1534,7 @@ public class ReviewProjection {
         }
     }
 
-    /**
-     * Append one line to the review's scoped event stream. seq is allocated
-     * atomically (MAX+1 inside the INSERT) and guarded by UNIQUE(review_id, seq)
-     * (V6): three independently-threaded consumers append to the same review, so
-     * a writer that loses the allocation race gets 23505 and simply retries with
-     * a fresh MAX — timeline order stays deterministic.
-     */
+    /** Append one line to the review's scoped event stream, in order (seq and its retry: {@link EventLines}). */
     public void appendEvent(String reviewId, String lane, String type, String detail) {
         appendEvent(reviewId, lane, type, detail, null);
     }
@@ -1552,22 +1542,18 @@ public class ReviewProjection {
     /** As above, tagging the row with the SCM {@code threadRef} it belongs to (null for
      *  non-conversation events) so the detail projection can group turns by thread. */
     public void appendEvent(String reviewId, String lane, String type, String detail, String threadRef) {
-        String sql = """
-                INSERT INTO review_event (review_id, seq, lane, type, detail, thread_ref)
-                SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ? FROM review_event WHERE review_id = ?
-                """;
-        for (int attempt = 1; attempt <= SEQ_RETRY_LIMIT; attempt++) {
-            try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
-                ps.setString(1, reviewId);
-                ps.setString(2, lane);
-                ps.setString(3, type);
-                ps.setString(4, detail == null ? "" : detail);
-                ps.setString(5, threadRef);
-                ps.setString(6, reviewId);
-                ps.executeUpdate();
+        appendEvent(new EventLine(reviewId, lane, type, detail, threadRef, null));
+    }
+
+    /** Every append ends here, so a test fake that overrides this one sees them all. */
+    public void appendEvent(EventLine line) {
+        String reviewId = line.reviewId();
+        for (int attempt = 1; attempt <= EventLines.SEQ_RETRY_LIMIT; attempt++) {
+            try (Connection c = dataSource.getConnection()) {
+                EventLines.insert(c, line);
                 return;
             } catch (SQLException e) {
-                if (!UNIQUE_VIOLATION.equals(e.getSQLState()) || attempt == SEQ_RETRY_LIMIT) {
+                if (!EventLines.UNIQUE_VIOLATION.equals(e.getSQLState()) || attempt == EventLines.SEQ_RETRY_LIMIT) {
                     throw new IllegalStateException("review_event write failed for " + reviewId, e);
                 }
                 // lost the seq race to a concurrent consumer — recompute MAX and retry
@@ -2436,8 +2422,8 @@ public class ReviewProjection {
     private List<ReviewDetail.EventView> loadEvents(Connection c, String reviewId, Instant t0,
             Function<String, String> threadKind, Map<String, String> locByThread) throws SQLException {
         List<ReviewDetail.EventView> out = new ArrayList<>();
-        try (PreparedStatement ps = c.prepareStatement(
-                "SELECT lane, type, detail, at, thread_ref FROM review_event WHERE review_id = ? ORDER BY seq")) {
+        try (PreparedStatement ps = c.prepareStatement("SELECT lane, type, detail, at, thread_ref, comment_id"
+                + " FROM review_event WHERE review_id = ? ORDER BY seq")) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -2445,7 +2431,7 @@ public class ReviewProjection {
                     String threadRef = rs.getString("thread_ref");
                     out.add(new ReviewDetail.EventView(at.toString(), relative(t0, at), rs.getString("lane"),
                             rs.getString("type"), rs.getString("detail"), threadRef, threadKind.apply(threadRef),
-                            threadRef == null ? null : locByThread.get(threadRef)));
+                            threadRef == null ? null : locByThread.get(threadRef), rs.getString("comment_id")));
                 }
             }
         }

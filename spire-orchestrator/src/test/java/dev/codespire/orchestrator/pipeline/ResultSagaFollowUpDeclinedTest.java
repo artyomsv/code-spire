@@ -5,6 +5,7 @@ import dev.codespire.contract.event.FollowUpDeclineReason;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.TestRepositoryProjection;
 import dev.codespire.orchestrator.readmodel.AnsweringMarks;
+import dev.codespire.orchestrator.readmodel.EventLine;
 import dev.codespire.orchestrator.readmodel.ReplyKey;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
 import org.junit.jupiter.api.Test;
@@ -35,7 +36,7 @@ class ResultSagaFollowUpDeclinedTest {
 
         assertEquals(List.of(HarnessSagaFakes.REVIEW_ID + ":TEST-comment-5"), answering);
         assertEquals(List.of("FollowUpDeclined|TEST-root|reply not answered: another person is in the thread and the"
-                + " reply did not mention the bot"), events);
+                + " reply did not mention the bot|TEST-comment-5"), events);
     }
 
     @Test
@@ -44,8 +45,8 @@ class ResultSagaFollowUpDeclinedTest {
                 FollowUpDeclineReason.NO_THREAD_SOURCE));
 
         assertEquals(List.of(HarnessSagaFakes.REVIEW_ID + ":TEST-comment-5"), answering);
-        assertEquals(List.of("FollowUpDeclined|null|reply not answered: this forge cannot read a reply thread"),
-                events);
+        assertEquals(List.of("FollowUpDeclined|null|reply not answered: this forge cannot read a reply thread"
+                + "|TEST-comment-5"), events);
     }
 
     /** A redelivery of a comment the bot did answer: the mark clears, and no history says it went unanswered. */
@@ -74,8 +75,8 @@ class ResultSagaFollowUpDeclinedTest {
         endings.threads = threads();
         endings.projection = new TestRepositoryProjection() {
             @Override
-            public void appendEvent(String reviewId, String lane, String type, String detail, String threadRef) {
-                events.add(type + "|" + threadRef + "|" + detail);
+            public void appendEvent(EventLine line) {
+                throw new AssertionError("a decline's line is written with its reply's removal, by the marks");
             }
 
             @Override
@@ -85,9 +86,14 @@ class ResultSagaFollowUpDeclinedTest {
         };
         endings.answering = new AnsweringMarks() {
             @Override
-            public void finish(ReplyKey reply, Runnable recordEnding) {
+            public void finish(ReplyKey reply) {
                 answering.add(reply.reviewId() + ":" + reply.commentId());
-                recordEnding.run();
+            }
+
+            @Override
+            public void finish(ReplyKey reply, EventLine ending) {
+                finish(reply);
+                events.add(ending.type() + "|" + ending.threadRef() + "|" + ending.detail() + "|" + ending.commentId());
             }
         };
         saga.followUpEndings = endings;

@@ -33,6 +33,7 @@ import dev.codespire.orchestrator.llm.ChargeCall;
 import dev.codespire.orchestrator.llm.ChargeKind;
 import dev.codespire.orchestrator.llm.ChargeLine;
 import dev.codespire.orchestrator.llm.DefaultLlm;
+import dev.codespire.orchestrator.readmodel.EventLine;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.review.run.HarnessReviewStart;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
@@ -354,8 +355,8 @@ public class ResultSaga {
                 labelFailures.record(e.reviewId(), e.commit(), e.labelFailure());
             }
             case FollowUpGenerated e -> {
-                projection.appendEvent(e.reviewId(), "result", "FollowUpGenerated",
-                        Previews.of(e.answerText()), e.threadRef().value());
+                projection.appendEvent(new EventLine(e.reviewId(), "result", "FollowUpGenerated",
+                        Previews.of(e.answerText()), e.threadRef().value(), e.triggeringCommentId()));
                 if (e.usage() != null) {
                     // Thread AND triggering comment: the worker claims on the pair, so a follow-up's
                     // ledger identity has to be the pair too or turn 2 is dropped as turn 1's redelivery.

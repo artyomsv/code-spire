@@ -606,7 +606,7 @@ class IntegrationSagaPolicyTest extends IntegrationSagaFixture {
             }
 
             @Override
-            public void appendEvent(String reviewId, String lane, String type, String detail, String threadRef) {
+            public void appendEvent(dev.codespire.orchestrator.readmodel.EventLine line) {
             }
         };
     }
