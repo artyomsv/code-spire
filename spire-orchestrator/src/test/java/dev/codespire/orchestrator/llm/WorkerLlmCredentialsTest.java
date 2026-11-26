@@ -8,6 +8,7 @@ import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.repository.RepositoryInput;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
+import dev.codespire.orchestrator.settings.AppSettingRepository;
 import dev.codespire.orchestrator.settings.ReviewDiffLimit;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -46,6 +47,7 @@ class WorkerLlmCredentialsTest {
     @Inject ReviewProjection reviews;
     @Inject DataSource dataSource;
     @Inject ReviewDiffLimit diffLimit;
+    @Inject AppSettingRepository settings;
     @Inject EncryptionService encryption;
     @Inject ObjectMapper mapper;
 
@@ -191,6 +193,27 @@ class WorkerLlmCredentialsTest {
                     encryption.decryptString(llm.packed(), LlmCredential.aad(workspace)), LlmCredential.class);
             assertEquals(90_000, packed.diffTokenCap());
             assertNull(packed.maxInputTokens(), "a manual model has no context window");
+        } finally {
+            diffLimit.set(null);
+        }
+    }
+
+    /**
+     * PR 456, code-quality/M-5: an invalid stored limit packs the lowest limit, never none and never a refusal. With a
+     * cap of 24,000 every kind keeps today's budget, by the worker's floor (DiffBudgetTest:
+     * theSettingNeverLowersTheBudgetUnderTheDefault,
+     * theSettingAtTheReviewMinimumLeavesAReconcileAtItsOwnDefaultOrMore).
+     */
+    @Test
+    void anInvalidStoredLimitPacksTheLowestLimit() throws Exception {
+        settings.set(ReviewDiffLimit.KEY, "TEST-abc");
+        try {
+            DefaultLlm llm = credentials.resolveForReview(reviewOn(repository(null, null)));
+
+            assertTrue(llm.isSpendable(), "an invalid limit never blocks a review");
+            LlmCredential packed = mapper.readValue(
+                    encryption.decryptString(llm.packed(), LlmCredential.aad(workspace)), LlmCredential.class);
+            assertEquals(ReviewDiffLimit.MIN_TOKENS, packed.diffTokenCap());
         } finally {
             diffLimit.set(null);
         }

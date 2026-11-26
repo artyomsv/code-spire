@@ -12,8 +12,8 @@ import { getReviewDiffLimit } from '../reviewDiffLimitApi';
 import CapFields, { initialCapFields, type CapFieldValues } from './CapSettings';
 import ConversationFields from './ConversationSettings';
 import ReviewFields from './ReviewSettings';
-import ReviewDiffLimitField, { diffLimitText } from './ReviewDiffLimitField';
-import { saveChangedGroups, validateGeneral, type GeneralForm } from './generalSettingsForm';
+import ReviewDiffLimitField from './ReviewDiffLimitField';
+import { diffLimitFields, saveChangedGroups, validateGeneral, type GeneralForm } from './generalSettingsForm';
 
 /**
  * General preferences. The page owns the state and the single Save for BOTH groups — they are two
@@ -55,12 +55,12 @@ export default function SettingsGeneral() {
     if (!fresh || filled.current) return;
     filled.current = true;
     const capFields = initialCapFields(fresh.caps);
-    const limitText = diffLimitText(fresh.diffLimit);
+    const limit = diffLimitFields(fresh.diffLimit);
     setReview(fresh.review);
     setConversation(fresh.conversation);
     setCaps(capFields);
-    setDiffLimit(limitText);
-    setLoaded({ review: fresh.review, conversation: fresh.conversation, caps: capFields, diffLimit: limitText });
+    setDiffLimit(limit.diffLimit);
+    setLoaded({ review: fresh.review, conversation: fresh.conversation, caps: capFields, ...limit });
   }, [fresh]);
   const readError = read.error ? (read.error instanceof Error ? read.error.message : String(read.error)) : null;
 
@@ -121,6 +121,7 @@ export default function SettingsGeneral() {
               <ReviewDiffLimitField
                 value={diffLimit}
                 disabled={busy}
+                invalidStored={loaded?.diffLimitInvalid === true}
                 onChange={(v) => {
                   setDiffLimit(v);
                   setSaved(false);

@@ -40,9 +40,14 @@ const HINT =
   '272,000 input tokens) are not modelled, so such calls are charged at the lower rate: set about 60,000 to keep a ' +
   'whole review below them.';
 
+/** Shown while the stored row is not a valid limit; reviews meanwhile use the lowest limit, today's budgets. */
+export const INVALID_STORED_MESSAGE = 'The stored value is invalid; save to clear it or enter a new limit';
+
 interface Props {
   value: string;
   disabled?: boolean;
+  /** The stored row is not a valid limit, so a Save is sent even when the field stays blank. */
+  invalidStored?: boolean;
   onChange: (value: string) => void;
 }
 
@@ -50,7 +55,7 @@ interface Props {
  * The Review diff limit: the most diff, in estimated tokens, an API review sends to the model. Blank sends the whole
  * diff whenever the model's context window can hold it. Controlled: {@link SettingsGeneral} owns the state and Save.
  */
-export default function ReviewDiffLimitField({ value, disabled, onChange }: Props) {
+export default function ReviewDiffLimitField({ value, disabled, invalidStored, onChange }: Props) {
   const inputId = useId();
   return (
     <div className="settings-fields">
@@ -67,6 +72,7 @@ export default function ReviewDiffLimitField({ value, disabled, onChange }: Prop
           onChange={(e) => onChange(e.target.value)}
         />
       </SettingField>
+      {invalidStored && <p className="prov-error">{INVALID_STORED_MESSAGE}</p>}
     </div>
   );
 }

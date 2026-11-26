@@ -133,7 +133,9 @@ public class WorkerLlmCredentials {
                     model, profile.outputTokenParam(), profile.supportsTemperature(), profile.reasoningEffort());
         }
         // Every pack site (review, reconcile, reply) carries the same limits; only REVIEW and RECONCILE size by them.
-        // Read before anything is encrypted: an unreadable Review diff limit throws here and the pack is retried.
+        // Read before anything is encrypted: a failed read of the Review diff limit throws here, and ResultSaga
+        // schedules the review's retry. A reply has no retry of its own: its message is dead-lettered for replay, as
+        // on a failed provider read.
         ReviewInputLimits.Limits limits = inputLimits.forModel(model, cfg.maxTokens());
         LlmCredential cred = new LlmCredential(cfg.type(), cfg.baseUrl(), cfg.apiKey(),
                 model, cfg.temperature(), cfg.maxTokens(), profile, limits.maxInputTokens(), limits.diffTokenCap());

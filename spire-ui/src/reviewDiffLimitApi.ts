@@ -9,13 +9,21 @@ export interface ReviewDiffLimit {
   limitTokens: number | null;
 }
 
-export async function getReviewDiffLimit(): Promise<ReviewDiffLimit> {
+/**
+ * What the server reports: the limit, and whether a stored row is not a valid limit (`limitTokens` is then null and
+ * reviews use the lowest limit until it is saved again).
+ */
+export interface StoredReviewDiffLimit extends ReviewDiffLimit {
+  invalidStoredValue?: boolean;
+}
+
+export async function getReviewDiffLimit(): Promise<StoredReviewDiffLimit> {
   const res = await apiFetch('/api/settings/review-diff-limit');
   if (!res.ok) return throwResponse(res, 'Failed to load the review diff limit');
   return res.json();
 }
 
-export async function setReviewDiffLimit(limit: ReviewDiffLimit): Promise<ReviewDiffLimit> {
+export async function setReviewDiffLimit(limit: ReviewDiffLimit): Promise<StoredReviewDiffLimit> {
   const res = await apiFetch('/api/settings/review-diff-limit', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

@@ -12,10 +12,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PR 456, security/M-1: unset is the expensive answer for the Review diff limit, so the credential pack reads it
- * strictly. A database fault and a stored value outside the range both throw rather than read as unset; the settings
- * screen still reads them as unset, so the row can be seen and saved again. No container: a real repository over a
- * database that is down, and a repository holding a given row.
+ * PR 456: unset is the expensive answer for the Review diff limit, so the credential pack reads it strictly. A
+ * database fault throws rather than read as unset (security/M-1); a stored value outside the range reads as the lowest
+ * limit, never as unset and never as a block on reviews (code-quality/M-5). The settings screen tells an invalid row
+ * apart from no row, so a blank save can clear it. No container: a real repository over a database that is down, and
+ * a repository holding a given row.
  */
 class ReviewDiffLimitReadTest {
 
@@ -28,36 +29,41 @@ class ReviewDiffLimitReadTest {
 
     @Test
     void theSettingsScreenStillReadsADatabaseFaultAsUnset() {
-        assertTrue(over(unreachableRepository()).shown().isEmpty());
+        assertEquals(new ReviewDiffLimit.Shown(null, false), over(unreachableRepository()).shown());
     }
 
     @Test
-    void aStoredValueOutsideTheRangeIsNotUnset() {
-        ReviewDiffLimit.Unreadable refused = assertThrows(ReviewDiffLimit.Unreadable.class,
-                () -> over(holding("10")).current());
-
-        assertTrue(refused.getMessage().contains("Settings -> General"), refused.getMessage());
+    void aStoredValueOutsideTheRangeReadsAsTheLowestLimit() {
+        assertEquals(Optional.of(ReviewDiffLimit.MIN_TOKENS), over(holding("10")).current());
     }
 
     @Test
-    void aStoredValueThatIsNotANumberIsNotUnset() {
-        assertThrows(ReviewDiffLimit.Unreadable.class, () -> over(holding("TEST-abc")).current());
+    void aStoredValueThatIsNotANumberReadsAsTheLowestLimit() {
+        assertEquals(Optional.of(ReviewDiffLimit.MIN_TOKENS), over(holding("TEST-abc")).current());
     }
 
     @Test
-    void theSettingsScreenShowsABadRowAsUnsetSoItCanBeSavedAgain() {
-        assertTrue(over(holding("TEST-abc")).shown().isEmpty());
+    void theSettingsScreenFlagsABadRowSoItCanBeCleared() {
+        assertEquals(new ReviewDiffLimit.Shown(null, true), over(holding("TEST-abc")).shown());
+    }
+
+    @Test
+    void aLongBadValueIsQuotedOnlyInPart() {
+        String excerpt = ReviewDiffLimit.excerpt("TEST-" + "x".repeat(500));
+
+        assertTrue(excerpt.length() <= ReviewDiffLimit.LOGGED_VALUE_CHARS + 3, excerpt);
     }
 
     @Test
     void aStoredLimitIsRead() {
         assertEquals(Optional.of(60_000), over(holding("60000")).current());
-        assertEquals(Optional.of(60_000), over(holding("60000")).shown());
+        assertEquals(new ReviewDiffLimit.Shown(60_000, false), over(holding("60000")).shown());
     }
 
     @Test
     void noRowIsUnset() {
         assertTrue(over(holding(null)).current().isEmpty());
+        assertEquals(new ReviewDiffLimit.Shown(null, false), over(holding(null)).shown());
     }
 
     private static ReviewDiffLimit over(AppSettingRepository settings) {
@@ -77,7 +83,7 @@ class ReviewDiffLimitReadTest {
     }
 
     /** A repository holding {@code value} under the limit's key, or no row when null. */
-    private static AppSettingRepository holding(String value) {
+    static AppSettingRepository holding(String value) {
         return new AppSettingRepository() {
             @Override
             public Optional<String> getStrictly(String key) {

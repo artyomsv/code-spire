@@ -12,9 +12,10 @@ import java.util.Optional;
  * worker never lowers a diff below today's fixed budget for it (review input limit design, 2026-11-26).
  *
  * <p>Read fresh on every credential pack, so a change applies to the next review without a restart. Unset is the
- * expensive answer, so the pack reads it strictly ({@link #current}): a failed read or a stored value outside the range
- * fails the pack and is retried, rather than sending a review uncapped (PR 456, security/M-1). The settings screen
- * reads it leniently ({@link #shown}), so a bad row can still be seen and replaced.
+ * expensive answer, so the pack reads it strictly ({@link #current}): a failed read throws, and the review saga turns
+ * it into a scheduled retry rather than sending a review uncapped (PR 456, security/M-1, code-quality/M-4). A stored
+ * value outside the range never blocks a review: it reads as {@link #MIN_TOKENS}, the conservative bound, so every
+ * kind keeps today's fixed budget, and an attention row and the settings screen say so until it is saved again.
  */
 @ApplicationScoped
 public class ReviewDiffLimit {
@@ -30,14 +31,24 @@ public class ReviewDiffLimit {
     /** Above every context window in the catalog today; a typo of an extra zero is refused rather than sent. */
     public static final int MAX_TOKENS = 2_000_000;
 
+    /** How much of an invalid stored value a log line quotes: enough to recognise it, never a whole pasted blob. */
+    static final int LOGGED_VALUE_CHARS = 40;
+
     @Inject
     AppSettingRepository settings;
 
     /**
-     * The limit a review is packed with, or empty when no row is stored.
+     * What the settings screen shows: the stored limit, or null when unset or invalid; {@code invalidStoredValue}
+     * tells an invalid row from no row, so a blank Save can clear it (PR 456, code-quality/M-5).
+     */
+    public record Shown(Integer limitTokens, boolean invalidStoredValue) {
+    }
+
+    /**
+     * The limit a review is packed with, or empty when no row is stored. An invalid stored value reads as
+     * {@link #MIN_TOKENS}, never as unset: unset would lift the operator's cap.
      *
      * @throws AppSettingRepository.ReadFailed when the database read fails
-     * @throws Unreadable when the stored value is not a whole number in range
      */
     public Optional<Integer> current() {
         Optional<String> stored = settings.getStrictly(KEY);
@@ -46,20 +57,19 @@ public class ReviewDiffLimit {
         }
         Integer parsed = parse(stored.orElseThrow());
         if (parsed == null) {
-            throw new Unreadable(stored.orElseThrow());
+            LOG.warnf("app_setting %s holds '%s', which is not a whole number from %d to %d; reviews are packed with "
+                    + "%d until it is saved again in Settings -> General", KEY, excerpt(stored.orElseThrow()),
+                    MIN_TOKENS, MAX_TOKENS, MIN_TOKENS);
+            return Optional.of(MIN_TOKENS);
         }
         return Optional.of(parsed);
     }
 
-    /** The limit for the settings screen: a read failure or a stored value outside the range shows as unset. */
-    public Optional<Integer> shown() {
+    /** The limit for the settings screen. A read failure shows as unset; an invalid row is flagged as such. */
+    public Shown shown() {
         Optional<String> stored = settings.get(KEY);
         Integer parsed = stored.map(ReviewDiffLimit::parse).orElse(null);
-        if (stored.isPresent() && parsed == null) {
-            LOG.warnf("app_setting %s holds '%s', which is not a whole number from %d to %d; reviews are not packed "
-                    + "until it is saved again in Settings -> General", KEY, stored.orElseThrow(), MIN_TOKENS, MAX_TOKENS);
-        }
-        return Optional.ofNullable(parsed);
+        return new Shown(parsed, stored.isPresent() && parsed == null);
     }
 
     /** Stores the limit, or clears it with {@code null}. Validate with {@link #isAccepted} first. */
@@ -88,13 +98,7 @@ public class ReviewDiffLimit {
         }
     }
 
-    /** A stored limit no review may be packed with: reading it as unset would lift the operator's cap. */
-    public static final class Unreadable extends IllegalStateException {
-
-        Unreadable(String stored) {
-            super("app_setting " + KEY + " holds '" + stored + "', which is not a whole number from " + MIN_TOKENS
-                    + " to " + MAX_TOKENS + ". No review is sent until it is fixed: save the Review diff limit again "
-                    + "in Settings -> General (blank for no limit), or delete the row.");
-        }
+    static String excerpt(String stored) {
+        return stored.length() <= LOGGED_VALUE_CHARS ? stored : stored.substring(0, LOGGED_VALUE_CHARS) + "...";
     }
 }

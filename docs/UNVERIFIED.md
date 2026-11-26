@@ -65,6 +65,13 @@ Design: docs/superpowers/specs/2026-11-26-review-input-limit-design.md.
   on any other path, including one in a section the parser cannot read, stays UNCHANGED. Git's C-quoted paths are
   decoded (octal and the simple escapes); a header no rule reads is simply not seen. The rendered full-diff fallback
   is measured exactly. Tests only, including a quoted rename past the cut replayed through posting.
+- **An unreadable Review diff limit retries the review, proven against fakes only** (PR 456, round 2).
+  `ResultSagaLimitReadTest` throws `AppSettingRepository.ReadFailed` from the credential pack on `ContextAssembled`
+  and reads a scheduled retry and no `GenerateReview`, or a terminal failure past the budget. No real database fault
+  has been injected on a live stack, and a reply's pack fault is dead-lettered for manual replay, not retried.
+- **An invalid stored Review diff limit reviews at 24,000** (PR 456, round 2): proven by `WorkerLlmCredentialsTest`
+  on a real database and by the General form's test with a stubbed API; the `DIFF_LIMIT_INVALID` row and the blank
+  Save have not been seen on a live stack.
 - **A partial review never approves, proven against fakes only** (`ResultSagaPartialReviewTest`). Any truncation
   counts, a clipped context included, since an older result cannot say which input was cut; no live repository has
   posted a partial review since.

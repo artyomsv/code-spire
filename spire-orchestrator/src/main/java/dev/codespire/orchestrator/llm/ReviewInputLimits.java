@@ -17,8 +17,9 @@ import java.util.Optional;
  * {@link LlmModelRegistry} and {@link WorkerLlmCredentials}, which already held more than a reader can.
  *
  * <p>The two unknowns fail in opposite directions on purpose. An unknown window (a manual model, a catalog read fault)
- * keeps today's fixed budgets, the small answer. An unreadable Review diff limit fails the pack instead of reading as
- * unset, because unset is the large answer: a database fault must never send an uncapped review (PR 456).
+ * keeps today's fixed budgets, the small answer. A Review diff limit the database cannot read fails the pack instead of
+ * reading as unset, because unset is the large answer: a database fault must never send an uncapped review (PR 456);
+ * the review saga schedules a retry. An invalid stored limit reads as the lowest one, today's budgets.
  */
 @ApplicationScoped
 public class ReviewInputLimits {
@@ -39,7 +40,6 @@ public class ReviewInputLimits {
      * @param model             the model the credential names
      * @param providerMaxTokens the output cap the call sends, or null for {@link ModelParams#DEFAULT_MAX_OUTPUT_TOKENS}
      * @throws dev.codespire.orchestrator.settings.AppSettingRepository.ReadFailed when the setting cannot be read
-     * @throws ReviewDiffLimit.Unreadable when the stored setting is not a valid limit
      */
     public Limits forModel(String model, Integer providerMaxTokens) {
         Integer cap = diffLimit.current().orElse(null);

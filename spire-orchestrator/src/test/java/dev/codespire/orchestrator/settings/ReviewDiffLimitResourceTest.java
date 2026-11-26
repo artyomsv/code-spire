@@ -28,6 +28,9 @@ class ReviewDiffLimitResourceTest {
     @Inject
     ReviewDiffLimit stored;
 
+    @Inject
+    AppSettingRepository settings;
+
     /** Unset again, so no other suite's review is capped by this one. Through the bean: the viewer case cannot PUT. */
     @AfterEach
     void clear() {
@@ -71,6 +74,19 @@ class ReviewDiffLimitResourceTest {
         given().contentType("application/json").body(limit(0)).when().put(PATH).then().statusCode(400);
         given().contentType("application/json").body(limit(-1)).when().put(PATH).then().statusCode(400);
         when().get(PATH).then().statusCode(200).body("limitTokens", nullValue());
+    }
+
+    /** PR 456, code-quality/M-5: an invalid row reads apart from no row, and a blank save deletes it. */
+    @Test
+    void anInvalidStoredValueIsFlaggedAndABlankSaveClearsIt() {
+        settings.set(ReviewDiffLimit.KEY, "TEST-abc");
+        when().get(PATH).then().statusCode(200)
+                .body("limitTokens", nullValue()).body("invalidStoredValue", equalTo(true));
+
+        given().contentType("application/json").body(limit(null)).when().put(PATH)
+                .then().statusCode(200).body("invalidStoredValue", equalTo(false));
+        when().get(PATH).then().statusCode(200)
+                .body("limitTokens", nullValue()).body("invalidStoredValue", equalTo(false));
     }
 
     @Test

@@ -26,8 +26,11 @@ public class ReviewDiffLimitResource {
     @Inject
     ReviewDiffLimit limit;
 
-    /** The stored limit in tokens, or null when unset. */
-    public record ReviewDiffLimitView(Integer limitTokens) {
+    /**
+     * The stored limit in tokens, or null when unset or invalid; {@code invalidStoredValue} is true when a row is
+     * stored that is not a valid limit (reviews then use the lowest limit), so the form can offer to clear it.
+     */
+    public record ReviewDiffLimitView(Integer limitTokens, boolean invalidStoredValue) {
     }
 
     /**
@@ -39,7 +42,8 @@ public class ReviewDiffLimitResource {
 
     @GET
     public ReviewDiffLimitView get() {
-        return new ReviewDiffLimitView(limit.shown().orElse(null));
+        ReviewDiffLimit.Shown shown = limit.shown();
+        return new ReviewDiffLimitView(shown.limitTokens(), shown.invalidStoredValue());
     }
 
     @PUT

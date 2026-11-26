@@ -4,6 +4,7 @@ import SettingsGeneral from './SettingsGeneral';
 import * as api from '../api';
 import * as diffLimitApi from '../reviewDiffLimitApi';
 import { queryWrapper } from '../test/queryWrapper';
+import { INVALID_STORED_MESSAGE } from './ReviewDiffLimitField';
 
 /**
  * The Review diff limit (review input limit design, 2026-11-26). Blank means "as much as the model allows" and
@@ -61,6 +62,22 @@ describe('SettingsGeneral — Review diff limit', () => {
 
     await waitFor(() => expect(put).toHaveBeenCalledWith({ limitTokens: null }));
     expect(limitInput().value).toBe('');
+  });
+
+  it('clears an invalid stored limit with a blank Save', async () => {
+    vi.spyOn(diffLimitApi, 'getReviewDiffLimit').mockResolvedValue({ limitTokens: null, invalidStoredValue: true });
+    const put = vi.spyOn(diffLimitApi, 'setReviewDiffLimit')
+      .mockResolvedValue({ limitTokens: null, invalidStoredValue: false });
+    render(<SettingsGeneral />, { wrapper: queryWrapper() });
+    await screen.findByText('Code review');
+
+    expect(screen.getByText(INVALID_STORED_MESSAGE)).toBeInTheDocument();
+    expect(limitInput().value).toBe('');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(put).toHaveBeenCalledWith({ limitTokens: null }));
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(screen.queryByText(INVALID_STORED_MESSAGE)).not.toBeInTheDocument();
   });
 
   it('refuses a limit below today’s budget without sending anything', async () => {

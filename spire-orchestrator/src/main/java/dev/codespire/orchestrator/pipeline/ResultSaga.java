@@ -34,6 +34,7 @@ import dev.codespire.orchestrator.llm.ChargeLine;
 import dev.codespire.orchestrator.llm.DefaultLlm;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.review.run.HarnessReviewStart;
+import dev.codespire.orchestrator.settings.AppSettingRepository;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import io.smallrye.reactive.messaging.annotations.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -160,6 +161,7 @@ public class ResultSaga {
 
     /** What a dropped harness outcome is called on the timeline. */
     private static final String HARNESS_OUTCOME = "HarnessReview";
+    private static final String GENERATE_REVIEW = "GenerateReview";
 
     int maxAttempts() {
         return reviewPolicy.maxAttempts();
@@ -239,21 +241,18 @@ public class ResultSaga {
                 }
                 projection.appendEvent(e.reviewId(), "result", "DiffFetched", e.changedFiles() + " files");
                 projection.updateStage(e.reviewId(), ReviewProjection.STAGE_CONTEXT);
-                // Pack every enabled context credential (Jira + Confluence) — null when none is configured,
-                // in which case the worker assembles an empty context (the review still runs).
+                // Every enabled context credential (Jira + Confluence); null when none, and the review runs on none.
                 String workspace = ReviewIds.parse(e.reviewId()).repo().workspace();
                 String contextCred = workerContextCredentials.packAll(workspace).orElse(null);
-                // Which platform this review runs on, from the same resolver the credential path and
-                // the conversation saga use — one answer to "which SCM is this review on". Null when
-                // unresolvable, which makes repo-relative context providers decline rather than guess.
+                // The review's platform, from the resolver the credential path and the conversation saga use. Null
+                // when unresolvable, which makes repo-relative context providers decline rather than guess.
                 ScmType scmType = providers.resolveForReview(e.reviewId())
                         .flatMap(p -> ScmType.fromProviderType(p.type()))
                         .orElse(null);
                 commands.emit(new ActionCommand.GatherContext(
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
                         contextLinks.toGather(e), contextCred, scmType,
-                        // Already read at diff-fetch, from the PR's target branch — the aggregator
-                        // holds no SCM credential and so cannot fetch it itself.
+                        // Read at diff-fetch from the target branch: the aggregator holds no SCM credential.
                         e.repoRules(), e.codeReferences()));
             });
             case ContextAssembled e -> ifCurrentRun(e.reviewId(), e.commit(), "ContextAssembled", () -> {
@@ -264,21 +263,25 @@ public class ResultSaga {
                 if (applyHarnessDecision(e.reviewId(), e.commit(), harnessStart.start(e))) {
                     return;
                 }
-                // GenerateReview also needs the LLM credential (ADR-018): resolve the provider the
-                // review's repository names, else the global default, and pack it encrypted. The resolve
-                // also answers whether the model can be priced — the pre-spend guard, which arrives with
-                // the credential so it cannot be skipped here.
-                DefaultLlm llm = workerLlmCredentials.resolveForReview(e.reviewId());
-                if (!llm.isSpendable()) {
-                    skipUnspendable(e.reviewId(), "GenerateReview", llm);
+                // GenerateReview needs the LLM credential (ADR-018) of the repository's provider, else the default; the
+                // resolve also answers priceability, the pre-spend guard. A failed read of the Review diff limit packs
+                // nothing and takes the bounded retry (C8), never the dead-letter queue (PR 456, code-quality/M-4).
+                DefaultLlm llm;
+                try {
+                    llm = workerLlmCredentials.resolveForReview(e.reviewId());
+                } catch (AppSettingRepository.ReadFailed fault) {
+                    onReviewFailed(new ReviewFailed(e.reviewId(), e.commit(), GENERATE_REVIEW, fault.getMessage(),
+                            true, 0));
                     return;
                 }
-                // Task 6: the pre-spend gate, right beside priceability — both answer the same question
-                // ("may this paid call be made"), so a reader should find every reason it was refused in
-                // one place rather than half of them here and half in ConversationSaga.
+                if (!llm.isSpendable()) {
+                    skipUnspendable(e.reviewId(), GENERATE_REVIEW, llm);
+                    return;
+                }
+                // Task 6: the pre-spend gate beside priceability; both answer "may this paid call be made".
                 dev.codespire.orchestrator.caps.SpendGate.Decision spendDecision = spendGate.decide();
                 if (spendDecision.refused()) {
-                    refuse(e.reviewId(), e.commit(), "GenerateReview", ReviewProjection.STAGE_REVIEW,
+                    refuse(e.reviewId(), e.commit(), GENERATE_REVIEW, ReviewProjection.STAGE_REVIEW,
                             spendDecision.refusal());
                     return;
                 }
@@ -288,7 +291,7 @@ public class ResultSaga {
                         promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.REVIEW, repo);
                 dev.codespire.contract.llm.PromptTemplate reconcilePrompt =
                         promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.RECONCILE, repo);
-                emitWithCredential(e.reviewId(), "GenerateReview", scmCred -> new ActionCommand.GenerateReview(
+                emitWithCredential(e.reviewId(), GENERATE_REVIEW, scmCred -> new ActionCommand.GenerateReview(
                         e.reviewId(), repo, e.prId(), e.commit(),
                         e.contextRef(), 1, null, scmCred, llm.packed(), prior, reviewPrompt, reconcilePrompt));
             });
