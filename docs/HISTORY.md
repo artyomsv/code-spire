@@ -2793,4 +2793,4 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   `review_status`, additive: an older orchestrator neither reads nor writes the table, and its clears still drop the
   rows through the trigger. `FollowUpPosted` gains a nullable `triggeringCommentId`; an older orchestrator ignores it.
   A dev database that ran the earlier V122 (`answering_comment`) has a different checksum: drop that column and
-  repair, or recreate the database.
+  delete V122's row from `flyway_schema_history` so the new V122 runs, or recreate the database.
