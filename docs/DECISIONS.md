@@ -289,9 +289,11 @@ review behind an hour-long build would wait an hour.
   reply only with its own ending. Limits that remain, not live-proven (docs/UNVERIFIED.md): a harness reply's refusal
   or failure still files its line on every delivery. The broadcast is a best-effort push, with two delivery limits:
   it reaches only the dashboards connected to the orchestrator instance that committed the ending (another replica
-  is not told), and a crash between the commit and the push loses that frame. Neither loses data: the committed
-  state reaches the dashboard with the next frame for the review, the snapshot a reconnecting socket receives, or the
-  next REST read of the page. docs/UNVERIFIED.md (the compact reviews list entry) names what the tests prove.
+  is not told), and a crash between the commit and the push loses that frame. Neither loses data, but recovery is
+  narrower than a reconnect: a reconnecting socket replaces only the live review summaries, and an open review detail
+  page re-reads its history only when the summary's updated_at changes, which the lost push would have done. That page
+  shows the committed state on its next REST read (opening or reloading it) or on a later update that changes
+  updated_at. docs/UNVERIFIED.md, entry A declined reply clears "responding", names what the tests prove.
 - **The answer mentions the person it answers.** On the live proof the bot named the author as plain text, which
   notifies nobody, because the reply prompt forbids hand-written mentions (the syntax differs per forge, and a wrong
   one fails to link or notifies the wrong account). Code Spire now opens every reply, API and harness, with the
