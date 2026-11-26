@@ -64,7 +64,7 @@ describe('the review header status badge', () => {
     const { container } = render(<>{statusCell(row(c), 0)}</>);
 
     const badge = container.querySelector('.pill');
-    expect(badge).toHaveTextContent(new RegExp(`^${c.label}$`));
+    expect(badge?.textContent).toBe(c.label);
     expect(badge).not.toHaveAttribute('aria-label');
   });
 });
