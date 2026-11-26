@@ -58,6 +58,16 @@ public class LangChain4jLlmProvider implements LlmProvider {
      */
     private static final int DEFAULT_MAX_OUTPUT_TOKENS = ModelParams.DEFAULT_MAX_OUTPUT_TOKENS;
 
+    /**
+     * Retries LangChain4j makes inside one {@code chat} call: none. Its default is 2, and its retry loop treats a
+     * timeout, a rate limit and a 5xx alike, so one call could send the whole prompt three times (and be billed for
+     * each) before the caller saw a failure, and three timeouts took longer than the Kafka ack budget allows. The
+     * application retries instead, where it knows the prompt's size: the review worker reports a transient failure
+     * as retryable and the orchestrator's retry budget re-runs the review, except a large prompt's timeout; a reply
+     * retries in the worker. {@code LlmTimeoutBudget} counts one attempt per call from this value.
+     */
+    public static final int SDK_MAX_RETRIES = 0;
+
     private final ChatModel model;
     private final String id;
     private final Function<ModelParams, ChatRequestParameters> paramFactory;
@@ -84,6 +94,7 @@ public class LangChain4jLlmProvider implements LlmProvider {
                 .apiKey(config.apiKey())
                 .modelName(config.model())
                 .timeout(config.timeout()) // ADR-013 LLM budget, operator-tunable
+                .maxRetries(SDK_MAX_RETRIES)
                 .build();
         return new LangChain4jLlmProvider(chatModel, "openai-compatible/" + config.model());
     }
@@ -99,6 +110,7 @@ public class LangChain4jLlmProvider implements LlmProvider {
                 .modelName(config.model())
                 .maxTokens(DEFAULT_MAX_OUTPUT_TOKENS)
                 .timeout(config.timeout()) // ADR-013 LLM budget, operator-tunable
+                .maxRetries(SDK_MAX_RETRIES)
                 .build();
         return new LangChain4jLlmProvider(chatModel, "anthropic/" + config.model(),
                 LangChain4jLlmProvider::nativeParameters);
@@ -111,6 +123,7 @@ public class LangChain4jLlmProvider implements LlmProvider {
                 .apiKey(config.apiKey())
                 .modelName(config.model())
                 .timeout(config.timeout()) // ADR-013 LLM budget, operator-tunable
+                .maxRetries(SDK_MAX_RETRIES)
                 .build();
         return new LangChain4jLlmProvider(chatModel, "gemini/" + config.model(),
                 LangChain4jLlmProvider::nativeParameters);

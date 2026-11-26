@@ -55,6 +55,30 @@ class LlmTimeoutBudgetTest {
                 "the shipped threshold must not be so loose that it stops detecting a stall");
     }
 
+    /**
+     * PR 456, H-1: the client library used to retry a timed-out call twice inside one {@code complete}, so one call
+     * could take three timeouts while this check counted one. The attempts now come from the library setting.
+     */
+    @Test
+    void everyAttemptTheClientMakesIsCounted() {
+        assertEquals(1 + dev.codespire.llm.LangChain4jLlmProvider.SDK_MAX_RETRIES, LlmTimeoutBudget.ATTEMPTS_PER_CALL);
+        assertEquals(LlmTimeoutBudget.needed(600, SERIAL, LlmTimeoutBudget.ATTEMPTS_PER_CALL),
+                LlmTimeoutBudget.needed(600, SERIAL), "the shipped client's attempts");
+        // The library's old default, two retries: three timeouts per call, which the shipped pairing could not hold.
+        assertEquals(600L * 1000L * LlmTimeoutBudget.LLM_CALLS_PER_COMMAND * 3 + LlmTimeoutBudget.NON_LLM_OVERHEAD_MS,
+                LlmTimeoutBudget.needed(600, SERIAL, 3), "each call's attempts, then the rest of the command");
+        assertTrue(LlmTimeoutBudget.needed(600, SERIAL, 3) > 1_800_000L,
+                "three attempts at 600 s would outlast the 30-minute ack threshold");
+    }
+
+    /** The shipped pairing, 600 s and 30 minutes, holds with the client's retries off: two calls of one attempt. */
+    @Test
+    void theShippedTimeoutFitsTheShippedAckAgeWithOneAttemptPerCall() {
+        assertEquals(1, LlmTimeoutBudget.ATTEMPTS_PER_CALL, "the client library makes no retries of its own");
+        assertNull(LlmTimeoutBudget.refusalFor(600, 1_800_000, SERIAL));
+        assertEquals(1_500_000L, LlmTimeoutBudget.needed(600, SERIAL));
+    }
+
     @Test
     void aThresholdEqualToTheBudgetIsRefused() {
         // The boundary case, and the one that actually shipped: 60s of LLM budget against SmallRye's
