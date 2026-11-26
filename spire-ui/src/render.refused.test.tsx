@@ -106,14 +106,11 @@ describe('the refused status vocabulary', () => {
     expect(badge).toContain('pill refused');
   });
 
-  /** Segments in the refusal's own colour, never progress: how far a cap let it get is not how far it should go. */
-  it('renders no progress, only the refusal', () => {
+  it('renders no progress, only the refusal', () => { // its own colour: how far a cap let it get is not progress
     const markup = renderToStaticMarkup(<>{miniPipeline('refused', 3)}</>);
 
-    expect(markup).toContain('Pipeline: refused');
-    expect(markup).toContain('seg st-refused');
-    expect(markup).not.toContain('seg done');
-    expect(markup).not.toContain(': done');
+    expect(markup).toMatch(/Pipeline: refused.*seg st-refused/);
+    expect(markup).not.toMatch(/seg done|: done/);
   });
 
   it('wants an operator, unlike the two Closed statuses', () => {

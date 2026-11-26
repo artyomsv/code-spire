@@ -92,3 +92,24 @@ describe('ReviewsList — the Show archived control', () => {
     expect(screen.getByLabelText(/show archived/i)).toBeChecked();
   });
 });
+
+/**
+ * A row is the list's one keyboard stop; its marks are not tab stops. So the row's own accessible name must carry the
+ * words its icons and strips dropped (status, pull request state, responding, the findings split), for a keyboard or
+ * screen-reader user who cannot hover. Enter opens the detail, where they are shown in full.
+ */
+describe('ReviewsList — the row names what its marks show', () => {
+  it('names the status, the pull request state, the reply in progress and the findings split', () => {
+    renderList([summary({ prState: 'MERGED', answering: true, findings: 3, carriedOverFindings: 1, blockerCount: 1 })]);
+
+    const row = rowFor(1);
+    expect(row).toHaveAttribute('role', 'button');
+    expect(row).toHaveAccessibleName(/Changes/);
+    expect(row).toHaveAccessibleName(/Responding to a reply…/);
+    expect(row).toHaveAccessibleName(/Pull request merged/);
+    expect(row).toHaveAccessibleName(/3 open: 2 new, 1 carried/);
+    expect(row).toHaveAccessibleName(/Pipeline: done/);
+    expect(row).toHaveAttribute('tabindex', '0');
+    expect(row.querySelectorAll('[role="img"][tabindex]')).toHaveLength(0);
+  });
+});

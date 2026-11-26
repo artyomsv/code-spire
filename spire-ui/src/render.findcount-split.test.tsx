@@ -16,10 +16,10 @@ describe('findCell — the number, with the split on hover', () => {
     expect(container.querySelector('small')).toBeNull();
   });
 
-  it('names the split on hover or focus', () => {
+  it('names the split on hover', () => {
     render(<>{findCell('completed', 7, 3)}</>);
 
-    fireEvent.focus(screen.getByText('7'));
+    fireEvent.mouseEnter(screen.getByText('7'));
     expect(screen.getByRole('tooltip')).toHaveTextContent('7 open: 4 new, 3 carried');
   });
 

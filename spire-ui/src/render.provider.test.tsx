@@ -65,7 +65,7 @@ describe('openInLabel', () => {
   });
 });
 
-/** The reviews list's Provider column: the forge's logo, named for a screen reader and on hover or focus. */
+/** The reviews list's Provider column: the forge's logo, named for a screen reader and on hover. */
 describe('ProviderIcon', () => {
   it.each([
     ['github', 'GitHub'],
@@ -79,7 +79,8 @@ describe('ProviderIcon', () => {
     expect(icon.textContent).toBe('');
     expect(icon.querySelector('svg')).not.toBeNull();
 
-    fireEvent.focus(icon);
+    expect(icon).not.toHaveAttribute('tabindex');
+    fireEvent.mouseEnter(icon);
     expect(screen.getByRole('tooltip')).toHaveTextContent(name);
   });
 

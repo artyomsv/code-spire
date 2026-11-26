@@ -126,9 +126,9 @@ export default function ReviewDetail({ reviews }: Props) {
               blockerCount: r.openBlocking ?? r.openBlockers,
               answering: r.answering,
               degraded: r.degraded,
-            })}
+            }, 0)}
             {blockingCount(r)}
-            <PrStateIcon prState={r.prState} />
+            <PrStateIcon prState={r.prState} tabIndex={0} />
             {archivedBadge(r.archivedAt)}
             <span className="sep">·</span>
             <span>@{r.author}</span>

@@ -48,8 +48,9 @@ function pipelineOf(status: ReviewStatus, stage: number): { segments: Segment[];
 }
 
 /**
- * The row's pipeline: segments only, no trailing word. Each segment names its step and state on hover or focus,
- * and the strip's accessible name says the state the word used to say ("Pipeline: skipped — checks failed").
+ * The row's pipeline: segments only, no trailing word. Each segment names its step and state on hover, and the
+ * strip's accessible name says the state the word used to say ("Pipeline: skipped — checks failed"). No segment is a
+ * tab stop: the row is, and its accessible name includes the strip's.
  */
 export function miniPipeline(status: ReviewStatus, stage: number) {
   const { segments, summary } = pipelineOf(status, stage);
@@ -67,7 +68,7 @@ export function miniPipeline(status: ReviewStatus, stage: number) {
   );
 }
 
-/** "7 open: 4 new, 3 carried": what the bare number is made of, said on hover, focus and to a screen reader. */
+/** "7 open: 4 new, 3 carried": what the bare number is made of, said on hover and to a screen reader. */
 export function findingsBreakdown(findings: number, carriedOver: number): string {
   if (findings === 0) return 'No open findings';
   const carried = Math.max(0, Math.min(carriedOver, findings));

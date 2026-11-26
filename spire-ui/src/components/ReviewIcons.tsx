@@ -7,18 +7,26 @@ import Tooltip from './Tooltip';
 
 /**
  * Icon-only marks for the reviews list and the review header (WIDGETS.md, "Compact review marks"). Each is a
- * focusable `role="img"` whose accessible name is its tooltip, so a keyboard user reads what a mouse user hovers.
+ * `role="img"` whose accessible name is its tooltip, so a screen reader reads what a mouse user hovers. In a list row
+ * a mark is not a tab stop: the row is the keyboard stop, its accessible name carries every mark's word, and Enter
+ * opens the detail where everything is shown in full. The detail header has no row to stand in for them, so it passes
+ * `tabIndex={0}` and a keyboard user opens each tooltip by focusing the mark.
  */
-interface IconMarkProps {
+interface MarkFocus {
+  /** 0 makes the mark a tab stop (the detail header); absent, it is not one (a list row). */
+  tabIndex?: 0;
+}
+
+interface IconMarkProps extends MarkFocus {
   label: string;
   className: string;
   children: ReactNode;
 }
 
-function IconMark({ label, className, children }: IconMarkProps) {
+function IconMark({ label, className, children, tabIndex }: IconMarkProps) {
   return (
     <Tooltip label={label}>
-      <span className={`icon-mark ${className}`} role="img" aria-label={label}>
+      <span className={`icon-mark ${className}`} role="img" aria-label={label} tabIndex={tabIndex}>
         {children}
       </span>
     </Tooltip>
@@ -31,9 +39,9 @@ export const RESPONDING_LABEL = 'Responding to a reply…';
  * The bot is composing a reply (`answering`). A soft pulse, not a spinner: `answering` is cleared by the reply, a
  * declined reply and a closed pull request, but a reply that dead-letters keeps it until the next review run.
  */
-export function RespondingIcon() {
+export function RespondingIcon({ tabIndex }: MarkFocus) {
   return (
-    <IconMark label={RESPONDING_LABEL} className="responding-icon">
+    <IconMark label={RESPONDING_LABEL} className="responding-icon" tabIndex={tabIndex}>
       <MessageCircle size={14} aria-hidden="true" />
     </IconMark>
   );
@@ -45,11 +53,15 @@ const PR_STATES: Record<PrState, { cls: string; Icon: LucideIcon; word: string }
   CLOSED: { cls: 'pr-closed', Icon: GitPullRequestClosed, word: 'closed' },
 };
 
+interface PrStateIconProps extends MarkFocus {
+  prState: PrState;
+}
+
 /** The pull request's own state as its icon: merged purple, open green, closed red. */
-export function PrStateIcon({ prState }: { prState: PrState }) {
+export function PrStateIcon({ prState, tabIndex }: PrStateIconProps) {
   const { cls, Icon, word } = PR_STATES[prState] ?? PR_STATES.OPEN;
   return (
-    <IconMark label={`Pull request ${word}`} className={`pr-icon ${cls}`}>
+    <IconMark label={`Pull request ${word}`} className={`pr-icon ${cls}`} tabIndex={tabIndex}>
       <Icon size={15} />
     </IconMark>
   );

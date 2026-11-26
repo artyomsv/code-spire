@@ -5,8 +5,8 @@ import { miniPipeline } from './components/ReviewRowCells';
 
 /**
  * The list's pipeline column draws segments only. The trailing word ("done", "skipped: checks failed") is gone from
- * the screen, so the strip's accessible name must carry it, and each segment names its step and state on hover or
- * focus.
+ * the screen, so the strip's accessible name must carry it, and each segment names its step and state on hover. No
+ * segment is a tab stop: the row is, and its accessible name includes the strip's.
  */
 describe('miniPipeline — segments only', () => {
   it.each<[ReviewStatus, number, string]>([
@@ -24,7 +24,7 @@ describe('miniPipeline — segments only', () => {
     expect(strip.textContent).toBe('');
   });
 
-  it('names each segment by its step and state on hover or focus', () => {
+  it('names each segment by its step and state on hover', () => {
     render(<>{miniPipeline('reviewing', 3)}</>);
 
     expect(screen.getByRole('img', { name: 'Diff: done' })).toHaveClass('done');
@@ -32,7 +32,8 @@ describe('miniPipeline — segments only', () => {
     const current = screen.getByRole('img', { name: 'Review: in progress' });
     expect(current).toHaveClass('active');
 
-    fireEvent.focus(current);
+    expect(current).not.toHaveAttribute('tabindex');
+    fireEvent.mouseEnter(current);
     expect(screen.getByRole('tooltip')).toHaveTextContent('Review: in progress');
   });
 

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from
 import { Bot, CheckCircle2, ChevronDown, MessageCircle, MessagesSquare } from 'lucide-react';
 import { fetchThreadMessages, type ReviewEvent, type ThreadMessage } from '../api';
 import { formatEventTime } from '../format';
+import { DeclinedNote, lastConversationEvent, withoutDeclines } from './ConversationDecline';
 import { MessageText } from './MessageText';
 
 interface FindingConversationProps {
@@ -9,7 +10,9 @@ interface FindingConversationProps {
   slug: string;
   pr: number;
   threadRef: string;
-  previewTurns: ReviewEvent[]; // stored events for this thread — count the toggle and supply timestamps
+  // Stored events for this thread — count the toggle and supply timestamps. A FollowUpDeclined among them is not a
+  // message: it is left out of the count and the pairing, and only ends the pending reply and says why.
+  previewTurns: ReviewEvent[];
   previewBody: ReactNode; // the ≤160-char preview exchanges, shown until (or unless) the full thread loads
   resolved?: boolean; // re-review reconciliation says this thread's finding was closed out
   // The thread's opening message is already rendered above the panel (general discussion shows the
@@ -47,10 +50,10 @@ export async function refreshThread(
   return { loadedAtCount: replyCount, messages };
 }
 
-/** The thread is "awaiting the bot's answer" when the last stored turn is a human reply the bot
- *  hasn't answered yet — a completed exchange always ends with a FollowUpGenerated (bot) turn. */
-export function isAwaitingReply(previewTurns: ReviewEvent[]): boolean {
-  return previewTurns.length > 0 && previewTurns[previewTurns.length - 1].type === 'AuthorReplied';
+/** The thread is "awaiting the bot's answer" when its last conversation event is a human reply: the bot's answer
+ *  (FollowUpGenerated) or its staying quiet (FollowUpDeclined) ends the wait. */
+export function isAwaitingReply(threadEvents: ReviewEvent[]): boolean {
+  return lastConversationEvent(threadEvents)?.type === 'AuthorReplied';
 }
 
 /**
@@ -68,7 +71,7 @@ export function FindingConversation({
   slug,
   pr,
   threadRef,
-  previewTurns,
+  previewTurns: threadEvents,
   previewBody,
   resolved,
   rootShownAbove,
@@ -77,8 +80,9 @@ export function FindingConversation({
   const [state, setState] = useState<LoadState>({ status: 'idle' });
   const [open, setOpen] = useState(false);
   const loadedAtCount = useRef<number | null>(null);
+  const previewTurns = withoutDeclines(threadEvents);
   const replyCount = previewTurns.length;
-  const awaitingReply = isAwaitingReply(previewTurns);
+  const awaitingReply = isAwaitingReply(threadEvents);
 
   useEffect(() => {
     if (!needsFetch(open, loadedAtCount.current, replyCount)) return;
@@ -134,6 +138,7 @@ export function FindingConversation({
       ) : (
         previewBody
       )}
+      <DeclinedNote threadEvents={threadEvents} />
     </details>
   );
 }

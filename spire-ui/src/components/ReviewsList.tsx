@@ -170,6 +170,9 @@ export default function ReviewsList({ reviews, loading, error, showArchived, onS
             rows.map((r) => {
               const cost = costCell(r);
               return (
+                // The row is the one keyboard stop: its marks are not, and its accessible name (from its content,
+                // the marks' and the pipeline's labels included) carries the words they dropped. Enter opens the
+                // detail, where everything is shown in full (WIDGETS.md, "Compact review marks").
                 <div
                   key={r.id}
                   className={`row ${r.status === 'superseded' || r.archivedAt ? 'faded' : ''}`}

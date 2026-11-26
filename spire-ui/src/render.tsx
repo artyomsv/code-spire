@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Archive, Bot, CheckCircle2, Cpu, MessageSquare } from 'lucide-react';
 import { FindingConversation } from './components/FindingConversation';
+import { DeclinedNote, threadEventsOf, withoutDeclines } from './components/ConversationDecline';
 import { MessageText } from './components/MessageText';
 import { RespondingIcon } from './components/ReviewIcons';
 import { RiOpenaiFill } from 'react-icons/ri';
@@ -246,14 +247,15 @@ export function outcomeBadge(status: ReviewStatus, findings: number, blockerCoun
 
 /**
  * The status cell: one outcome badge, and the responding icon while the bot is composing a reply. Shared by the
- * reviews-list row and the detail header so both gate it the same way.
+ * reviews-list row and the detail header so both gate it the same way; the header passes `tabIndex` 0, since it has
+ * no row to be the keyboard stop (ReviewIcons).
  */
 export function statusCell(r: { status: ReviewStatus; findings: number; blockerCount: number;
-                                answering?: boolean; degraded?: boolean }) {
+                                answering?: boolean; degraded?: boolean }, tabIndex?: 0) {
   return (
     <>
       {outcomeBadge(r.status, r.findings, r.blockerCount, r.degraded)}
-      {r.answering && <RespondingIcon />}
+      {r.answering && <RespondingIcon tabIndex={tabIndex} />}
     </>
   );
 }
@@ -367,11 +369,9 @@ function reconciliationRows(reconciliation: ReconciliationItem[], ownedThreads: 
 /** One findings-list row — a severity badge, location, message, status badge (with a check icon
  *  once closed) and the existing per-finding conversation toggle. */
 function findingRow(r: ReviewDetail, row: FindingRow) {
-  const turns = row.threadRef
-    ? r.events.filter(
-        (e: ReviewEvent) => e.threadRef === row.threadRef && (e.type === 'AuthorReplied' || e.type === 'FollowUpGenerated'),
-      )
-    : [];
+  // Declines ride along so the panel ends a reply the bot stayed quiet on (PR #457); they are not turns.
+  const threadEvents = row.threadRef ? threadEventsOf(r.events, row.threadRef) : [];
+  const turns = withoutDeclines(threadEvents);
   // A reconciliation verdict posts a reply into the thread ON THE SCM but stores no conversation turn
   // (only a ThreadReplied/ThreadResolved marker), so without this the bot's "still open after <sha>"
   // reply was unreachable from the UI — the panel only appeared once a human had started a discussion.
@@ -413,7 +413,7 @@ function findingRow(r: ReviewDetail, row: FindingRow) {
             slug={r.slug}
             pr={r.pr}
             threadRef={row.threadRef}
-            previewTurns={turns}
+            previewTurns={threadEvents}
             previewBody={
               turns.length > 0 ? (
                 conversationExchangesBody(turns)
@@ -732,17 +732,20 @@ export function generalDiscussionCard(r: ReviewDetail) {
           // A thread the bot didn't start has no finding to nest under, so its location is the only
           // thing distinguishing "someone commented on line 9" from a general PR discussion.
           const loc = group.find((t) => t.loc)?.loc;
+          // The thread's declines too, after the opener (a decline always follows a reply): they end a pending reply.
+          const afterOpener = threadEventsOf(r.events, threadRef).slice(1);
           return (
             <div key={threadRef} className="general-thread">
               {loc && <div className="general-thread-loc">{loc}</div>}
               {conversationExchangesBody([opening])}
+              {replies.length === 0 && <DeclinedNote threadEvents={afterOpener} />}
               {replies.length > 0 && (
                 <FindingConversation
                   workspace={r.workspace}
                   slug={r.slug}
                   pr={r.pr}
                   threadRef={threadRef}
-                  previewTurns={replies}
+                  previewTurns={afterOpener}
                   previewBody={conversationExchangesBody(replies)}
                   rootShownAbove
                   openerPreview={opening.det}

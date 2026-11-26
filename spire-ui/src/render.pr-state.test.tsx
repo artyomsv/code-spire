@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { PrState } from './api';
 import { PrStateIcon } from './components/ReviewIcons';
@@ -19,7 +19,20 @@ describe('PrStateIcon', () => {
     expect(icon).toHaveClass(cls);
     expect(icon).not.toHaveTextContent(/open|merged|closed/i);
 
-    fireEvent.focus(icon);
+    expect(icon).not.toHaveAttribute('tabindex'); // a list row is the keyboard stop, not its marks
+
+    fireEvent.mouseEnter(icon);
     expect(screen.getByRole('tooltip')).toHaveTextContent(name);
+  });
+
+  /** The detail header has no row to stand in for its marks, so there they are tab stops and open on focus. */
+  it('is a tab stop in the detail header, and its tooltip opens on focus', () => {
+    render(<PrStateIcon prState="MERGED" tabIndex={0} />);
+
+    const icon = screen.getByRole('img', { name: 'Pull request merged' });
+    act(() => icon.focus()); // real focus: the mark is a tab stop here
+
+    expect(document.activeElement).toBe(icon);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Pull request merged');
   });
 });

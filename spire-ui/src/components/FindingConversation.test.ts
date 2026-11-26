@@ -153,4 +153,12 @@ describe('isAwaitingReply', () => {
   it('is false when the exchange ends with the bot answering', () => {
     expect(isAwaitingReply([turn('AuthorReplied'), turn('FollowUpGenerated')])).toBe(false);
   });
+
+  it('is false when the bot declined the last reply', () => {
+    expect(isAwaitingReply([turn('AuthorReplied'), turn('FollowUpDeclined')])).toBe(false);
+  });
+
+  it('is true again when a reply follows a decline', () => {
+    expect(isAwaitingReply([turn('AuthorReplied'), turn('FollowUpDeclined'), turn('AuthorReplied')])).toBe(true);
+  });
 });
