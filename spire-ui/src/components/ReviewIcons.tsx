@@ -18,7 +18,7 @@ interface IconMarkProps {
 function IconMark({ label, className, children }: IconMarkProps) {
   return (
     <Tooltip label={label}>
-      <span className={`icon-mark ${className}`} role="img" aria-label={label} tabIndex={0}>
+      <span className={`icon-mark ${className}`} role="img" aria-label={label}>
         {children}
       </span>
     </Tooltip>

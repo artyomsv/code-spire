@@ -59,7 +59,7 @@ export function miniPipeline(status: ReviewStatus, stage: number) {
         const label = `${ROW_STEPS[i]}: ${s.word}`;
         return (
           <Tooltip key={ROW_STEPS[i]} label={label} className="mini-step">
-            <span className={`seg ${s.cls}`} role="img" aria-label={label} tabIndex={0}></span>
+            <span className={`seg ${s.cls}`} role="img" aria-label={label}></span>
           </Tooltip>
         );
       })}
@@ -89,7 +89,7 @@ export function findCell(status: ReviewStatus, findings: number, carriedOver = 0
   const breakdown = findingsBreakdown(findings, carriedOver);
   return (
     <Tooltip label={breakdown}>
-      <span className={`findcount ${findings === 0 ? 'zero' : 'some'} tnum`} tabIndex={0}>
+      <span className={`findcount ${findings === 0 ? 'zero' : 'some'} tnum`}>
         {findings}
         <span className="sr-only">{` — ${breakdown}`}</span>
       </span>
