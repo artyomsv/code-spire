@@ -2771,7 +2771,7 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   flag. A reply that dead-letters still keeps the mark until the next review run.
   The operator also found the reviews list's badges too wide. The Status column is one badge, with a pulsing icon
   for "responding"; PR state and provider are icons (lucide state icons, the forges' logos from `react-icons`, already
-  a dependency); the Pipeline column draws segments only, each naming its step and state on hover or focus, and the
+  a dependency); the Pipeline column draws segments only, each naming its step and state on hover (and in its `aria-label`), and the
   strip's accessible name carries the state its dropped word said; Findings is the number only, its new and carried
   split in the tooltip and in screen-reader text. The review header uses the same status cell and PR state icon. The
   widgets are `ReviewIcons` and `ReviewRowCells` (WIDGETS.md). Analytics keeps its text platform badge.
