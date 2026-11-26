@@ -123,9 +123,8 @@ public class HarnessReplyLaunch {
     /** Persisted under the thread, so the conversation shows why no answer came; and the "responding" pill clears. */
     private void said(HarnessReplyPrepared prepared, String type, String detail) {
         projection.appendEvent(prepared.reviewId(), "result", type, detail, prepared.threadRef().value());
-        answering.finish(new ReplyKey(prepared.reviewId(), prepared.triggeringCommentId()));
-        // The line is new even when no mark changed (a close already removed the reply): broadcast it (PR #457).
-        projection.touch(prepared.reviewId());
+        // The line is new even when no mark changed (a close already removed the reply): broadcast once (PR #457).
+        answering.finishAndBroadcast(new ReplyKey(prepared.reviewId(), prepared.triggeringCommentId()));
     }
 
     private ReviewRunRequest request(OnHarness onHarness, HarnessReplyPrepared prepared) {

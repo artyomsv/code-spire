@@ -130,6 +130,12 @@ final class HarnessSagaFakes {
             }
 
             @Override
+            public void finishAndBroadcast(ReplyKey reply) {
+                finish(reply);
+                projection.touch(reply.reviewId());
+            }
+
+            @Override
             public void finish(ReplyKey reply, dev.codespire.orchestrator.readmodel.EventLine ending) {
                 finish(reply);
                 projection.appendEvent(ending);

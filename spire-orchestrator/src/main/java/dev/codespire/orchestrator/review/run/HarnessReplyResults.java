@@ -103,16 +103,16 @@ public class HarnessReplyResults {
         String why = "harness reply refused: " + reason;
         timeline.record("result", "refused:HarnessReply", binding.reviewId(), reason);
         projection.appendEvent(binding.reviewId(), "result", "FollowUpRefused", why, call.threadRef());
-        answering.finish(new ReplyKey(binding.reviewId(), call.triggeringCommentId()));
-        projection.touch(binding.reviewId()); // the line is new even when no mark changed (PR #457)
+        // The line is new even when no mark changed: broadcast once (PR #457).
+        answering.finishAndBroadcast(new ReplyKey(binding.reviewId(), call.triggeringCommentId()));
         LOG.warnf("Harness reply on %s thread %s refused: %s", binding.reviewId(), call.threadRef(), reason);
     }
 
     private void fail(ReviewRunBinding binding, ReplyCall call, String why) {
         timeline.record("result", "failed:HarnessReply", binding.reviewId(), why);
         projection.appendEvent(binding.reviewId(), "result", "FollowUpFailed", why, call.threadRef());
-        answering.finish(new ReplyKey(binding.reviewId(), call.triggeringCommentId()));
-        projection.touch(binding.reviewId()); // the line is new even when no mark changed (PR #457)
+        // The line is new even when no mark changed: broadcast once (PR #457).
+        answering.finishAndBroadcast(new ReplyKey(binding.reviewId(), call.triggeringCommentId()));
         LOG.warnf("Harness reply on %s thread %s got no answer: %s", binding.reviewId(), call.threadRef(), why);
     }
 }

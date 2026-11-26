@@ -203,6 +203,12 @@ class HarnessReplyResultsTest {
             public void finish(ReplyKey reply) {
                 answering.add(reply.commentId());
             }
+
+            @Override
+            public void finishAndBroadcast(ReplyKey reply) {
+                finish(reply);
+                touched.add(reply.reviewId());
+            }
         };
     }
 

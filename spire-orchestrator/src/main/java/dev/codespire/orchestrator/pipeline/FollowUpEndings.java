@@ -43,8 +43,7 @@ public class FollowUpEndings {
             projection.setAnswering(e.reviewId(), false);
             return;
         }
-        answering.finish(new ReplyKey(e.reviewId(), e.triggeringCommentId()));
-        projection.touch(e.reviewId());
+        answering.finishAndBroadcast(new ReplyKey(e.reviewId(), e.triggeringCommentId()));
     }
 
     /**

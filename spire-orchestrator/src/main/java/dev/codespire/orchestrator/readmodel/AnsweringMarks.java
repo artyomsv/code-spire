@@ -69,6 +69,15 @@ public class AnsweringMarks {
     }
 
     /**
+     * This reply ended and its caller recorded a line for it elsewhere (a posted answer, a harness refusal or failure),
+     * so the review changed even when no row or flag did: it is broadcast exactly once, whatever the write changed.
+     */
+    public void finishAndBroadcast(ReplyKey reply) {
+        write(new Change(REMOVE, reply, null));
+        projection.touch(reply.reviewId());
+    }
+
+    /**
      * This reply ended: its row goes, and the mark clears when no other reply is outstanding. {@code ending} is
      * inserted only when this call removed the row, in the same transaction, so a result for a reply already finished,
      * or one cleared with the rest (a close, a new run), records and changes nothing, and a failed insert leaves the
