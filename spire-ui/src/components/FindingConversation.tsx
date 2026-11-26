@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from
 import { Bot, CheckCircle2, ChevronDown, MessageCircle, MessagesSquare } from 'lucide-react';
 import { fetchThreadMessages, type ReviewEvent, type ThreadMessage } from '../api';
 import { formatEventTime } from '../format';
-import { DeclinedNote, lastConversationEvent, withoutDeclines } from './ConversationDecline';
+import { DeclinedNote, hasPendingReply, withoutDeclines } from './ConversationDecline';
 import { MessageText } from './MessageText';
 
 interface FindingConversationProps {
@@ -50,10 +50,10 @@ export async function refreshThread(
   return { loadedAtCount: replyCount, messages };
 }
 
-/** The thread is "awaiting the bot's answer" when its last conversation event is a human reply: the bot's answer
- *  (FollowUpGenerated) or its staying quiet (FollowUpDeclined) ends the wait. */
+/** The thread is "awaiting the bot's answer" while a human reply since the bot's last answer (FollowUpGenerated) has
+ *  not been ended by its own decline (FollowUpDeclined): one decline ends one reply. */
 export function isAwaitingReply(threadEvents: ReviewEvent[]): boolean {
-  return lastConversationEvent(threadEvents)?.type === 'AuthorReplied';
+  return hasPendingReply(threadEvents);
 }
 
 /**

@@ -161,4 +161,14 @@ describe('isAwaitingReply', () => {
   it('is true again when a reply follows a decline', () => {
     expect(isAwaitingReply([turn('AuthorReplied'), turn('FollowUpDeclined'), turn('AuthorReplied')])).toBe(true);
   });
+
+  /** A late decline of the first of two replies: the second still waits (code-quality/M-1). */
+  it('is true while a second reply waits after the first one is declined', () => {
+    expect(isAwaitingReply([turn('AuthorReplied'), turn('AuthorReplied'), turn('FollowUpDeclined')])).toBe(true);
+  });
+
+  it('is false once each reply since the last answer has its decline', () => {
+    const declined = [turn('AuthorReplied'), turn('AuthorReplied'), turn('FollowUpDeclined'), turn('FollowUpDeclined')];
+    expect(isAwaitingReply(declined)).toBe(false);
+  });
 });

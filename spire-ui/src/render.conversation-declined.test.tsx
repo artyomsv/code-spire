@@ -49,6 +49,18 @@ describe("a finding's conversation", () => {
     expect(html).not.toContain('Not answered');
     expect(html).toContain('2 replies');
   });
+
+  /** The first reply's decline lands after a second reply was asked: the second is still being answered. */
+  it('stays pending when a decline of an earlier reply lands after a later one', () => {
+    const html = findingThread([
+      ev('AuthorReplied', '@a: why?', 'c1', 'finding'),
+      ev('AuthorReplied', '@b: @bot why?', 'c1', 'finding'),
+      ev('FollowUpDeclined', DECLINED, 'c1', 'finding'),
+    ]);
+
+    expect(html).toContain('responding…');
+    expect(html).not.toContain('Not answered');
+  });
 });
 
 describe('a general discussion thread', () => {
