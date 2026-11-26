@@ -119,7 +119,7 @@ describe('ReviewsList — the row names what its marks show', () => {
 /**
  * A sighted keyboard user cannot hover the marks, and the row, not each mark, is the tab stop. So the row carries one
  * line with the marks' words, which index.css shows only while the row has keyboard focus (`.row:focus-visible`).
- * The last case applies index.css and reads the line's computed display around a Tab key and focus.
+ * The last cases apply index.css: the line's own rules, and its computed style around focus.
  */
 describe('ReviewsList — the row shows its marks\' words on keyboard focus', () => {
   it('holds one line with every dropped word, hidden from assistive technology, and stays the only stop', () => {
@@ -145,38 +145,84 @@ describe('ReviewsList — the row shows its marks\' words on keyboard focus', ()
   });
 
   /**
-   * With index.css applied to the page: hidden, shown after a Tab moves focus onto the row, hidden once focus leaves.
-   * jsdom matches `:focus-visible` on a Tab key event, as a browser does, and keeps computed styles until the DOM
-   * changes, which a focus move is not; `displayOf` changes an attribute first so each read is computed afresh.
+   * The rules index.css gives the line, read from the parsed stylesheet: one reveal rule on the row's
+   * `:focus-visible`, and no rule that clips, shrinks or hides it (as `.sr-only` would).
    */
-  it('is shown by the applied stylesheet only while the row has keyboard focus', () => {
-    const sheet = document.createElement('style');
-    sheet.textContent = readFileSync(join(process.cwd(), 'src', 'index.css'), 'utf8');
-    document.head.append(sheet);
-    try {
+  it('is revealed by one focus-visible rule, and no rule of the line clips or hides it', () => {
+    const rules = withStylesheet((sheet) => lineRules(sheet.cssRules));
+
+    const reveal = rules.filter((rule) => rule.selectorText === '.row:focus-visible .row-focus-summary');
+    expect(reveal).toHaveLength(1);
+    expect(reveal[0].style.display).toBe('block');
+    for (const rule of rules) expectUnclipped(rule.style);
+  });
+
+  /**
+   * With index.css applied, the line is hidden, shown while the row has focus, and hidden once focus leaves, and while
+   * shown its computed style is neither clipped nor shrunk. jsdom 31 matches `:focus-visible` on any focus (it does
+   * not tell a Tab from a click), so this proves the rule applies to the focused row, not that a click leaves it hidden.
+   * jsdom keeps computed styles until the DOM changes; `styleOf` changes an attribute first so each read is fresh.
+   */
+  it('is shown, unclipped, by the applied stylesheet only while the row has focus', () => {
+    withStylesheet(() => {
       renderList([summary({ answering: true, findings: 3, carriedOverFindings: 1 })]);
       const row = rowFor(1);
       const line = row.querySelector('.row-focus-summary') as HTMLElement;
-      expect(displayOf(line)).toBe('none');
+      expect(row.tabIndex).toBe(0);
+      expect(row).toHaveAttribute('role', 'button');
+      expect(line).not.toHaveClass('sr-only');
+      expect(styleOf(line).display).toBe('none');
 
-      fireEvent.keyDown(document.body, { key: 'Tab' });
       row.focus();
       expect(document.activeElement).toBe(row);
-      expect(displayOf(line)).toBe('block');
-      expect(line).toHaveTextContent('Responding to a reply…');
+      expect(styleOf(line).display).toBe('block');
+      expectUnclipped(styleOf(line));
+      expect(line).toHaveTextContent('Responding to a reply… · Pull request open · GitHub · Pipeline: done');
       expect(line).toHaveTextContent('3 open: 2 new, 1 carried');
 
       row.blur();
-      expect(displayOf(line)).toBe('none');
-    } finally {
-      sheet.remove();
-    }
+      expect(styleOf(line).display).toBe('none');
+    });
   });
 });
 
+function withStylesheet<T>(use: (sheet: CSSStyleSheet) => T): T {
+  const element = document.createElement('style');
+  element.textContent = readFileSync(join(process.cwd(), 'src', 'index.css'), 'utf8');
+  document.head.append(element);
+  try {
+    return use(element.sheet as CSSStyleSheet);
+  } finally {
+    element.remove();
+  }
+}
+
+/** Every style rule of the sheet that names the focus line, nested ones included. */
+function lineRules(rules: CSSRuleList): CSSStyleRule[] {
+  return Array.from(rules).flatMap((rule) => {
+    if ('selectorText' in rule) {
+      const styleRule = rule as CSSStyleRule;
+      return styleRule.selectorText.includes('row-focus-summary') ? [styleRule] : [];
+    }
+    return 'cssRules' in rule ? lineRules((rule as CSSGroupingRule).cssRules) : [];
+  });
+}
+
+/** What `.sr-only` and its kind do to hide text from sight: clip it, shrink it, take it out of flow, or hide it. */
+function expectUnclipped(style: CSSStyleDeclaration): void {
+  const value = (property: string) => style.getPropertyValue(property);
+  expect(['', 'auto']).toContain(value('clip'));
+  expect(['', 'none']).toContain(value('clip-path'));
+  expect(['absolute', 'fixed']).not.toContain(value('position'));
+  expect(['1px', '0px', '0']).not.toContain(value('width'));
+  expect(['1px', '0px', '0']).not.toContain(value('height'));
+  expect(['hidden', 'collapse']).not.toContain(value('visibility'));
+  expect(value('overflow')).not.toBe('hidden');
+}
+
 let restyles = 0;
 
-function displayOf(element: HTMLElement): string {
+function styleOf(element: HTMLElement): CSSStyleDeclaration {
   document.body.setAttribute('data-restyle', String((restyles += 1)));
-  return getComputedStyle(element).display;
+  return getComputedStyle(element);
 }
