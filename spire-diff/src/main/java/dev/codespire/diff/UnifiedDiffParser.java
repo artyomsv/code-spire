@@ -28,9 +28,7 @@ public final class UnifiedDiffParser {
     // @@ -oldStart[,oldCount] +newStart[,newCount] @@ [section]
     private static final Pattern HUNK_HEADER =
             Pattern.compile("^@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@ ?(.*)");
-    // Greedy on purpose; see splitDiffGitPaths for the " b/"-in-path handling.
-    private static final Pattern DIFF_GIT = Pattern.compile("^diff --git a/(.+) b/(.+)$");
-    private static final String DIFF_GIT_PREFIX = "diff --git ";
+    private static final String DIFF_GIT_PREFIX = DiffGitHeader.PREFIX;
     private static final String OLD_PATH_PREFIX = "--- ";
     private static final String NEW_PATH_PREFIX = "+++ ";
     private static final String HUNK_PREFIX = "@@";
@@ -99,7 +97,7 @@ public final class UnifiedDiffParser {
 
     /** A git-style section: the header block starts on the line after {@code diff --git}. */
     private static Section gitSectionAt(String[] lines, int i) {
-        String[] paths = splitDiffGitPaths(lines[i]);
+        String[] paths = DiffGitHeader.paths(lines[i]);
         return paths == null ? null : new Section(i + 1, paths[0], paths[1]);
     }
 
@@ -146,36 +144,6 @@ public final class UnifiedDiffParser {
                         + " First line: "
                         + (first.length() <= MAX_LOGGED_LINE ? first
                                 : first.substring(0, MAX_LOGGED_LINE) + "…"));
-    }
-
-    /**
-     * Splits the "diff --git a/X b/Y" header into {oldPath, newPath}, or null
-     * when the line is not such a header. Paths are identical except for
-     * renames/copies, so when the remainder admits an equal split we prefer it —
-     * the greedy regex mis-splits paths that themselves contain " b/" (this only
-     * matters for binary files; text files get their paths from ---/+++ lines).
-     */
-    private static String[] splitDiffGitPaths(String line) {
-        if (line.startsWith(DIFF_GIT_PREFIX) && line.indexOf('"', DIFF_GIT_PREFIX.length()) >= 0) {
-            // Git C-quotes a path with a control, quote, backslash or non-ASCII byte; the regex reads neither form.
-            String[] quoted = GitQuotedPath.splitQuotedPair(line.substring(DIFF_GIT_PREFIX.length()));
-            if (quoted != null) {
-                return quoted;
-            }
-        }
-        Matcher m = DIFF_GIT.matcher(line);
-        if (!m.matches()) {
-            return null;
-        }
-        String rest = line.substring(DIFF_GIT_PREFIX.length());
-        int pathLength = (rest.length() - 5) / 2; // "a/" + path + " b/" + path
-        if (rest.length() >= 7 && (rest.length() - 5) % 2 == 0) {
-            String candidate = rest.substring(2, 2 + pathLength);
-            if (rest.substring(2 + pathLength).equals(" b/" + candidate)) {
-                return new String[]{candidate, candidate};
-            }
-        }
-        return new String[]{m.group(1), m.group(2)};
     }
 
     /** Advances to the next line a section starts on (or the end of input). */
