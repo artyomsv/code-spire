@@ -65,6 +65,10 @@ class ReplyEndingBroadcastsIT {
     @Inject
     DataSource dataSource;
 
+    /** The application's own timeline; its entries are not counted. */
+    @Inject
+    TimelineBroadcaster timeline;
+
     private final List<String> frames = new ArrayList<>();
     private ReviewProjection projection;
     private AnsweringMarks marks;
@@ -128,14 +132,47 @@ class ReplyEndingBroadcastsIT {
     /** A close removed the reply's row first: the ending writes no row or flag, and its new line is pushed once. */
     @Test
     void aFailureAfterACloseRemovedTheReplyIsStillPushedOnce() {
-        String reviewId = outstanding(5, A);
-        injected.setAnswering(reviewId, false);
+        String reviewId = closed(5, A);
 
         results().accept(failed(), binding(reviewId));
 
-        assertEnded(reviewId, A);
         assertFalse(answering(reviewId));
         assertEquals(1, lines(reviewId, "FollowUpFailed"));
+        assertEquals(1, frames.size(), frames.toString());
+    }
+
+    @Test
+    void aRefusedResultAfterACloseRemovedTheReplyIsStillPushedOnce() {
+        String reviewId = closed(8, A);
+
+        results().accept(new RunResult.RunFailed(RUN_ID, "BAD_COMMAND",
+                "IllegalStateException: fork_requires_credential_proxy", false, null, List.of()), binding(reviewId));
+
+        assertFalse(answering(reviewId));
+        assertEquals(1, lines(reviewId, "FollowUpRefused"));
+        assertEquals(1, frames.size(), frames.toString());
+    }
+
+    @Test
+    void aRefusedLaunchAfterACloseRemovedBothRepliesIsStillPushedOnce() {
+        String reviewId = closed(9, A, B);
+
+        launch().launch(new HarnessReplyPrepared(reviewId, 9, "TEST-head-9", THREAD, A, 1, INPUTS));
+
+        assertEquals(0, rows(reviewId, B), "the close removed B too");
+        assertFalse(answering(reviewId));
+        assertEquals(1, lines(reviewId, "FollowUpRefused"));
+        assertEquals(1, frames.size(), frames.toString());
+    }
+
+    @Test
+    void aPostedAnswerAfterACloseRemovedTheReplyIsStillPushedOnce() {
+        String reviewId = closed(10, A);
+
+        FollowUpEndingsWiring.over(projection, marks).posted(
+                new FollowUpPosted(reviewId, THREAD, "TEST-answer-A", true, A));
+
+        assertFalse(answering(reviewId));
         assertEquals(1, frames.size(), frames.toString());
     }
 
@@ -176,12 +213,24 @@ class ReplyEndingBroadcastsIT {
         return reviewId;
     }
 
+    /** As {@link #outstanding}, then closed by the real clear: every reply's row is gone before the ending runs. */
+    private String closed(long prId, String... comments) {
+        String reviewId = outstanding(prId, comments);
+        injected.setAnswering(reviewId, false);
+        for (String comment : comments) {
+            assertEnded(reviewId, comment);
+        }
+        assertFalse(answering(reviewId), "the close took the mark down");
+        frames.clear();
+        return reviewId;
+    }
+
     /** The launch's refusal path: the registered review names no repository, so it has no harness. */
     private HarnessReplyLaunch launch() {
         HarnessReplyLaunch launch = new HarnessReplyLaunch();
         launch.projection = projection;
         launch.answering = marks;
-        launch.timeline = silentTimeline();
+        launch.timeline = timeline;
         return launch;
     }
 
@@ -189,7 +238,7 @@ class ReplyEndingBroadcastsIT {
         HarnessReplyResults results = new HarnessReplyResults();
         results.projection = projection;
         results.answering = marks;
-        results.timeline = silentTimeline();
+        results.timeline = timeline;
         results.runRows = new FactoryRunProjection() {
             @Override
             public Optional<String> harnessOf(String runId) {
@@ -197,14 +246,6 @@ class ReplyEndingBroadcastsIT {
             }
         };
         return results;
-    }
-
-    private static TimelineBroadcaster silentTimeline() {
-        return new TimelineBroadcaster() {
-            @Override
-            public void record(String lane, String type, String reviewId, String detail) {
-            }
-        };
     }
 
     private static RunResult.RunFailed failed() {

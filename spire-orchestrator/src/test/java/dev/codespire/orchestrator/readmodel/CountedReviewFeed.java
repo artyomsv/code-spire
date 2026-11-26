@@ -22,7 +22,7 @@ import java.util.stream.Stream;
  * A real {@link ReviewProjection} and a real {@link AnsweringMarks} over it, both on the test's Postgres, with one
  * dashboard connected to {@code /api/ws/reviews} whose frames land in a list (qa/M-2, review of PR #457). Every write,
  * {@code touch} and {@code broadcast} included, runs as in production; only the socket is a stand-in, so a test counts
- * what an open dashboard receives. A fresh instance rather than the injected projection: that one is a client proxy,
+ * what an open dashboard receives, one frame per subscribed send. A fresh instance rather than the injected projection: that one is a client proxy,
  * and a field set on it never reaches the instance its calls delegate to.
  */
 @Singleton
@@ -80,7 +80,7 @@ public class CountedReviewFeed {
     }
 
     /** Only what {@code ReviewProjection.push} calls is answered; anything else fails the test. */
-    private static WebSocketConnection socket(List<String> frames) {
+    static WebSocketConnection socket(List<String> frames) {
         HandshakeRequest handshake = proxy(HandshakeRequest.class, (self, method, args) -> {
             if ("path".equals(method.getName())) {
                 return REVIEWS_SOCKET;
@@ -94,9 +94,12 @@ public class CountedReviewFeed {
         });
     }
 
+    /**
+     * Records the frame inside the subscription, as the transport writes it: Quarkus's {@code sendText} only builds a
+     * lazy {@code Uni}, so a send never subscribed counts nothing and one subscribed twice counts twice.
+     */
     private static Uni<Void> sent(List<String> frames, String frame) {
-        frames.add(frame);
-        return Uni.createFrom().voidItem();
+        return Uni.createFrom().voidItem().invoke(() -> frames.add(frame));
     }
 
     private static <T> T proxy(Class<T> type, InvocationHandler handler) {
