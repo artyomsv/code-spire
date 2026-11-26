@@ -1,3 +1,4 @@
+import { render, screen } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { findingsCard, generalDiscussionCard } from './render';
@@ -84,5 +85,33 @@ describe('a general discussion thread', () => {
 
     expect(html).toContain('responding…');
     expect(html).not.toContain('Not answered');
+  });
+});
+
+/**
+ * The conversation panel starts closed, and static markup emits a closed panel's content as if it were shown. So the
+ * note's visibility is asserted on a real DOM: it must be readable without opening the panel (PR #457).
+ */
+describe('the decline note while the conversation panel is closed', () => {
+  it('is visible under a finding', () => {
+    const finding = { sev: 'warning', loc: 'src/App.java:9', msg: 'TEST-finding', threadRef: 'c1' } as Finding;
+    const events = [ev('AuthorReplied', '@a: why?', 'c1', 'finding'), ev('FollowUpDeclined', DECLINED, 'c1', 'finding')];
+    render(<>{findingsCard({ status: 'completed', findings: 1, findingsList: [finding], events } as unknown as ReviewDetail)}</>);
+
+    expect(screen.getByText('1 reply').closest('details')).not.toHaveAttribute('open');
+    expect(screen.getByText(NOTE)).toBeVisible();
+  });
+
+  it('is visible under a general discussion thread with replies', () => {
+    const events = [
+      ev('AuthorReplied', '@a: overall?', 'm1', 'mention'),
+      ev('FollowUpGenerated', 'It is fine.', 'm1', 'mention'),
+      ev('AuthorReplied', '@b: and this?', 'm1', 'mention'),
+      ev('FollowUpDeclined', DECLINED, 'm1', 'mention'),
+    ];
+    render(<>{generalDiscussionCard({ events, findingsList: [] } as unknown as ReviewDetail)}</>);
+
+    expect(screen.getByText('2 replies').closest('details')).not.toHaveAttribute('open');
+    expect(screen.getByText(NOTE)).toBeVisible();
   });
 });

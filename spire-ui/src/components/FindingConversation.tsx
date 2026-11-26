@@ -111,35 +111,38 @@ export function FindingConversation({
     setOpen(e.currentTarget.open);
   }
 
+  // The decline note sits after the panel, not in it: the panel starts closed, and the note says why no answer came.
   return (
-    <details className={`finding-convo${resolved ? ' convo-resolved' : ''}`} onToggle={handleToggle}>
-      <summary>
-        {resolved ? (
-          <CheckCircle2 size={14} className="finding-convo-icon" aria-hidden="true" />
+    <>
+      <details className={`finding-convo${resolved ? ' convo-resolved' : ''}`} onToggle={handleToggle}>
+        <summary>
+          {resolved ? (
+            <CheckCircle2 size={14} className="finding-convo-icon" aria-hidden="true" />
+          ) : (
+            <MessagesSquare size={14} className="finding-convo-icon" aria-hidden="true" />
+          )}
+          {/* With no stored conversation turn the thread still holds the bot's reconciliation reply on
+              the SCM, so offer to open it rather than claiming "0 replies". */}
+          <span>{replyCount > 0 ? `${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}` : 'View thread'}</span>
+          {awaitingReply && (
+            <span className="responding" title="Awaiting the bot's reply">
+              <MessageCircle size={11} aria-hidden="true" />
+              responding…
+            </span>
+          )}
+          <ChevronDown size={14} className="finding-convo-chevron" aria-hidden="true" />
+        </summary>
+        {state.status === 'loaded' ? (
+          <ThreadMessages messages={state.messages} previewTurns={previewTurns} rootShownAbove={rootShownAbove}
+            openerPreview={openerPreview} />
+        ) : state.status === 'loading' ? (
+          <div className="convo-note">Loading full conversation…</div>
         ) : (
-          <MessagesSquare size={14} className="finding-convo-icon" aria-hidden="true" />
+          previewBody
         )}
-        {/* With no stored conversation turn the thread still holds the bot's reconciliation reply on
-            the SCM, so offer to open it rather than claiming "0 replies". */}
-        <span>{replyCount > 0 ? `${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}` : 'View thread'}</span>
-        {awaitingReply && (
-          <span className="responding" title="Awaiting the bot's reply">
-            <MessageCircle size={11} aria-hidden="true" />
-            responding…
-          </span>
-        )}
-        <ChevronDown size={14} className="finding-convo-chevron" aria-hidden="true" />
-      </summary>
-      {state.status === 'loaded' ? (
-        <ThreadMessages messages={state.messages} previewTurns={previewTurns} rootShownAbove={rootShownAbove}
-          openerPreview={openerPreview} />
-      ) : state.status === 'loading' ? (
-        <div className="convo-note">Loading full conversation…</div>
-      ) : (
-        previewBody
-      )}
+      </details>
       <DeclinedNote threadEvents={threadEvents} />
-    </details>
+    </>
   );
 }
 
