@@ -583,32 +583,9 @@ public class ResultSaga {
                     + "— findings beyond the cut were never produced. Re-run it; if it repeats, raise "
                     + "the model's output cap.";
         }
-        if (result.truncated() && !result.omittedFiles().isEmpty()) {
-            return partialNote(result.omittedFiles());
-        }
-        if (result.truncated()) {
-            return "Diff exceeded the review budget — partial review "
-                    + "(changes beyond the token limit were not reviewed).";
-        }
-        return null;
+        return PartialReviewSentence.of(result);
     }
 
-    /** As many paths as the posted summary lists, then a count, so the dashboard and the pull request agree. */
-    private static final int MAX_LISTED_OMITTED = 20;
-
-    /** The sentence for a clipped diff, naming the files the model did not fully see (review input limit). */
-    static String partialNote(List<String> omittedFiles) {
-        int listed = Math.min(MAX_LISTED_OMITTED, omittedFiles.size());
-        StringBuilder note = new StringBuilder("Diff exceeded the review input limit (the model's input window or ")
-                .append("the Review diff limit setting) — partial review. The model did not fully see ")
-                .append(omittedFiles.size()).append(omittedFiles.size() == 1 ? " file: " : " files: ")
-                .append(String.join(", ", omittedFiles.subList(0, listed)));
-        int more = omittedFiles.size() - listed;
-        if (more > 0) {
-            note.append(" and ").append(more).append(" more");
-        }
-        return note.append('.').toString();
-    }
     /**
      * Bounded auto-retry (C8). A retryable failure with budget left restarts the
      * pipeline from FetchDiff (same as a manual re-push, but automatic and
