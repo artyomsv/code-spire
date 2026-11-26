@@ -2765,10 +2765,20 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   1:1") and reported nothing, so the dashboard said "responding…" for good. Every quiet exit of the API reply
   (`FollowUpWorker`) and of the harness reply's prepare (`HarnessReplyWorker`) now emits the new integration event
   `FollowUpDeclined` with its reason (`NO_THREAD_SOURCE`, `MULTI_PARTY_NO_MENTION`, `ALREADY_ANSWERED`) on
-  `cs.results`; the orchestrator (`FollowUpDeclines`) files "reply not answered: …" under the conversation root,
+  `cs.results`; the orchestrator (`FollowUpEndings`) files "reply not answered: …" under the conversation root,
   clears `answering` and counts no turn. A pull request close or merge clears `answering` too, as a safety net. The
   harness post's "already done" exit sends nothing new on purpose: its two events already went out and cleared the
   flag. A reply that dead-letters still keeps the mark until the next review run.
+  Review of PR #457: `answering` is one flag per review, so reply A's decline cleared the mark while reply B was being
+  answered. V122 adds `review_status.answering_comment`: the ask records its triggering comment (`AnsweringMarks.start`,
+  via `ReplyDispatch`), and a result that names its triggering comment (`FollowUpDeclined`, a harness reply's refusal
+  or failure) clears the mark in one compare-and-clear UPDATE only while it is still that comment's. `FollowUpPosted`
+  and `TurnCapNotified` name no triggering comment and still clear it unconditionally; a new run, an archive and a
+  close clear both columns. `ALREADY_ANSWERED` (a redelivery of a comment the bot did answer) clears the mark and
+  records no event. The finding and general-discussion conversations end their pending reply at a `FollowUpDeclined`
+  and show "Not answered: <why>"; the worker's three quiet exits are one `ReplyGate` for both reply paths. A list
+  row's marks stay out of the tab order (the row's accessible name carries their words); the detail header's marks
+  are tab stops whose tooltips open on focus.
   The operator also found the reviews list's badges too wide. The Status column is one badge, with a pulsing icon
   for "responding"; PR state and provider are icons (lucide state icons, the forges' logos from `react-icons`, already
   a dependency); the Pipeline column draws segments only, each naming its step and state on hover (and in its `aria-label`), and the
@@ -2777,4 +2787,5 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   widgets are `ReviewIcons` and `ReviewRowCells` (WIDGETS.md). Analytics keeps its text platform badge.
   **Upgrading.** A new wire event: roll the orchestrator before the review worker, or a worker's
   `FollowUpDeclined` reaches an orchestrator that cannot read it and is logged as a poison record (the mark then
-  stays up exactly as before). No migration.
+  stays up exactly as before). V122 adds one nullable column (`review_status.answering_comment`), additive: an older
+  orchestrator neither reads nor writes it.
