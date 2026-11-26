@@ -35,7 +35,8 @@ evidence would settle it**.
 
 ## Review input limit: the whole diff up to the model's window (2026-11-26, Part of #391)
 
-Built, not yet live-proven. CI runs the unit and service tests; no review has sent a large diff to a real model.
+Live-proven on the dev stack on 2026-11-26 (`spire-test`, Claude `claude-haiku-5-5` on an API key), for a first review
+and one re-review only. CI runs the unit and service tests.
 Design: docs/superpowers/specs/2026-11-26-review-input-limit-design.md.
 
 - **Long-context price tiers are not charged.** The catalog prices one tier per token type. A review may now send
@@ -45,9 +46,13 @@ Design: docs/superpowers/specs/2026-11-26-review-input-limit-design.md.
   the catalog can price tiers. The setting's help text says so.
 - **The 25% margin is a guess at the estimator's error.** `TokenBudget.estimateTokens` is `chars / 3.2`. Dense text
   (lock files, minified code, non-Latin text) has fewer characters per token, so a prompt sized to 75% of the window
-  by estimate may still exceed the window. No real tokenizer has measured a corpus of diffs against it. A provider
+  by estimate may still exceed the window. Measured once, live: generated Java of 158,668 characters (about 49,600
+  estimated diff tokens) was 74,078 real input tokens with the rest of the prompt, so ordinary code ran at about
+  2.1 characters per token, not 3.2. The 25% margin covered it on a 1,000,000-token window; on a small window it may
+  not. No real tokenizer has measured a corpus of diffs against it. A provider
   "prompt too long" refusal is a failed review with the provider's message and no smaller retry.
-- **A real large call's time and charge are unmeasured.** The 600 s default timeout and the 1,800,000 ms ack
+- **One large call was measured; larger ones were not.** spire-test #112: 74,078 input tokens, about 11 s, 835
+  millicents. A call near the window's size is unmeasured. The 600 s default timeout and the 1,800,000 ms ack
   threshold are sized by arithmetic (two calls at 600 s plus 300 s of other work, one record in flight), not by a
   measured 500K-token call. Whether such a call returns inside 600 s on any provider is unknown.
 - **A large call's timeout is not retried, proven against fakes only.** `ReviewWorkerInputLimitTest` fails a fake
@@ -83,10 +88,12 @@ Design: docs/superpowers/specs/2026-11-26-review-input-limit-design.md.
   entry by name or alias takes that entry's window (found live: a pre-catalog manual row kept every review at 24,000). Neither has a rate-limited key on a large prompt.
 - **The prompt preview does not size the diff.** Settings → Prompts' preview (`PromptSampleRenderer`) still clips at
   the palette's fixed budget, so it shows a clip a real review on a large window no longer makes.
-- **Live proof pending** (dev stack, `spire-test`): a PR well above 24,000 estimated tokens of diff reviewed on a
-  catalog model with the setting empty (no "Partial review"; record the call time and the charge); the same PR with
-  the setting at 24,000 ("Partial review" naming the files left out); a re-review after a large new commit with the
-  setting at 24,000 (the note appears, and no finding on an omitted file is resolved).
+- **Live proof (2026-11-26, dev stack, `spire-test`):** #112, setting empty: the whole diff was sent, no "Partial
+  review". #111, before the manual-shadow fix: the note named the three files left out, and the small last file was
+  still reviewed. #112 re-review, setting at 24,000: the note named the files left out, and the three findings on
+  the fixed but unseen `ZuluLedger.java` stayed open. The live test found that a pre-catalog manual model row with
+  the same name hid the catalog window (fixed: the window comes from the catalog entry). Not live: OpenAI or Gemini
+  models, a manual model the catalog does not have, a real timeout, a rate-limited key, the invalid-setting warning.
 
 ## Agent images on Debian trixie (2026-11-24)
 
