@@ -1,4 +1,5 @@
-import type { ReviewStatus, SeverityCounts } from '../api';
+import type { ReviewStatus } from '../api';
+import type { SeverityCounts } from '../severityCounts';
 import { STAGES, stageLabel } from '../render';
 import Tooltip from './Tooltip';
 import { presentSeverities, severityBadges, severityWords, type SeverityCount } from './findingSeverities';

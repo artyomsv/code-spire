@@ -1,6 +1,7 @@
 import { apiFetch } from './auth';
 import { workReason } from './components/work-items/workReasons';
 import type { Preparation, WorkBuild, WorkExecution } from './components/work-items/workPreparationApi';
+import type { SeverityCounts } from './severityCounts';
 
 export type WorkWorkflowStatus = 'not_eligible' | 'awaiting_input' | 'capability_unavailable' | 'active' | 'waiting_approval' | 'stopped' | 'suspended' | 'retired' | 'completed' | 'failed';
 export interface WorkItemSummary {
@@ -232,8 +233,7 @@ export interface ReviewSummary {
   findings: number;
   blockerCount: number; // number of blocker-severity (critical) findings — drives the outcome badge
   carriedOverFindings: number; // how many of `findings` were already open before this run
-  // `findings` per severity, carried-over ones included: the list's findings badges. Optional because a live frame
-  // or list read from an older server has none; the cell then shows the bare number.
+  // `findings` per severity, carried-over ones included; none from an older server (the cell shows the number).
   openBySeverity?: SeverityCounts | null;
   // Sum of the charge lines that COULD be priced (1/100,000 dollar). 0 means either no charge has
   // landed yet OR every priced charge was an asserted UNMETERED zero — `unpricedCalls` is what tells
@@ -260,14 +260,6 @@ export interface ReviewSummary {
   postedVerdict?: PostedVerdict | null;
   // The forge's link to that review, or null.
   reviewUrl?: string | null;
-}
-
-/** Open findings per severity, keyed by the findings card's slugs (`Finding['sev']`). */
-export interface SeverityCounts {
-  critical: number;
-  warning: number;
-  suggestion: number;
-  nit: number;
 }
 
 export interface Finding {
@@ -375,12 +367,8 @@ export interface ReviewEvent {
   loc?: string;
 }
 
-// The detail endpoint's Java record omits five ReviewSummary components — model, llmType,
-// costMillicents, carriedOverFindings, openBySeverity are list-only projections the detail payload never sends.
-// `extends ReviewSummary` used to declare them anyway, so a component could read one off a detail
-// payload, get `undefined`, and render as if the field were simply absent/zero — which is exactly
-// how `unpricedCalls` shipped as a silent `undefined` before it was wired into the record. Omit<>
-// makes the next such field a compile error instead of a repeat of that.
+// The detail endpoint's Java record omits the list-only ReviewSummary components named below. Omit<> makes reading one
+// off a detail payload a compile error, not a silent `undefined` (how `unpricedCalls` once shipped).
 export interface ReviewDetail
   extends Omit<ReviewSummary, 'model' | 'llmType' | 'costMillicents' | 'carriedOverFindings' | 'openBySeverity'> {
   // findings/blockerCount (from ReviewSummary) stay this RUN's raw counts — the findings card's

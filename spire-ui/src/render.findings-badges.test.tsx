@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { findCell, type FindingsRow } from './components/ReviewRowCells';
 import { rowSummaryParts } from './components/RowFocusSummary';
-import type { ReviewSummary, SeverityCounts } from './api';
+import type { ReviewSummary } from './api';
+import type { SeverityCounts } from './severityCounts';
 
 /**
  * The list's findings column: one badge per severity with open findings, most severe first, in the findings card's

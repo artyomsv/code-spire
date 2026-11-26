@@ -1,4 +1,5 @@
-import type { Finding, SeverityCounts } from '../api';
+import type { Finding } from '../api';
+import type { SeverityCounts } from '../severityCounts';
 
 /** A finding's severity as the findings card names it; the list's badges reuse its words and colours. */
 export type FindingSeverity = Finding['sev'];
