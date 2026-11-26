@@ -1,7 +1,8 @@
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import SettingsGeneral from './SettingsGeneral';
 import * as api from '../api';
+import * as diffLimitApi from '../reviewDiffLimitApi';
 import { queryWrapper } from '../test/queryWrapper';
 
 /**
@@ -21,15 +22,13 @@ describe('SettingsGeneral — Review diff limit', () => {
     });
   });
 
+  /** Found by its own accessible name, as a screen reader names it: the visible label, not the info button. */
   function limitInput(): HTMLInputElement {
-    const button = screen.getByRole('button', { name: 'About review diff limit (tokens) — code review' });
-    const wrapper = button.closest('label');
-    if (!wrapper) throw new Error('Expected an accessible label wrapping the review diff limit');
-    return within(wrapper).getByRole('spinbutton');
+    return screen.getByRole('spinbutton', { name: 'Review diff limit (tokens)' }) as HTMLInputElement;
   }
 
   it('shows a stored limit, and blank when unset', async () => {
-    vi.spyOn(api, 'getReviewDiffLimit').mockResolvedValue({ limitTokens: 90_000 });
+    vi.spyOn(diffLimitApi, 'getReviewDiffLimit').mockResolvedValue({ limitTokens: 90_000 });
     render(<SettingsGeneral />, { wrapper: queryWrapper() });
     await screen.findByText('Code review');
 
@@ -37,8 +36,8 @@ describe('SettingsGeneral — Review diff limit', () => {
   });
 
   it('saves a typed limit', async () => {
-    vi.spyOn(api, 'getReviewDiffLimit').mockResolvedValue({ limitTokens: null });
-    const put = vi.spyOn(api, 'setReviewDiffLimit').mockResolvedValue({ limitTokens: 90_000 });
+    vi.spyOn(diffLimitApi, 'getReviewDiffLimit').mockResolvedValue({ limitTokens: null });
+    const put = vi.spyOn(diffLimitApi, 'setReviewDiffLimit').mockResolvedValue({ limitTokens: 90_000 });
     const putReview = vi.spyOn(api, 'setReviewSettings');
     render(<SettingsGeneral />, { wrapper: queryWrapper() });
     await screen.findByText('Code review');
@@ -52,8 +51,8 @@ describe('SettingsGeneral — Review diff limit', () => {
   });
 
   it('sends null when a stored limit is cleared back to blank', async () => {
-    vi.spyOn(api, 'getReviewDiffLimit').mockResolvedValue({ limitTokens: 90_000 });
-    const put = vi.spyOn(api, 'setReviewDiffLimit').mockResolvedValue({ limitTokens: null });
+    vi.spyOn(diffLimitApi, 'getReviewDiffLimit').mockResolvedValue({ limitTokens: 90_000 });
+    const put = vi.spyOn(diffLimitApi, 'setReviewDiffLimit').mockResolvedValue({ limitTokens: null });
     render(<SettingsGeneral />, { wrapper: queryWrapper() });
     await screen.findByText('Code review');
 
@@ -65,8 +64,8 @@ describe('SettingsGeneral — Review diff limit', () => {
   });
 
   it('refuses a limit below today’s budget without sending anything', async () => {
-    vi.spyOn(api, 'getReviewDiffLimit').mockResolvedValue({ limitTokens: null });
-    const put = vi.spyOn(api, 'setReviewDiffLimit');
+    vi.spyOn(diffLimitApi, 'getReviewDiffLimit').mockResolvedValue({ limitTokens: null });
+    const put = vi.spyOn(diffLimitApi, 'setReviewDiffLimit');
     render(<SettingsGeneral />, { wrapper: queryWrapper() });
     await screen.findByText('Code review');
 
@@ -78,8 +77,8 @@ describe('SettingsGeneral — Review diff limit', () => {
   });
 
   it('leaves the limit alone when only another group changed', async () => {
-    vi.spyOn(api, 'getReviewDiffLimit').mockResolvedValue({ limitTokens: 90_000 });
-    const put = vi.spyOn(api, 'setReviewDiffLimit');
+    vi.spyOn(diffLimitApi, 'getReviewDiffLimit').mockResolvedValue({ limitTokens: 90_000 });
+    const put = vi.spyOn(diffLimitApi, 'setReviewDiffLimit');
     vi.spyOn(api, 'setReviewSettings').mockResolvedValue({ maxAttempts: 6, backoffBaseMs: 5000, backoffFactor: 2 });
     render(<SettingsGeneral />, { wrapper: queryWrapper() });
     await screen.findByText('Code review');
@@ -89,5 +88,27 @@ describe('SettingsGeneral — Review diff limit', () => {
 
     expect(await screen.findByText('Saved')).toBeInTheDocument();
     expect(put).not.toHaveBeenCalled();
+  });
+
+  it('keeps the info button separately named', async () => {
+    vi.spyOn(diffLimitApi, 'getReviewDiffLimit').mockResolvedValue({ limitTokens: null });
+    render(<SettingsGeneral />, { wrapper: queryWrapper() });
+    await screen.findByText('Code review');
+
+    expect(screen.getByRole('button', { name: 'About review diff limit (tokens) — code review' })).toBeInTheDocument();
+    expect(limitInput().id).not.toBe('');
+  });
+
+  it('advises 60,000 and says the cap is on the diff only', async () => {
+    vi.spyOn(diffLimitApi, 'getReviewDiffLimit').mockResolvedValue({ limitTokens: null });
+    render(<SettingsGeneral />, { wrapper: queryWrapper() });
+    await screen.findByText('Code review');
+
+    fireEvent.focus(screen.getByRole('button', { name: 'About review diff limit (tokens) — code review' }));
+
+    const hint = (await screen.findByRole('tooltip')).textContent ?? '';
+    expect(hint).toContain('about 60,000');
+    expect(hint).toContain('diff only, not on the whole prompt');
+    expect(hint).not.toContain('90,000');
   });
 });
