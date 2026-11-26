@@ -156,6 +156,13 @@ public final class UnifiedDiffParser {
      * matters for binary files; text files get their paths from ---/+++ lines).
      */
     private static String[] splitDiffGitPaths(String line) {
+        if (line.startsWith(DIFF_GIT_PREFIX) && line.indexOf('"', DIFF_GIT_PREFIX.length()) >= 0) {
+            // Git C-quotes a path with a control, quote, backslash or non-ASCII byte; the regex reads neither form.
+            String[] quoted = GitQuotedPath.splitQuotedPair(line.substring(DIFF_GIT_PREFIX.length()));
+            if (quoted != null) {
+                return quoted;
+            }
+        }
         Matcher m = DIFF_GIT.matcher(line);
         if (!m.matches()) {
             return null;
@@ -208,12 +215,12 @@ public final class UnifiedDiffParser {
             } else if (line.startsWith("deleted file mode")) {
                 change = ChangeType.DELETED;
             } else if (line.startsWith("rename from ")) {
-                oldPath = line.substring("rename from ".length());
+                oldPath = headerPath(line.substring("rename from ".length()));
                 change = ChangeType.RENAMED;
             } else if (line.startsWith("rename to ")) {
-                newPath = line.substring("rename to ".length());
+                newPath = headerPath(line.substring("rename to ".length()));
             } else if (line.startsWith("copy to ")) {
-                newPath = line.substring("copy to ".length());
+                newPath = headerPath(line.substring("copy to ".length()));
                 change = ChangeType.COPIED;
             } else if (line.startsWith("Binary files ") || line.startsWith("GIT binary patch")) {
                 binary = true;
@@ -317,12 +324,19 @@ public final class UnifiedDiffParser {
         if (tab > 0) {
             path = path.substring(0, tab);
         }
-        if ("/dev/null".equals(path)) {
+        path = GitQuotedPath.unquoteIfQuoted(path);
+        if (path == null || "/dev/null".equals(path)) {
             return path;
         }
         if (path.startsWith("a/") || path.startsWith("b/")) {
             return path.substring(2);
         }
         return path;
+    }
+
+    /** A {@code rename}/{@code copy} line's path, decoded when Git quoted it; kept as written when it cannot be. */
+    private static String headerPath(String raw) {
+        String decoded = GitQuotedPath.unquoteIfQuoted(raw);
+        return decoded == null ? raw : decoded;
     }
 }
