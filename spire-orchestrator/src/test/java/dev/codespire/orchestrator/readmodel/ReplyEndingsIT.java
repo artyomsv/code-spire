@@ -147,6 +147,18 @@ class ReplyEndingsIT {
         assertTrue(bumped(reviewId));
     }
 
+    /** An answer whose reply holds no mark any more changes no row, but its line is new: it is broadcast anyway. */
+    @Test
+    void anAnswerWithNoMarkLeftIsStillBroadcast() {
+        String reviewId = registered(9);
+        stopTheClock(reviewId);
+
+        endings.posted(new FollowUpPosted(reviewId, THREAD, "TEST-answer-A", true, A));
+
+        assertFalse(answering(reviewId));
+        assertTrue(bumped(reviewId), "the answer's line reaches an open dashboard");
+    }
+
     /** The cap notice sets no mark and clears none, but its line is new: the dashboard must hear it. */
     @Test
     void aCapNoticeIsBroadcastAndLeavesAnotherRepliesMark() {

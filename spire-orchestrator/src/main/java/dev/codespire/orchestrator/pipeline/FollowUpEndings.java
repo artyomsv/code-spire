@@ -34,7 +34,9 @@ public class FollowUpEndings {
 
     /**
      * The answer landed: its own reply's mark ends, and the mark stays while another reply is outstanding. An answer
-     * posted before V122 names no triggering comment, so every mark of the review ends, as before.
+     * posted before V122 names no triggering comment, so every mark of the review ends, as before. The review is always
+     * broadcast: the answer's line and its turn changed the conversation even when no mark changed (the reply's row was
+     * already gone, or another reply keeps the mark), and an open dashboard shows them only on a broadcast (PR #457).
      */
     public void posted(FollowUpPosted e) {
         if (e.triggeringCommentId() == null) {
@@ -42,6 +44,7 @@ public class FollowUpEndings {
             return;
         }
         answering.finish(new ReplyKey(e.reviewId(), e.triggeringCommentId()));
+        projection.touch(e.reviewId());
     }
 
     /**

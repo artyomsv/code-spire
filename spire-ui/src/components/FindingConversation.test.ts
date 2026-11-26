@@ -216,7 +216,9 @@ describe('isAwaitingReply with comment ids', () => {
   });
 
   it('ends an id-less reply with the answer of a later named one, and keeps another named reply waiting', () => {
-    const events = [turn('AuthorReplied'), turn('FollowUpDeclined'), named('AuthorReplied', 'TEST-B')];
+    // The id-less reply is still pending when B is asked, so only B's named answer can end it (qa/L-1).
+    const events = [turn('AuthorReplied'), named('AuthorReplied', 'TEST-B')];
+    expect(isAwaitingReply(events)).toBe(true);
     expect(isAwaitingReply([...events, named('FollowUpGenerated', 'TEST-B')])).toBe(false);
     const other = [turn('AuthorReplied'), named('AuthorReplied', 'TEST-A'), named('AuthorReplied', 'TEST-B')];
     expect(isAwaitingReply([...other, named('FollowUpGenerated', 'TEST-B')])).toBe(true);
