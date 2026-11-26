@@ -398,14 +398,20 @@
   .findcount { font-family: var(--font-mono); font-size: 13px; font-weight: 600; }
   .findcount.zero { color: var(--good); }
   .findcount.some { color: var(--text); }
-  /* The list's findings badges: one per severity with open findings, in the findings card's colours. */
+  /* The list's findings badges: one per severity with open findings, in the findings card's colours. The colour is the
+     tint and the border only; the number is the body text colour, since an 11px count in the severity colour on its own
+     tint fell below 4.5:1 (sevbadge.contract.test.ts computes the ratios). */
   .sevbadges { display: inline-flex; gap: 2px; align-items: center; justify-content: flex-end; }
-  .sevbadge { font-family: var(--font-mono); font-size: 11px; font-weight: 700; min-width: 16px; padding: 1px 4px; border-radius: 5px; text-align: center; color: var(--sv); background: var(--sv-soft); }
+  .sevbadge {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700; min-width: 16px; padding: 0 4px; border-radius: 5px;
+    text-align: center; color: var(--text); background: var(--sv-soft);
+    border: 1px solid color-mix(in srgb, var(--sv) 45%, transparent);
+  }
   .sevbadge.sev-critical { --sv: var(--crit); --sv-soft: var(--crit-soft); }
   .sevbadge.sev-warning { --sv: var(--warn); --sv-soft: var(--warn-soft); }
   .sevbadge.sev-suggestion { --sv: var(--iris); --sv-soft: var(--iris-soft); }
   .sevbadge.sev-nit { --sv: var(--muted); --sv-soft: var(--muted-soft); }
-  .sevbadge.sev-more { --sv: var(--text-2); --sv-soft: transparent; border: 1px solid var(--border); }
+  .sevbadge.sev-more { --sv-soft: transparent; color: var(--text-2); border-color: var(--border); }
   .time { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
   .time .abs { display: block; font-size: 10px; color: var(--text-3); margin-top: 1px; }
 
