@@ -48,6 +48,13 @@ class ReviewInputLimitsTest {
         assertEquals(Integer.MAX_VALUE, ReviewInputLimits.maxInputTokens(Long.MAX_VALUE, null));
     }
 
+    /** PR 456, L-3: the catalog does not constrain the window, and Long.MIN_VALUE - reserve wraps positive. */
+    @Test
+    void aNonPositiveWindowLeavesNoInputEvenAtTheLowestLong() {
+        assertEquals(0, ReviewInputLimits.maxInputTokens(Long.MIN_VALUE, null));
+        assertEquals(0, ReviewInputLimits.maxInputTokens(0L, 4_096));
+    }
+
     @Test
     void aWindowSmallerThanTheOutputCapLeavesNoInputRatherThanANegativeOne() {
         assertEquals(0, ReviewInputLimits.maxInputTokens(8_000L, null));

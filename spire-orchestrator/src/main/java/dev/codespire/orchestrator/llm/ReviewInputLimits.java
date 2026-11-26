@@ -66,6 +66,10 @@ public class ReviewInputLimits {
         if (contextWindow == null) {
             return null;
         }
+        if (contextWindow <= 0) {
+            // A malformed catalog window: Long.MIN_VALUE minus the reserve would wrap to a huge positive input.
+            return 0;
+        }
         long reserve = providerMaxTokens != null ? providerMaxTokens : ModelParams.DEFAULT_MAX_OUTPUT_TOKENS;
         long input = contextWindow - reserve;
         return (int) Math.max(0L, Math.min(Integer.MAX_VALUE, input));

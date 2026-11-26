@@ -2677,8 +2677,9 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   posted the rest as a "Partial review", while the catalog's models take about a million tokens; the operator asked
   for the whole diff. The orchestrator now packs two nullable limits on the `LlmCredential`: `maxInputTokens`, the
   model's catalog `contextWindow` minus the output cap the call really sends (the provider's max tokens, else
-  `ModelParams.DEFAULT_MAX_OUTPUT_TOKENS`, 16,384, moved there from `LangChain4jLlmProvider`), null for a manual or
-  unknown model; and `diffTokenCap`, the new **Review diff limit** (Settings → General, admin only, app setting
+  `ModelParams.DEFAULT_MAX_OUTPUT_TOKENS`, 16,384, moved there from `LangChain4jLlmProvider`), read from the catalog
+  entry of the model's name or alias even when a manual model shadows it, and null only when the catalog has no entry
+  or window for it; and `diffTokenCap`, the new **Review diff limit** (Settings → General, admin only, app setting
   `review.diff-limit-tokens`, 24,000 to 2,000,000, empty means as much as the window allows). The worker sizes the
   diff with one pure function (`DiffBudget`): an unknown window keeps today's budgets; a known one gives the diff 75%
   of the input limit less the rest of the prompt (split per use of `{{diff}}`), never less than today's budget unless
@@ -2692,7 +2693,9 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   timeout is now 600 s by default, and a timeout of a call that sent more diff than today's budget is not retried
   (each attempt re-sends the whole prompt and may be billed); a small call's still is. FOLLOWUP replies and harness
   reviews are unchanged. Long-context price tiers are not modelled, so a call above them is under-charged
-  (docs/UNVERIFIED.md). Built, not yet live-proven.
+  (docs/UNVERIFIED.md). Live-proven on the dev stack on 2026-11-26 (`spire-test` #111 and #112, Claude Haiku 5.5 on an
+  API key) for a first review and one re-review; the live test found that a manual model row hid the catalog window,
+  fixed in the same PR. Other paths are listed in docs/UNVERIFIED.md.
 
   **Upgrading.** No migration (no table or column is added), and any order is safe. A failed read of the
   `review.diff-limit-tokens` row and a stored value outside 24,000 to 2,000,000 both review with a 24,000-token diff

@@ -54,7 +54,8 @@ nullable `Integer` components:
 
 ```
 maxInputTokens = window − reserve        (null when the catalog has no window for the model)
-  window  = ResolvedModel.catalogEntry().contextWindow()   (Long; long arithmetic, clamp to int)
+  window  = catalog snapshot entry for the model name or alias → contextWindow
+            (also under a manual shadow; Long; long arithmetic, clamp to int; a window ≤ 0 gives 0)
   reserve = provider maxTokens if set, else the default output cap (16,384)
 diffTokenCap   = app_setting 'review.diff-limit-tokens'     (null when the setting is empty)
 ```
