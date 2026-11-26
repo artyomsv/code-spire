@@ -145,7 +145,8 @@ The default model call timeout is 180 s, non-streaming, and a timeout is retryab
 - A stored row outside that range (edited by hand) packs as 24,000, a 24,000-token diff cap (with a known
   window a RECONCILE may get up to 24,000, more than its old 12,000), with a WARN and a
   `DIFF_LIMIT_INVALID` attention row; the form shows it as invalid and a blank Save deletes it. A failed read
-  of the row retries the review through the saga's bounded retry; it never reads as unset (PR 456, round 2).
+  of the row defers the review (`retry_at` 2 minutes ahead, no retry attempt spent) and fails it once the row has
+  been unreadable for 60 minutes on one head; it never reads as unset (PR 456, rounds 2 and 4).
 - Settings → General, admin only, through the existing app-setting resource pattern (as
   `llm.default-model`), read through React Query like the other General settings.
 - Help text: empty sends the whole diff when the model can hold it; a number caps the diff of every

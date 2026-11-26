@@ -19,7 +19,8 @@ import java.util.Optional;
  * <p>The two unknowns fail in opposite directions on purpose. An unknown window (a manual model, a catalog read fault)
  * keeps today's fixed budgets, the small answer. A Review diff limit the database cannot read fails the pack instead of
  * reading as unset, because unset is the large answer: a database fault must never send an uncapped review (PR 456);
- * the review saga schedules a retry. An invalid stored limit reads as the lowest one, today's budgets.
+ * the review saga defers the review. An invalid stored limit reads as the lowest one, a 24,000-token diff cap (with a
+ * known window a RECONCILE may get up to 24,000, more than its old 12,000).
  */
 @ApplicationScoped
 public class ReviewInputLimits {

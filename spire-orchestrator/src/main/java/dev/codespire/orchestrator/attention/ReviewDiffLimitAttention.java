@@ -10,8 +10,8 @@ import java.util.List;
 
 /**
  * {@code DIFF_LIMIT_INVALID}: the stored Review diff limit is not a whole number in range, so every API review is
- * packed with the lowest limit, today's fixed budgets, until it is saved again (PR 456, code-quality/M-5). Not a
- * {@code REVIEW_} code: it names a setting, not one review. Derived on each read, so it clears when the row is fixed.
+ * packed with a 24,000-token diff cap (with a known window a RECONCILE may get up to 24,000, more than its old 12,000)
+ * until it is saved again (PR 456, code-quality/M-5). Not a {@code REVIEW_} code: it names a setting, not one review. Derived on each read, so it clears when the row is fixed.
  */
 @ApplicationScoped
 public class ReviewDiffLimitAttention {

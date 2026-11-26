@@ -259,6 +259,7 @@ class SpendCapGateTest {
                 return DefaultLlm.spendable("packed-llm-cred", "TEST-MODEL");
             }
         };
+        saga.limitDeferral = LimitReadDeferralFakes.none();
         saga.workerCredentials = new WorkerCredentials() {
             @Override
             public Optional<String> packForReview(String reviewId) {

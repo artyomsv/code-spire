@@ -13,9 +13,10 @@ import java.util.Optional;
  *
  * <p>Read fresh on every credential pack, so a change applies to the next review without a restart. Unset is the
  * expensive answer, so the pack reads it strictly ({@link #current}): a failed read throws, and the review saga turns
- * it into a scheduled retry rather than sending a review uncapped (PR 456, security/M-1, code-quality/M-4). A stored
- * value outside the range never blocks a review: it reads as {@link #MIN_TOKENS}, the conservative bound, so every
- * kind keeps today's fixed budget, and an attention row and the settings screen say so until it is saved again.
+ * it into a deferral rather than sending a review uncapped (PR 456, security/M-1, code-quality/M-4). A stored value
+ * outside the range never blocks a review: it reads as {@link #MIN_TOKENS}, a 24,000-token diff cap (with a known
+ * window a RECONCILE may get up to 24,000, more than its old 12,000), and an attention row and the settings screen say
+ * so until it is saved again.
  */
 @ApplicationScoped
 public class ReviewDiffLimit {

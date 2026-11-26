@@ -109,7 +109,7 @@ public class ResultSaga {
 
     @Inject
     dev.codespire.orchestrator.llm.WorkerLlmCredentials workerLlmCredentials;
-    @Inject LimitReadRetry limitRetry; // a failed read of the Review diff limit, retried once per run
+    @Inject LimitReadDeferral limitDeferral; // a failed read of the Review diff limit defers the review
 
     @Inject
     dev.codespire.orchestrator.llm.LlmModelRegistry llmModels;
@@ -165,7 +165,7 @@ public class ResultSaga {
 
     /** What a dropped harness outcome is called on the timeline. */
     private static final String HARNESS_OUTCOME = "HarnessReview";
-    private static final String GENERATE_REVIEW = "GenerateReview";
+    static final String GENERATE_REVIEW = "GenerateReview";
 
     int maxAttempts() {
         return reviewPolicy.maxAttempts();
@@ -446,8 +446,9 @@ public class ResultSaga {
         if (llm.isEmpty()) {
             return;
         }
-        if (!llm.get().isSpendable()) {
-            skipUnspendable(e.reviewId(), GENERATE_REVIEW, llm.get());
+        DefaultLlm resolved = llm.orElseThrow();
+        if (!resolved.isSpendable()) {
+            skipUnspendable(e.reviewId(), GENERATE_REVIEW, resolved);
             return;
         }
         // Task 6: the pre-spend gate beside priceability; both answer "may this paid call be made".
@@ -456,22 +457,21 @@ public class ResultSaga {
             refuse(e.reviewId(), e.commit(), GENERATE_REVIEW, ReviewProjection.STAGE_REVIEW, spendDecision.refusal());
             return;
         }
-        emitGenerateReview(e, llm.get().packed());
+        emitGenerateReview(e, resolved.packed());
     }
 
-    /** The LLM credential (ADR-018) and priceability. A failed read of the Review diff limit packs nothing and takes
-     *  the bounded retry once per failed run (C8), never the dead-letter queue (PR 456, code-quality/M-4). */
+    /** The LLM credential (ADR-018) and priceability. A failed read of the Review diff limit packs nothing and defers
+     *  the review without spending a retry attempt; past its time window it fails (PR 456, code-quality/M-4). */
     private java.util.Optional<DefaultLlm> resolveLlm(ContextAssembled e) {
+        DefaultLlm llm;
         try {
-            return java.util.Optional.of(workerLlmCredentials.resolveForReview(e.reviewId()));
+            llm = workerLlmCredentials.resolveForReview(e.reviewId());
         } catch (AppSettingRepository.ReadFailed fault) {
-            ReviewFailed failed =
-                    new ReviewFailed(e.reviewId(), e.commit(), GENERATE_REVIEW, fault.getMessage(), true, 0);
-            if (!limitRetry.scheduleOnce(failed)) {
-                onReviewFailed(failed);
-            }
+            limitDeferral.defer(e, fault).ifPresent(this::onReviewFailed);
             return java.util.Optional.empty();
         }
+        limitDeferral.recovered(e.reviewId());
+        return java.util.Optional.of(llm);
     }
 
     private void emitGenerateReview(ContextAssembled e, String packedLlm) {

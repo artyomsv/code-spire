@@ -151,6 +151,7 @@ final class HarnessSagaFakes {
                 return DefaultLlm.spendable("TEST-packed-llm", "TEST-model");
             }
         };
+        saga.limitDeferral = LimitReadDeferralFakes.none();
         saga.spendGate = new SpendGate() {
             @Override
             public Decision decide() {

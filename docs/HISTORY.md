@@ -2730,12 +2730,14 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
 
   **Review round 2 (PR 456).** Three findings, all fixed on the branch. (1) A failed read of the Review diff limit while
   a review's credential is packed no longer dead-letters `ContextAssembled` and leaves the review `reviewing`:
-  `ResultSaga` turns `AppSettingRepository.ReadFailed` into a retryable `ReviewFailed` at `GenerateReview`, so the
-  review takes the saga's own bounded retry (`retry_at`, dispatched by `ReviewRetryScheduler`) and fails terminally
-  once the budget is spent. The retry is scheduled once per failed run (round 3): `LimitReadRetry` writes it as a
-  compare-and-set on the persisted attempt (`ReviewProjection.scheduleRetryFrom`), so the same `ContextAssembled`
-  delivered again before the retry runs finds the attempt advanced or `retry_at` set and changes nothing, keeping the
-  due time and the budget. Nothing is encrypted and no `GenerateReview` is emitted for that attempt. RECONCILE rides
+  `ResultSaga` defers the review instead (round 4, replacing round 3's compare-and-set on the attempt, which could not
+  tell a stale delivery from a new attempt). `LimitReadDeferral` and `ReviewLimitDeferrals` (V122,
+  `review_limit_deferral`) set `retry_at` to at most 2 minutes ahead, keeping an earlier due time, and never touch the
+  attempt, so `ReviewRetryScheduler` re-runs the pipeline from `FetchDiff` without spending the retry budget and a
+  duplicate or stale delivery can only write the same or an earlier due time. The bound is time: the first failed read
+  of a head records when; a failed read more than 60 minutes later fails the review with an error naming the Review
+  diff limit setting. A successful read, or that failure, closes the window. Nothing is encrypted and no
+  `GenerateReview` is emitted for a failed read. RECONCILE rides
   the same `GenerateReview`, so it shares the path. A reply (FOLLOWUP) has no retry of its own: its `AuthorReplied`
   is dead-lettered for replay, as on a failed provider read. (2) A stored value that is not a whole number from 24,000
   to 2,000,000 no longer blocks reviews: it packs as 24,000, a 24,000-token diff cap (with a known window a RECONCILE
@@ -2745,8 +2747,8 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   says "The stored value is invalid; save to clear it or enter a new limit", and a blank Save then sends
   `PUT {limitTokens: null}`, which deletes the row. (3) The methods the branch added or grew are at most 30 lines
   (`ReviewWorker.generateReview` is 40, below its 46 before the branch).
-  CI proves these with `ResultSagaLimitReadTest` (retry scheduled, no `GenerateReview`; terminal past the budget;
-  a duplicate delivery schedules nothing more),
+  CI proves these with `ResultSagaLimitReadTest` (deferred, no `GenerateReview`, no attempt spent; terminal past the
+  window; a recovered read dispatches), `ReviewLimitDeferralsTest` (the V122 SQL on a real database),
   `WorkerLlmCredentialsTest` (an invalid row packs 24,000, real database), `ReviewDiffLimitReadTest`,
   `ReviewDiffLimitResourceTest`, `ReviewDiffLimitAttentionTest` and the General form test that clears an invalid
   row. No live database fault has been injected.
@@ -2754,3 +2756,5 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   **Upgrading, round 2.** No migration. A row `review.diff-limit-tokens` edited by hand to something outside the
   range now reviews with a 24,000-token diff cap and raises `DIFF_LIMIT_INVALID` until it is saved again in Settings →
   General (blank clears it); `SELECT value FROM app_setting WHERE key = 'review.diff-limit-tokens';` shows it.
+  Round 4 adds V122 (`review_limit_deferral`, a new table with no backfill); `SELECT * FROM review_limit_deferral;`
+  lists reviews currently deferred on an unreadable limit.

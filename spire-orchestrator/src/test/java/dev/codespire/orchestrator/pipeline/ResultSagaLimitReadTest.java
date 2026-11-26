@@ -6,11 +6,13 @@ import dev.codespire.contract.event.DomainEvent;
 import dev.codespire.contract.event.IntegrationEvent.ContextAssembled;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.lifecycle.ReviewState;
+import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.llm.DefaultLlm;
 import dev.codespire.orchestrator.llm.WorkerLlmCredentials;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
+import dev.codespire.orchestrator.readmodel.ReviewLimitDeferrals;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.review.run.HarnessReviewStart;
 import dev.codespire.orchestrator.settings.AppSettingRepository;
@@ -19,7 +21,6 @@ import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import org.junit.jupiter.api.Test;
 
 import java.sql.SQLException;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,15 +29,15 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * PR 456, code-quality/M-4: the Review diff limit cannot be read while a review's LLM credential is packed, on the
- * ContextAssembled-to-dispatch path. No GenerateReview is emitted, and the review takes the saga's own bounded retry
- * (a {@code retry_at} the sweeper dispatches), not the dead-letter queue; past the budget it fails terminally, so it
- * never stays REVIEWING. The same ContextAssembled delivered again before the retry runs schedules nothing more: the
- * schedule is a compare-and-set on the persisted attempt (the projection fake keeps that state, as the row does).
- * Field-injected fakes, as {@link ResultSagaRetryTest}: no container, no database.
+ * ContextAssembled-to-dispatch path. Nothing is emitted and the review is deferred, not failed and not counted as a
+ * retry attempt; the deferral store answers {@code EXPIRED} once the setting has been unreadable past its window, and
+ * only then does the review fail. A read that succeeds closes the window and dispatches GenerateReview. The store's
+ * own SQL is proven in {@code ReviewLimitDeferralsTest}; here it is a fake that answers what the test sets.
  */
 class ResultSagaLimitReadTest {
 
@@ -47,77 +48,81 @@ class ResultSagaLimitReadTest {
     private final List<ActionCommand> emitted = new ArrayList<>();
     private final List<RecordCommand> recorded = new ArrayList<>();
     private final RecordingProjection projection = new RecordingProjection();
+    private final FakeDeferrals deferrals = new FakeDeferrals();
 
     @Test
-    void aFailedLimitReadSchedulesARetryAndDispatchesNothing() {
-        ResultSaga saga = sagaWith(3);
+    void aFailedLimitReadDefersTheReviewAndDispatchesNothing() {
+        ResultSaga saga = sagaWith(unreadableLimit());
 
         saga.on(contextAssembled());
 
         assertTrue(emitted.isEmpty(), "no GenerateReview without the operator's cap: " + emitted);
-        assertEquals(List.of(2), projection.retryAttempts, "the next attempt is scheduled durably");
-        assertTrue(projection.terminal.isEmpty(), "a transient read is not a terminal failure");
-        assertTrue(recorded.isEmpty(), "the review stays in its run for the retry");
+        assertEquals(List.of(REVIEW_ID + "@" + COMMIT), deferrals.deferred, "the review waits for the sweeper");
+        assertEquals(0, projection.scheduledRetries, "a deferral spends no retry attempt");
+        assertTrue(projection.terminal.isEmpty(), "a transient read is not a failure");
+        assertTrue(recorded.isEmpty(), "the review stays in its run");
     }
 
     @Test
-    void aDuplicateDeliveryBeforeTheRetryRunsSchedulesNothingMore() {
-        ResultSaga saga = sagaWith(3);
+    void aDuplicateFailedDeliveryOnlyDefersAgain() {
+        ResultSaga saga = sagaWith(unreadableLimit());
 
         saga.on(contextAssembled());
         saga.on(contextAssembled());
 
-        assertEquals(List.of(2), projection.retryAttempts, "one retry for one failed run");
-        assertEquals(2, projection.attempt, "the duplicate leaves the attempt where the first delivery put it");
-        assertTrue(emitted.isEmpty(), "no GenerateReview: " + emitted);
-        assertTrue(projection.terminal.isEmpty(), "a duplicate cannot spend the budget into a terminal failure");
+        assertEquals(2, deferrals.deferred.size(), "each delivery asks the store, which keeps the earlier due time");
+        assertEquals(0, projection.scheduledRetries, "no attempt is spent by either delivery");
+        assertTrue(projection.terminal.isEmpty(), "a duplicate cannot end the review");
         assertTrue(recorded.isEmpty());
-    }
-
-    @Test
-    void aDuplicateOfTheLastAllowedAttemptDoesNotEndTheReview() {
-        ResultSaga saga = sagaWith(2);
-
-        saga.on(contextAssembled());
-        saga.on(contextAssembled());
-
-        assertEquals(List.of(2), projection.retryAttempts);
-        assertTrue(projection.terminal.isEmpty(), "the scheduled last attempt still runs");
-        assertTrue(recorded.isEmpty());
-    }
-
-    @Test
-    void theRetriedRunFailingAgainAdvancesFromThePersistedAttempt() {
-        ResultSaga saga = sagaWith(3);
-
-        saga.on(contextAssembled());
-        projection.retryPending = false; // the sweeper claimed the due row and the retried run reached here
-        saga.on(contextAssembled());
-
-        assertEquals(List.of(2, 3), projection.retryAttempts);
         assertTrue(emitted.isEmpty(), "no GenerateReview: " + emitted);
     }
 
     @Test
-    void aFailedLimitReadPastTheBudgetFailsTheReviewTerminally() {
-        ResultSaga saga = sagaWith(1);
+    void aFailedReadPastTheWindowFailsTheReviewAndNamesTheSetting() {
+        ResultSaga saga = sagaWith(unreadableLimit());
+        deferrals.outcome = ReviewLimitDeferrals.Outcome.EXPIRED;
 
         saga.on(contextAssembled());
 
         assertTrue(emitted.isEmpty(), "no GenerateReview without the operator's cap: " + emitted);
-        assertTrue(projection.retryAttempts.isEmpty(), "no retry is left");
         assertEquals(List.of("failed"), projection.terminal);
+        assertTrue(projection.error.contains("Review diff limit setting could not be read"), projection.error);
+        assertEquals(0, projection.scheduledRetries, "a closed window is not retried");
         RecordCommand.RecordFailure failure = (RecordCommand.RecordFailure) recorded.getFirst();
         assertFalse(failure.retryable(), "the review leaves REVIEWING");
+    }
+
+    @Test
+    void aDeliveryForAReviewNoLongerRunningChangesNothing() {
+        ResultSaga saga = sagaWith(unreadableLimit());
+        deferrals.outcome = ReviewLimitDeferrals.Outcome.NOT_RUNNING;
+
+        saga.on(contextAssembled());
+
+        assertTrue(emitted.isEmpty());
+        assertTrue(projection.terminal.isEmpty(), "a stale delivery does not fail a finished review");
+        assertTrue(recorded.isEmpty());
+    }
+
+    @Test
+    void aRecoveredReadClosesTheWindowAndDispatchesGenerateReview() {
+        ResultSaga saga = sagaWith(readableLimit());
+
+        saga.on(contextAssembled());
+
+        assertEquals(1, emitted.size(), "the review goes on: " + emitted);
+        assertInstanceOf(ActionCommand.GenerateReview.class, emitted.getFirst());
+        assertEquals(List.of(REVIEW_ID), deferrals.cleared, "a later failure starts a new window");
+        assertTrue(deferrals.deferred.isEmpty());
     }
 
     private static ContextAssembled contextAssembled() {
         return new ContextAssembled(REVIEW_ID, 7L, COMMIT, "TEST-context-ref", Set.of(), Set.of());
     }
 
-    private ResultSaga sagaWith(int maxAttempts) {
+    private ResultSaga sagaWith(WorkerLlmCredentials credentials) {
         ResultSaga saga = new ResultSaga();
-        saga.reviewPolicy = policy(maxAttempts);
+        saga.reviewPolicy = ResultSagaLimitReadFakes.policy();
         saga.lifecycle = reviewingLifecycle();
         saga.commands = new CommandsEmitter() {
             @Override
@@ -125,45 +130,28 @@ class ResultSagaLimitReadTest {
                 emitted.add(command);
             }
         };
-        saga.timeline = new TimelineBroadcaster() {
-            @Override
-            public void record(String lane, String type, String reviewId, String detail) {
-            }
-        };
+        saga.timeline = ResultSagaLimitReadFakes.silentTimeline();
         saga.projection = projection;
         saga.harnessStart = apiReviews();
-        saga.workerLlmCredentials = unreadableLimit();
+        saga.workerLlmCredentials = credentials;
         saga.workerCredentials = new WorkerCredentials() {
             @Override
             public Optional<String> packForReview(String reviewId) {
                 return Optional.of("TEST-scm-cred");
             }
         };
-        saga.limitRetry = limitRetry(saga);
+        saga.spendGate = ResultSagaLimitReadFakes.uncapped();
+        saga.promptTemplates = ResultSagaLimitReadFakes.noPrompts();
+        saga.limitDeferral = deferral(saga.timeline);
         return saga;
     }
 
-    private LimitReadRetry limitRetry(ResultSaga saga) {
-        LimitReadRetry retry = new LimitReadRetry();
-        retry.projection = projection;
-        retry.reviewPolicy = saga.reviewPolicy;
-        retry.timeline = saga.timeline;
-        retry.workerCredentials = saga.workerCredentials;
-        return retry;
-    }
-
-    private static dev.codespire.orchestrator.policy.ReviewPolicy policy(int maxAttempts) {
-        return new dev.codespire.orchestrator.policy.ReviewPolicy() {
-            @Override
-            public int maxAttempts() {
-                return maxAttempts;
-            }
-
-            @Override
-            public Duration retryDelay(int attempt) {
-                return Duration.ofSeconds(5L * attempt);
-            }
-        };
+    private LimitReadDeferral deferral(TimelineBroadcaster timeline) {
+        LimitReadDeferral deferral = new LimitReadDeferral();
+        deferral.deferrals = deferrals;
+        deferral.projection = projection;
+        deferral.timeline = timeline;
+        return deferral;
     }
 
     private ReviewLifecycleService reviewingLifecycle() {
@@ -201,15 +189,38 @@ class ResultSagaLimitReadTest {
         };
     }
 
-    /**
-     * Every method the path reaches is overridden: an un-overridden one opens a real database. The attempt and the
-     * pending retry are kept as the row keeps them, so a second delivery meets the first one's write.
-     */
+    private static WorkerLlmCredentials readableLimit() {
+        return new WorkerLlmCredentials() {
+            @Override
+            public DefaultLlm resolveForReview(String reviewId) {
+                return DefaultLlm.spendable("TEST-packed-llm", "TEST-model");
+            }
+        };
+    }
+
+    /** Answers the outcome the test sets and records each call; the real store's SQL has its own database test. */
+    private static final class FakeDeferrals extends ReviewLimitDeferrals {
+        private final List<String> deferred = new ArrayList<>();
+        private final List<String> cleared = new ArrayList<>();
+        private Outcome outcome = Outcome.DEFERRED;
+
+        @Override
+        public Outcome defer(Deferral deferral) {
+            deferred.add(deferral.reviewId() + "@" + deferral.commit());
+            return outcome;
+        }
+
+        @Override
+        public void clear(String reviewId) {
+            cleared.add(reviewId);
+        }
+    }
+
+    /** Every method the path reaches is overridden: an un-overridden one opens a real database. */
     private static final class RecordingProjection extends ReviewProjection {
-        private final List<Integer> retryAttempts = new ArrayList<>();
         private final List<String> terminal = new ArrayList<>();
-        private int attempt = 1;
-        private boolean retryPending;
+        private int scheduledRetries;
+        private String error = "";
 
         @Override
         public void appendEvent(String reviewId, String lane, String type, String detail) {
@@ -224,39 +235,32 @@ class ResultSagaLimitReadTest {
         }
 
         @Override
+        public void touch(String reviewId) {
+        }
+
+        @Override
+        public Optional<PriorRun> priorRunFor(String reviewId) {
+            return Optional.empty();
+        }
+
+        @Override
         public int currentAttempt(String reviewId) {
-            return attempt;
-        }
-
-        @Override
-        public boolean retryPending(String reviewId) {
-            return retryPending;
-        }
-
-        @Override
-        public boolean scheduleRetryFrom(String reviewId, int fromAttempt, RetryPlan plan) {
-            if (attempt != fromAttempt || retryPending) {
-                return false;
-            }
-            attempt = plan.attempt();
-            retryPending = true;
-            retryAttempts.add(plan.attempt());
-            return true;
+            return 1;
         }
 
         @Override
         public void scheduleRetry(String reviewId, int attempt, String note, Instant dueAt) {
-            retryAttempts.add(attempt);
+            scheduledRetries++;
         }
 
         @Override
         public void clearScheduledRetry(String reviewId) {
-            retryPending = false;
         }
 
         @Override
         public void projectTerminalFailure(String reviewId, int stage, String note, String error) {
             terminal.add("failed");
+            this.error = error;
         }
     }
 }
