@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.pipeline;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.event.IntegrationEvent.AuthorReplied;
 import dev.codespire.orchestrator.readmodel.AnsweringMarks;
+import dev.codespire.orchestrator.readmodel.ReplyKey;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -34,7 +35,7 @@ public class ReplyDispatch {
         // Only for a real answer: the cap notice is fixed text with no LLM call, and flagging it would leave a
         // "responding…" mark up for a reply that never comes. Also bumps the live dashboard (fix #5).
         if (command instanceof ActionCommand.AnswerFollowUp || command instanceof ActionCommand.PrepareHarnessReply) {
-            answering.start(reply.reviewId(), reply.commentId());
+            answering.start(new ReplyKey(reply.reviewId(), reply.commentId()));
         }
         commands.emit(command);
     }

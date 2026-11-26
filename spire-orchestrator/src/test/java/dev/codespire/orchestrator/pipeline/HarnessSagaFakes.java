@@ -26,6 +26,7 @@ import dev.codespire.orchestrator.memory.PreferenceFilter;
 import dev.codespire.orchestrator.prompt.WorkerPromptTemplates;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.AnsweringMarks;
+import dev.codespire.orchestrator.readmodel.ReplyKey;
 import dev.codespire.orchestrator.readmodel.FindingProjection;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
@@ -124,8 +125,9 @@ final class HarnessSagaFakes {
         endings.projection = projection;
         endings.answering = new AnsweringMarks() {
             @Override
-            public void finish(String reviewId, String commentId) {
-                finished.add(reviewId + ":" + commentId);
+            public void finish(ReplyKey reply, Runnable recordEnding) {
+                finished.add(reply.reviewId() + ":" + reply.commentId());
+                recordEnding.run();
             }
         };
         return endings;

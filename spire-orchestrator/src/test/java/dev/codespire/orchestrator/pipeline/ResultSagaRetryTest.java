@@ -648,11 +648,7 @@ class ResultSagaRetryTest {
         ResultSaga saga = new ResultSaga();
         saga.findings = SILENT_FINDINGS;
         saga.preferenceFilter = NO_PREFERENCES;
-        saga.timeline = new TimelineBroadcaster() {
-            @Override
-            public void record(String lane, String type, String reviewId, String detail) {
-            }
-        };
+        saga.timeline = HarnessSagaFakes.timeline(new ArrayList<>());
         saga.threads = new ReviewThreadView() {
             @Override
             public ThreadRef rootOf(String reviewId, ThreadRef thread) {
@@ -692,7 +688,6 @@ class ResultSagaRetryTest {
                 answeringCalls.add(answering);
             }
         };
-
         saga.followUpEndings = HarnessSagaFakes.endings(saga.projection, new ArrayList<>());
 
         saga.on(new FollowUpPosted(REVIEW_ID, new ThreadRef("t-1"), "c-1", true, null));

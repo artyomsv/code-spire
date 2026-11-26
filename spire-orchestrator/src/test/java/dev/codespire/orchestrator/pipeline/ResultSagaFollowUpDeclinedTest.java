@@ -5,6 +5,7 @@ import dev.codespire.contract.event.FollowUpDeclineReason;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.TestRepositoryProjection;
 import dev.codespire.orchestrator.readmodel.AnsweringMarks;
+import dev.codespire.orchestrator.readmodel.ReplyKey;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
 import org.junit.jupiter.api.Test;
 
@@ -84,8 +85,9 @@ class ResultSagaFollowUpDeclinedTest {
         };
         endings.answering = new AnsweringMarks() {
             @Override
-            public void finish(String reviewId, String commentId) {
-                answering.add(reviewId + ":" + commentId);
+            public void finish(ReplyKey reply, Runnable recordEnding) {
+                answering.add(reply.reviewId() + ":" + reply.commentId());
+                recordEnding.run();
             }
         };
         saga.followUpEndings = endings;

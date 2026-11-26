@@ -15,6 +15,7 @@ import dev.codespire.orchestrator.factory.FixTargets;
 import dev.codespire.orchestrator.llm.CallRefs;
 import dev.codespire.orchestrator.prompt.WorkerPromptTemplates;
 import dev.codespire.orchestrator.readmodel.AnsweringMarks;
+import dev.codespire.orchestrator.readmodel.ReplyKey;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
 import dev.codespire.orchestrator.repository.ReviewHarness;
@@ -238,8 +239,9 @@ class HarnessReplyLaunchTest {
     private AnsweringMarks marks() {
         return new AnsweringMarks() {
             @Override
-            public void finish(String reviewId, String commentId) {
-                answering.add(commentId);
+            public void finish(ReplyKey reply, Runnable recordEnding) {
+                answering.add(reply.commentId());
+                recordEnding.run();
             }
         };
     }

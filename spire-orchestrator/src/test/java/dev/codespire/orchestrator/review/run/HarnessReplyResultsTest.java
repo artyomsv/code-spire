@@ -14,6 +14,7 @@ import dev.codespire.orchestrator.pipeline.CommandsEmitter;
 import dev.codespire.orchestrator.provider.ConversationLevels;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.AnsweringMarks;
+import dev.codespire.orchestrator.readmodel.ReplyKey;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import org.junit.jupiter.api.Test;
@@ -163,11 +164,7 @@ class HarnessReplyResultsTest {
                 return reviewerCredential;
             }
         };
-        results.levels = new ConversationLevels() {
-            @Override public int maxAttempts() { return 3; }
-            @Override public long backoffBaseMs() { return 100L; }
-            @Override public double backoffFactor() { return 2.0; }
-        };
+        results.levels = levels();
         results.commands = new CommandsEmitter() {
             @Override
             public void emit(ActionCommand command) {
@@ -181,17 +178,31 @@ class HarnessReplyResultsTest {
             }
         };
         results.projection = projection();
-        results.answering = new AnsweringMarks() {
-            @Override
-            public void finish(String reviewId, String commentId) {
-                answering.add(commentId);
-            }
-        };
+        results.answering = marks();
         results.runRows = new FactoryRunProjection() {
             @Override public Optional<String> harnessOf(String runId) { return Optional.of("TEST-harness"); }
             @Override protected void push(String runId) { /* nothing: no live feed from a unit test */ }
         };
         return results;
+    }
+
+    private static ConversationLevels levels() {
+        return new ConversationLevels() {
+            @Override public int maxAttempts() { return 3; }
+            @Override public long backoffBaseMs() { return 100L; }
+            @Override public double backoffFactor() { return 2.0; }
+        };
+    }
+
+    /** Each reply a failure or refusal finished lands in {@link #answering} by its triggering comment. */
+    private AnsweringMarks marks() {
+        return new AnsweringMarks() {
+            @Override
+            public void finish(ReplyKey reply, Runnable recordEnding) {
+                answering.add(reply.commentId());
+                recordEnding.run();
+            }
+        };
     }
 
     /** The real one writes review_status and the history; this one records both. */

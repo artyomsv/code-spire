@@ -87,12 +87,7 @@ abstract class IntegrationSagaFixture {
                 return lifecycleResult;
             }
         };
-        saga.commands = new CommandsEmitter() {
-            @Override
-            public void emit(ActionCommand command) {
-                emitted.add(command);
-            }
-        };
+        saga.commands = HarnessSagaFakes.commands(emitted);
         saga.timeline = new TimelineBroadcaster() {
             @Override
             public void record(String lane, String type, String reviewId, String detail) {

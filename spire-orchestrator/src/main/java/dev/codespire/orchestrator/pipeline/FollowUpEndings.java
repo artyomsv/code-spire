@@ -6,6 +6,7 @@ import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.event.IntegrationEvent.TurnCapNotified;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.readmodel.AnsweringMarks;
+import dev.codespire.orchestrator.readmodel.ReplyKey;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -39,36 +40,46 @@ public class FollowUpEndings {
             projection.setAnswering(e.reviewId(), false);
             return;
         }
-        answering.finish(e.reviewId(), e.triggeringCommentId());
+        answering.finish(new ReplyKey(e.reviewId(), e.triggeringCommentId()));
     }
 
     /**
      * Said under the conversation root, and only this comment's outstanding reply ended (V122, review of PR #457):
-     * reply B's decline must not clear the mark while reply A is still being answered. {@code ALREADY_ANSWERED} is a
-     * redelivery of a comment the bot did answer, so its reply ends but nothing is recorded: the history would
-     * otherwise say an answered reply went unanswered, once per redelivery.
+     * reply B's decline must not clear the mark while reply A is still being answered. The line is recorded only by
+     * the decline that consumed the reply's outstanding row, so a redelivered decline, or one arriving after the reply
+     * was answered, after the pull request closed or after a newer ask, adds no line (code-quality/M-1). {@code
+     * ALREADY_ANSWERED} is a redelivery of a comment the bot did answer, so its reply ends but nothing is recorded: the
+     * history would otherwise say an answered reply went unanswered.
      */
     public void declined(FollowUpDeclined declined) {
-        if (declined.reason() != FollowUpDeclineReason.ALREADY_ANSWERED) {
-            // A null thread only from a hand-built record (a DLQ replay): rootOf binds it into a statement.
-            String root = declined.threadRef() == null
-                    ? null : threads.rootOf(declined.reviewId(), declined.threadRef()).value();
-            projection.appendEvent(declined.reviewId(), "result", DECLINED, detail(declined.reason()), root);
+        ReplyKey reply = new ReplyKey(declined.reviewId(), declined.triggeringCommentId());
+        if (declined.reason() == FollowUpDeclineReason.ALREADY_ANSWERED) {
+            answering.finish(reply);
+            return;
         }
-        answering.finish(declined.reviewId(), declined.triggeringCommentId());
+        answering.finish(reply, () -> record(declined));
+    }
+
+    private void record(FollowUpDeclined declined) {
+        // A null thread only from a hand-built record (a DLQ replay): rootOf binds it into a statement.
+        String root = declined.threadRef() == null
+                ? null : threads.rootOf(declined.reviewId(), declined.threadRef()).value();
+        projection.appendEvent(declined.reviewId(), "result", DECLINED, detail(declined.reason()), root);
     }
 
     /**
      * The turn-cap notice: no bumpTurn, since the notice about running out of turns must not consume one. Linked to
      * the root anyway, so a human replying to the notice (on an SCM that threads by immediate parent) is still
      * recognized as this conversation. The "responding" mark is left alone: a cap notice never set one (ReplyDispatch
-     * marks only a real answer), so clearing here would only drop another reply's mark while it is being answered.
+     * marks only a real answer), so clearing here would only drop another reply's mark while it is being answered. The
+     * review is still broadcast, so an open dashboard shows the notice (code-quality/M-3).
      */
     public void capped(TurnCapNotified e) {
         ThreadRef root = threads.rootOf(e.reviewId(), e.threadRef());
         projection.appendEvent(e.reviewId(), "result", "TurnCapNotified",
                 "turn cap reached — handed back to the team", root.value());
         threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
+        projection.touch(e.reviewId());
     }
 
     static String detail(FollowUpDeclineReason reason) {

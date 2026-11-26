@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.pipeline;
 
 import dev.codespire.orchestrator.readmodel.AnsweringMarks;
+import dev.codespire.orchestrator.readmodel.ReplyKey;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 
 import java.util.List;
@@ -21,12 +22,12 @@ final class ReplyDispatchFakes {
         replies.commands = commands;
         replies.answering = new AnsweringMarks() {
             @Override
-            public void start(String reviewId, String commentId) {
-                marks.add(reviewId + ":" + commentId);
+            public void start(ReplyKey reply) {
+                marks.add(reply.reviewId() + ":" + reply.commentId());
             }
 
             @Override
-            public void finish(String reviewId, String commentId) {
+            public void finish(ReplyKey reply, Runnable recordEnding) {
                 throw new AssertionError("dispatching a reply finishes no mark");
             }
         };

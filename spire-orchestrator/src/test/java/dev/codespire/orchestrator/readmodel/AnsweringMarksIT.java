@@ -48,8 +48,8 @@ class AnsweringMarksIT {
     @Test
     void aDeclineOfOneReplyKeepsTheMarkUntilTheOtherEnds() {
         String reviewId = registered(1);
-        marks.start(reviewId, "TEST-comment-A");
-        marks.start(reviewId, "TEST-comment-B");
+        marks.start(new ReplyKey(reviewId, "TEST-comment-A"));
+        marks.start(new ReplyKey(reviewId, "TEST-comment-B"));
 
         endings.declined(new FollowUpDeclined(reviewId, THREAD_B, "TEST-comment-B",
                 FollowUpDeclineReason.MULTI_PARTY_NO_MENTION));
@@ -64,13 +64,13 @@ class AnsweringMarksIT {
     @Test
     void aLateResultOfAnEarlierReplyKeepsALaterOnesMark() {
         String reviewId = registered(2);
-        marks.start(reviewId, "TEST-comment-A");
-        marks.start(reviewId, "TEST-comment-B");
+        marks.start(new ReplyKey(reviewId, "TEST-comment-A"));
+        marks.start(new ReplyKey(reviewId, "TEST-comment-B"));
 
-        marks.finish(reviewId, "TEST-comment-A");
+        marks.finish(new ReplyKey(reviewId, "TEST-comment-A"));
         assertEquals("true|TEST-comment-B", markOf(reviewId));
 
-        marks.finish(reviewId, "TEST-comment-B");
+        marks.finish(new ReplyKey(reviewId, "TEST-comment-B"));
         assertEquals("false|", markOf(reviewId));
     }
 
@@ -78,12 +78,12 @@ class AnsweringMarksIT {
     @Test
     void aRepeatedAskOrResultChangesNothing() {
         String reviewId = registered(3);
-        marks.start(reviewId, "TEST-comment-A");
-        marks.start(reviewId, "TEST-comment-A");
+        marks.start(new ReplyKey(reviewId, "TEST-comment-A"));
+        marks.start(new ReplyKey(reviewId, "TEST-comment-A"));
         assertEquals("true|TEST-comment-A", markOf(reviewId));
 
-        marks.finish(reviewId, "TEST-comment-A");
-        marks.finish(reviewId, "TEST-comment-A");
+        marks.finish(new ReplyKey(reviewId, "TEST-comment-A"));
+        marks.finish(new ReplyKey(reviewId, "TEST-comment-A"));
         assertEquals("false|", markOf(reviewId));
     }
 
@@ -93,7 +93,7 @@ class AnsweringMarksIT {
         String reviewId = registered(4);
         projection.setAnswering(reviewId, true);
 
-        marks.finish(reviewId, "TEST-comment-A");
+        marks.finish(new ReplyKey(reviewId, "TEST-comment-A"));
 
         assertEquals("false|", markOf(reviewId));
     }
@@ -105,20 +105,20 @@ class AnsweringMarksIT {
     @Test
     void aClearThatNamesNoCommentDropsEveryReply() {
         String reviewId = registered(5);
-        marks.start(reviewId, "TEST-comment-A");
-        marks.start(reviewId, "TEST-comment-B");
+        marks.start(new ReplyKey(reviewId, "TEST-comment-A"));
+        marks.start(new ReplyKey(reviewId, "TEST-comment-B"));
         projection.setAnswering(reviewId, false);
         assertEquals("false|", markOf(reviewId));
 
-        marks.start(reviewId, "TEST-comment-C");
-        marks.finish(reviewId, "TEST-comment-C");
+        marks.start(new ReplyKey(reviewId, "TEST-comment-C"));
+        marks.finish(new ReplyKey(reviewId, "TEST-comment-C"));
         assertEquals("false|", markOf(reviewId), "A and B went with the clear");
     }
 
     @Test
     void aNewRunDropsEveryReply() {
         String reviewId = registered(6);
-        marks.start(reviewId, "TEST-comment-A");
+        marks.start(new ReplyKey(reviewId, "TEST-comment-A"));
 
         registered(6);
 
@@ -128,7 +128,7 @@ class AnsweringMarksIT {
     /** A reply on a review the read model does not hold yet writes nothing (the row is the lock). */
     @Test
     void aReplyOnAnUnknownReviewWritesNothing() {
-        marks.start("review::ws/answering-it#404", "TEST-comment-A");
+        marks.start(new ReplyKey("review::ws/answering-it#404", "TEST-comment-A"));
 
         assertEquals(List.of(), repliesOf("review::ws/answering-it#404"));
     }
