@@ -206,4 +206,19 @@ describe('isAwaitingReply with comment ids', () => {
     expect(isAwaitingReply([turn('AuthorReplied'), turn('AuthorReplied'), named('FollowUpDeclined', 'TEST-A')]))
       .toBe(true);
   });
+
+  /** code-quality/M-6: a reply stored before V122 and redelivered after it is stored twice, once without its id. */
+  it('ends both copies of a redelivered legacy reply with its named ending', () => {
+    const replayed = [turn('AuthorReplied'), named('AuthorReplied', 'TEST-A')];
+    expect(isAwaitingReply(replayed)).toBe(true);
+    expect(isAwaitingReply([...replayed, named('FollowUpGenerated', 'TEST-A')])).toBe(false);
+    expect(isAwaitingReply([...replayed, named('FollowUpDeclined', 'TEST-A')])).toBe(false);
+  });
+
+  it('ends an id-less reply with the answer of a later named one, and keeps another named reply waiting', () => {
+    const events = [turn('AuthorReplied'), turn('FollowUpDeclined'), named('AuthorReplied', 'TEST-B')];
+    expect(isAwaitingReply([...events, named('FollowUpGenerated', 'TEST-B')])).toBe(false);
+    const other = [turn('AuthorReplied'), named('AuthorReplied', 'TEST-A'), named('AuthorReplied', 'TEST-B')];
+    expect(isAwaitingReply([...other, named('FollowUpGenerated', 'TEST-B')])).toBe(true);
+  });
 });

@@ -78,9 +78,34 @@ describe("a finding's conversation", () => {
     expect(html).toContain('responding…');
     expect(html).not.toContain('Not answered');
   });
+
+  /** code-quality/M-6: a reply stored before V122, redelivered with its id after it, then answered. */
+  it('is not pending once a redelivered legacy reply is answered', () => {
+    const html = findingThread([
+      ev('AuthorReplied', '@a: why?', 'c1', 'finding'),
+      named(ev('AuthorReplied', '@a: why?', 'c1', 'finding'), 'TEST-A'),
+      named(ev('FollowUpGenerated', 'Because.', 'c1', 'finding'), 'TEST-A'),
+    ]);
+
+    expect(html).not.toContain('responding…');
+  });
 });
 
 describe('a general discussion thread', () => {
+  /** code-quality/M-6: the legacy reply after the opener, redelivered with its id, then declined. */
+  it('is not pending once a redelivered legacy reply is declined', () => {
+    const html = generalThread([
+      named(ev('AuthorReplied', '@a: overall?', 'm1', 'mention'), 'TEST-O'),
+      named(ev('FollowUpGenerated', 'It is fine.', 'm1', 'mention'), 'TEST-O'),
+      ev('AuthorReplied', '@b: and this?', 'm1', 'mention'),
+      named(ev('AuthorReplied', '@b: and this?', 'm1', 'mention'), 'TEST-B'),
+      named(ev('FollowUpDeclined', DECLINED, 'm1', 'mention'), 'TEST-B'),
+    ]);
+
+    expect(html).not.toContain('responding…');
+    expect(html).toContain(NOTE);
+  });
+
   it('ends the pending reply at a decline and says why', () => {
     const html = generalThread([
       ev('AuthorReplied', '@a: overall?', 'm1', 'mention'),

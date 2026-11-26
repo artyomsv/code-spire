@@ -37,10 +37,13 @@ function askReply(pending: PendingReplies, reply: ReviewEvent): void {
 }
 
 function endReply(pending: PendingReplies, ending: ReviewEvent): void {
-  if (ending.commentId) pending.ended.add(ending.commentId);
-  if (ending.commentId && pending.waiting.delete(ending.commentId)) return;
-  // An ending with no id, or of a reply stored without one: the order rule. An answer ends every earlier reply, a
-  // decline one of them.
+  if (ending.commentId) {
+    pending.ended.add(ending.commentId);
+    pending.waiting.delete(ending.commentId);
+  }
+  // Replies stored without an id fall back to the order rule whichever reply this ending names: a reply stored before
+  // V122 and redelivered after it is stored again with its id, and its named ending must end the id-less copy too
+  // (code-quality/M-6). An answer ends every earlier one, a decline one of them.
   if (ending.type === 'FollowUpGenerated') pending.unnamed = 0;
   else pending.unnamed = Math.max(0, pending.unnamed - 1);
 }
@@ -48,7 +51,7 @@ function endReply(pending: PendingReplies, ending: ReviewEvent): void {
 /**
  * Whether a person's reply still waits for the bot. Each reply carries its comment id, and so do the answer and the
  * decline that end it (V122): a reply waits until an ending with its own id, so a late decline of an older reply never
- * ends a newer one (code-quality/M-1). Events stored without an id fall back to their order.
+ * ends a newer one (code-quality/M-1). Replies stored without an id fall back to their order: any later ending counts.
  */
 export function hasPendingReply(threadEvents: ReviewEvent[]): boolean {
   const pending: PendingReplies = { waiting: new Set(), ended: new Set(), unnamed: 0 };
