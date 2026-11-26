@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.llm;
 import dev.codespire.contract.llm.ModelParams;
 import dev.codespire.orchestrator.settings.AppSettingRepository;
 import dev.codespire.orchestrator.settings.ReviewDiffLimit;
+import dev.codespire.orchestrator.settings.ReviewDiffLimitFixture;
 import org.junit.jupiter.api.Test;
 
 import java.sql.SQLException;
@@ -10,7 +11,6 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /** The input a review may send: the catalog window minus the output cap the call really sends. */
 class ReviewInputLimitsTest {
@@ -63,15 +63,15 @@ class ReviewInputLimitsTest {
 
     /** A failed read must not read as "unset": on a million-token window, unset sends about 700,000 tokens of diff. */
     @Test
-    void aFailedLimitReadFailsRatherThanLiftingTheCap() {
-        ReviewDiffLimit failing = new ReviewDiffLimit() {
+    void aFailedLimitReadCapsTheDiffAtTheLowestLimit() {
+        ReviewDiffLimit failing = ReviewDiffLimitFixture.over(new AppSettingRepository() {
             @Override
-            public Optional<Integer> current() {
-                throw new AppSettingRepository.ReadFailed(ReviewDiffLimit.KEY, new SQLException("TEST-unreachable"));
+            public Optional<String> getStrictly(String key) {
+                throw new ReadFailed(key, new SQLException("TEST-unreachable"));
             }
-        };
+        });
 
-        assertThrows(AppSettingRepository.ReadFailed.class, () -> limitsWith(failing).forModel("TEST-model", null));
+        assertEquals(ReviewDiffLimit.MIN_TOKENS, limitsWith(failing).forModel("TEST-model", null).diffTokenCap());
     }
 
     /** A known window, so an unset limit is the large answer. */

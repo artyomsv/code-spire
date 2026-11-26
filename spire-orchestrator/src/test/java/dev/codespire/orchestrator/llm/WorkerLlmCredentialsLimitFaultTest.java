@@ -1,10 +1,12 @@
 package dev.codespire.orchestrator.llm;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.llm.ModelParamProfile;
 import dev.codespire.encryption.EncryptionService;
 import dev.codespire.orchestrator.settings.AppSettingRepository;
 import dev.codespire.orchestrator.settings.ReviewDiffLimit;
+import dev.codespire.orchestrator.settings.ReviewDiffLimitFixture;
 import org.junit.jupiter.api.Test;
 
 import java.sql.SQLException;
@@ -13,34 +15,59 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PR 456, security/M-1: the Review diff limit cannot be read, on a model whose catalog window is known. The pack
- * throws, as a failed read of the default provider does, and no credential is encrypted, so no review is sent with the
- * operator's cap lifted. That the throw becomes a scheduled retry is ResultSagaLimitReadTest's. Hand-built with
- * fakes: no container, no database.
+ * PR 456, security/M-1 and code-quality/M-4: the Review diff limit as the credential pack reads it, on a model whose
+ * catalog window is known. A failed read packs the documented conservative bound, a 24,000-token diff cap, as an
+ * invalid row does, so the review goes on and the operator's cap is never lifted; only no row packs none. The real
+ * {@link ReviewDiffLimit} over a repository fake: no container, no database.
  */
 class WorkerLlmCredentialsLimitFaultTest {
 
+    private static final String WORKSPACE = "TEST-ws";
+
     private final List<String> encrypted = new ArrayList<>();
+    private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
-    void aFailedLimitReadEncryptsNoCredential() {
-        WorkerLlmCredentials credentials = credentialsWith(knownWindowWithUnreadableLimit());
+    void aFailedLimitReadPacksTheLowestLimit() throws Exception {
+        DefaultLlm llm = credentialsWith(unreachableSetting()).resolveDefault(WORKSPACE);
 
-        assertThrows(AppSettingRepository.ReadFailed.class, () -> credentials.resolveDefault("TEST-ws"));
-        assertTrue(encrypted.isEmpty(), "no credential is packed without its cap");
+        assertTrue(llm.isSpendable(), "a failed limit read never blocks a review: " + llm.detail());
+        assertEquals(ReviewDiffLimit.MIN_TOKENS, packedDiffTokenCap().asInt());
     }
 
-    private WorkerLlmCredentials credentialsWith(ReviewInputLimits limits) {
+    @Test
+    void anInvalidStoredLimitPacksTheLowestLimit() throws Exception {
+        credentialsWith(holding("TEST-abc")).resolveDefault(WORKSPACE);
+
+        assertEquals(ReviewDiffLimit.MIN_TOKENS, packedDiffTokenCap().asInt());
+    }
+
+    @Test
+    void noStoredLimitPacksNone() throws Exception {
+        credentialsWith(holding(null)).resolveDefault(WORKSPACE);
+
+        JsonNode cap = packedDiffTokenCap();
+
+        assertTrue(cap.isNull() || cap.isMissingNode(), "unset is the operator's own choice: " + cap);
+    }
+
+    /** The cap as the JSON the worker decrypts carries it. */
+    private JsonNode packedDiffTokenCap() throws Exception {
+        assertEquals(1, encrypted.size(), "exactly one credential is packed");
+        return mapper.readTree(encrypted.getFirst()).path("diffTokenCap");
+    }
+
+    private WorkerLlmCredentials credentialsWith(AppSettingRepository settings) {
         WorkerLlmCredentials credentials = new WorkerLlmCredentials();
         credentials.registry = oneDefaultProvider();
         credentials.models = priceableModels();
         credentials.encryption = recordingEncryption();
-        credentials.mapper = new ObjectMapper();
-        credentials.inputLimits = limits;
+        credentials.mapper = mapper;
+        credentials.inputLimits = knownWindowOver(settings);
         return credentials;
     }
 
@@ -78,19 +105,33 @@ class WorkerLlmCredentialsLimitFaultTest {
         };
     }
 
-    private static ReviewInputLimits knownWindowWithUnreadableLimit() {
+    private static ReviewInputLimits knownWindowOver(AppSettingRepository settings) {
         ReviewInputLimits limits = new ReviewInputLimits() {
             @Override
             Optional<Long> contextWindow(String model) {
                 return Optional.of(1_000_000L);
             }
         };
-        limits.diffLimit = new ReviewDiffLimit() {
+        limits.diffLimit = ReviewDiffLimitFixture.over(settings);
+        return limits;
+    }
+
+    /** The strict read throws, as {@link AppSettingRepository#getStrictly} does when the database is down. */
+    private static AppSettingRepository unreachableSetting() {
+        return new AppSettingRepository() {
             @Override
-            public Optional<Integer> current() {
-                throw new AppSettingRepository.ReadFailed(ReviewDiffLimit.KEY, new SQLException("TEST-unreachable"));
+            public Optional<String> getStrictly(String key) {
+                throw new ReadFailed(key, new SQLException("TEST-unreachable"));
             }
         };
-        return limits;
+    }
+
+    private static AppSettingRepository holding(String value) {
+        return new AppSettingRepository() {
+            @Override
+            public Optional<String> getStrictly(String key) {
+                return Optional.ofNullable(value);
+            }
+        };
     }
 }

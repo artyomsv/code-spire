@@ -463,7 +463,8 @@ class ResultSagaPricingTest {
                 return Optional.of("packed-scm-cred");
             }
         };
-        // Priceability arrives WITH the credential, so this one fake decides both: none comes without that answer.
+        // Priceability now arrives WITH the credential, so this one fake decides both — a caller can no
+        // longer resolve a credential without being told whether spending it can be priced.
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
             public DefaultLlm resolveForReview(String reviewId) {
@@ -471,7 +472,6 @@ class ResultSagaPricingTest {
                         : DefaultLlm.notPriceable(model);
             }
         };
-        saga.limitDeferral = LimitReadDeferralFakes.none();
         saga.llmModels = new LlmModelRegistry() {
             @Override
             public List<ChargeLine> priceCall(String candidate, ModelUsage usage) {

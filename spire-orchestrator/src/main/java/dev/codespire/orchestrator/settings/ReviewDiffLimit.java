@@ -12,11 +12,12 @@ import java.util.Optional;
  * worker never lowers a diff below today's fixed budget for it (review input limit design, 2026-11-26).
  *
  * <p>Read fresh on every credential pack, so a change applies to the next review without a restart. Unset is the
- * expensive answer, so the pack reads it strictly ({@link #current}): a failed read throws, and the review saga turns
- * it into a deferral rather than sending a review uncapped (PR 456, security/M-1, code-quality/M-4). A stored value
- * outside the range never blocks a review: it reads as {@link #MIN_TOKENS}, a 24,000-token diff cap (with a known
- * window a RECONCILE may get up to 24,000, more than its old 12,000), and an attention row and the settings screen say
- * so until it is saved again.
+ * expensive answer, so the pack reads it strictly ({@link #current}) and never takes a fault for unset. A failed read
+ * and a stored value outside the range both read as {@link #MIN_TOKENS}, the documented conservative bound: a
+ * 24,000-token diff cap (with a known window a RECONCILE may get up to 24,000, more than its old 12,000). The review
+ * goes on, the operator's cap is never lifted, and a WARN says so (PR 456, security/M-1, code-quality/M-4). An invalid
+ * row also raises an attention row and is flagged on the settings screen until it is saved again; a failed read raises
+ * none, since the attention row is derived from the same database that just failed to answer.
  */
 @ApplicationScoped
 public class ReviewDiffLimit {
@@ -46,13 +47,18 @@ public class ReviewDiffLimit {
     }
 
     /**
-     * The limit a review is packed with, or empty when no row is stored. An invalid stored value reads as
-     * {@link #MIN_TOKENS}, never as unset: unset would lift the operator's cap.
-     *
-     * @throws AppSettingRepository.ReadFailed when the database read fails
+     * The limit a review is packed with, or empty when no row is stored. A failed read and an invalid stored value
+     * read as {@link #MIN_TOKENS}, never as unset: unset would lift the operator's cap.
      */
     public Optional<Integer> current() {
-        Optional<String> stored = settings.getStrictly(KEY);
+        Optional<String> stored;
+        try {
+            stored = settings.getStrictly(KEY);
+        } catch (AppSettingRepository.ReadFailed e) {
+            LOG.warnf(e.getCause(), "app_setting %s could not be read; this review is packed with %d",
+                    KEY, MIN_TOKENS);
+            return Optional.of(MIN_TOKENS);
+        }
         if (stored.isEmpty()) {
             return Optional.empty();
         }

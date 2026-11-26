@@ -8,12 +8,11 @@ import java.sql.SQLException;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * PR 456: unset is the expensive answer for the Review diff limit, so the credential pack reads it strictly. A
- * database fault throws rather than read as unset (security/M-1); a stored value outside the range reads as the lowest
+ * database fault (security/M-1, code-quality/M-4) and a stored value outside the range both read as the lowest
  * limit, never as unset and never as a block on reviews (code-quality/M-5). The settings screen tells an invalid row
  * apart from no row, so a blank save can clear it. No container: a real repository over a database that is down, and
  * a repository holding a given row.
@@ -21,10 +20,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ReviewDiffLimitReadTest {
 
     @Test
-    void aDatabaseFaultIsNotUnset() {
+    void aDatabaseFaultReadsAsTheLowestLimit() {
         ReviewDiffLimit limit = over(unreachableRepository());
 
-        assertThrows(AppSettingRepository.ReadFailed.class, limit::current);
+        assertEquals(Optional.of(ReviewDiffLimit.MIN_TOKENS), limit.current(), "never unset, never a block");
     }
 
     @Test

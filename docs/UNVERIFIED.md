@@ -65,15 +65,13 @@ Design: docs/superpowers/specs/2026-11-26-review-input-limit-design.md.
   on any other path, including one in a section the parser cannot read, stays UNCHANGED. Git's C-quoted paths are
   decoded (octal and the simple escapes); a header no rule reads is simply not seen. The rendered full-diff fallback
   is measured exactly. Tests only, including a quoted rename past the cut replayed through posting.
-- **An unreadable Review diff limit defers the review, proven by tests only** (PR 456, round 4).
-  `ResultSagaLimitReadTest` throws `AppSettingRepository.ReadFailed` from the credential pack on `ContextAssembled`
-  against a fake deferral store: no `GenerateReview`, no retry attempt, a terminal failure naming the setting once the
-  store answers `EXPIRED`, and a recovered read that dispatches `GenerateReview`. `ReviewLimitDeferralsTest` runs the
-  V122 SQL on a real database (due time kept by a duplicate before and after the sweep, attempt unchanged, 60-minute
-  window per head). Not proven: the row lock under truly concurrent deliveries (the tests are sequential), and a
-  database that fails the deferral write as well as the read, which still dead-letters `ContextAssembled` for manual
-  replay. A stale duplicate after the sweep schedules one extra pipeline run, at no attempt cost. No real database
-  fault has been injected on a live stack, and a reply's pack fault is dead-lettered for manual replay, not retried.
+- **A failed read of the Review diff limit reviews at 24,000, proven by tests only** (PR 456, round 5).
+  `WorkerLlmCredentialsLimitFaultTest` and `ReviewInputLimitsTest` throw `AppSettingRepository.ReadFailed` from the
+  strict read under the real `ReviewDiffLimit` and assert a packed `diffTokenCap` of 24,000; no row packs none. No
+  saga-level test: the saga never sees the fault, and the dispatch after a pack is covered by the existing saga tests.
+  Not proven: a real database fault on a live stack, and the WARN line in a real log. A provider read that fails in the
+  same outage still throws before the limit is read and dead-letters the event, as before this branch. A failed read
+  raises no attention row (the rows are read from the same database), so only the log tells.
 - **An invalid stored Review diff limit reviews at 24,000** (PR 456, round 2): proven by `WorkerLlmCredentialsTest`
   on a real database and by the General form's test with a stubbed API; the `DIFF_LIMIT_INVALID` row and the blank
   Save have not been seen on a live stack.

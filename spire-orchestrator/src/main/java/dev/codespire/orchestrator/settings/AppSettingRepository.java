@@ -48,7 +48,7 @@ public class AppSettingRepository {
     /**
      * The stored value, or empty when unset, telling a failed read apart: a database fault throws instead of reading
      * as unset. For a setting whose absence lifts a limit, where "unset" is the expensive answer (the Review diff
-     * limit, PR 456); the caller's failure is retried as any other database fault is.
+     * limit, PR 456, which reads a fault as its lowest limit).
      *
      * @throws ReadFailed wrapping the {@link SQLException} when the read fails
      */
