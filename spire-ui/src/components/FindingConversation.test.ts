@@ -172,3 +172,38 @@ describe('isAwaitingReply', () => {
     expect(isAwaitingReply(declined)).toBe(false);
   });
 });
+
+/** Replies and their endings carry the reply's comment id (V122): each reply ends only with its own ending. */
+describe('isAwaitingReply with comment ids', () => {
+  const named = (type: string, commentId: string): ReviewEvent => ({ ...turn(type), commentId });
+
+  /** code-quality/M-1: A's late decline after B was answered and C was asked must not end C. */
+  it('keeps a newer reply pending when an older one is declined after another answer', () => {
+    const events = [
+      named('AuthorReplied', 'TEST-A'), named('AuthorReplied', 'TEST-B'), named('FollowUpGenerated', 'TEST-B'),
+      named('AuthorReplied', 'TEST-C'), named('FollowUpDeclined', 'TEST-A'),
+    ];
+    expect(isAwaitingReply(events)).toBe(true);
+    expect(isAwaitingReply([...events, named('FollowUpGenerated', 'TEST-C')])).toBe(false);
+  });
+
+  it('does not end a reply with an answer to another one', () => {
+    const events = [
+      named('AuthorReplied', 'TEST-A'), named('AuthorReplied', 'TEST-B'), named('FollowUpGenerated', 'TEST-B'),
+    ];
+    expect(isAwaitingReply(events)).toBe(true);
+  });
+
+  it('does not wait again on a redelivered reply that was already answered', () => {
+    const events = [
+      named('AuthorReplied', 'TEST-A'), named('FollowUpGenerated', 'TEST-A'), named('AuthorReplied', 'TEST-A'),
+    ];
+    expect(isAwaitingReply(events)).toBe(false);
+  });
+
+  it('ends a reply stored without an id by the order rule', () => {
+    expect(isAwaitingReply([turn('AuthorReplied'), named('FollowUpGenerated', 'TEST-A')])).toBe(false);
+    expect(isAwaitingReply([turn('AuthorReplied'), turn('AuthorReplied'), named('FollowUpDeclined', 'TEST-A')]))
+      .toBe(true);
+  });
+});

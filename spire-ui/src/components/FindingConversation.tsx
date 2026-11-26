@@ -50,8 +50,8 @@ export async function refreshThread(
   return { loadedAtCount: replyCount, messages };
 }
 
-/** The thread is "awaiting the bot's answer" while a human reply since the bot's last answer (FollowUpGenerated) has
- *  not been ended by its own decline (FollowUpDeclined): one decline ends one reply. */
+/** The thread is "awaiting the bot's answer" while a human reply has no answer (FollowUpGenerated) or decline
+ *  (FollowUpDeclined) of its own, matched by comment id; rows without an id are matched by their order. */
 export function isAwaitingReply(threadEvents: ReviewEvent[]): boolean {
   return hasPendingReply(threadEvents);
 }

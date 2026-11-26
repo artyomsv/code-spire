@@ -365,6 +365,7 @@ export interface ReviewEvent {
   // 'path:line' when the thread sits in the diff. A conversation the bot didn't start has no finding
   // to nest under, so this is the only thing that shows it is anchored rather than general.
   loc?: string;
+  commentId?: string | null; // the person's reply a conversation event belongs to (V122); absent on older rows
 }
 
 // The detail endpoint's Java record omits the list-only ReviewSummary components named below. Omit<> makes reading one

@@ -13,6 +13,9 @@ const ev = (type: string, det: string, threadRef: string, threadKind: ReviewEven
   ts: '2026-07-18T00:00:00Z', at: '+1s', lane: 'integration', type, det, threadRef, threadKind,
 });
 
+/** The same event, tagged with the reply it belongs to (V122). */
+const named = (e: ReviewEvent, commentId: string): ReviewEvent => ({ ...e, commentId });
+
 const DECLINED = 'reply not answered: another person is in the thread and the reply did not mention the bot';
 const NOTE = 'Not answered: another person is in the thread and the reply did not mention the bot';
 
@@ -56,6 +59,20 @@ describe("a finding's conversation", () => {
       ev('AuthorReplied', '@a: why?', 'c1', 'finding'),
       ev('AuthorReplied', '@b: @bot why?', 'c1', 'finding'),
       ev('FollowUpDeclined', DECLINED, 'c1', 'finding'),
+    ]);
+
+    expect(html).toContain('responding…');
+    expect(html).not.toContain('Not answered');
+  });
+
+  /** code-quality/M-1: ask A, ask B, B answered, ask C, then A's late decline. C is still being answered. */
+  it('stays pending when an older reply is declined after another answer and a newer ask', () => {
+    const html = findingThread([
+      named(ev('AuthorReplied', '@a: why?', 'c1', 'finding'), 'TEST-A'),
+      named(ev('AuthorReplied', '@b: @bot why?', 'c1', 'finding'), 'TEST-B'),
+      named(ev('FollowUpGenerated', 'Because.', 'c1', 'finding'), 'TEST-B'),
+      named(ev('AuthorReplied', '@c: @bot and this?', 'c1', 'finding'), 'TEST-C'),
+      named(ev('FollowUpDeclined', DECLINED, 'c1', 'finding'), 'TEST-A'),
     ]);
 
     expect(html).toContain('responding…');

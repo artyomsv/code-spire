@@ -23,19 +23,40 @@ export function lastConversationEvent(threadEvents: ReviewEvent[]): ReviewEvent 
   return conversation[conversation.length - 1];
 }
 
+/** The replies a thread still waits on: by comment id, plus a count of those stored without one (before V122). */
+interface PendingReplies {
+  waiting: Set<string>;
+  ended: Set<string>;
+  unnamed: number;
+}
+
+function askReply(pending: PendingReplies, reply: ReviewEvent): void {
+  if (!reply.commentId) pending.unnamed += 1;
+  // A redelivered reply the bot already answered or declined is not waiting again.
+  else if (!pending.ended.has(reply.commentId)) pending.waiting.add(reply.commentId);
+}
+
+function endReply(pending: PendingReplies, ending: ReviewEvent): void {
+  if (ending.commentId) pending.ended.add(ending.commentId);
+  if (ending.commentId && pending.waiting.delete(ending.commentId)) return;
+  // An ending with no id, or of a reply stored without one: the order rule. An answer ends every earlier reply, a
+  // decline one of them.
+  if (ending.type === 'FollowUpGenerated') pending.unnamed = 0;
+  else pending.unnamed = Math.max(0, pending.unnamed - 1);
+}
+
 /**
- * Whether a person's reply still waits for the bot. Since its last answer, every reply waits until a decline ends one:
- * the server records a decline only for a reply it was still answering, once (code-quality/M-1). So two replies and one
- * late decline of the first leave the second pending, whatever order they were stored in.
+ * Whether a person's reply still waits for the bot. Each reply carries its comment id, and so do the answer and the
+ * decline that end it (V122): a reply waits until an ending with its own id, so a late decline of an older reply never
+ * ends a newer one (code-quality/M-1). Events stored without an id fall back to their order.
  */
 export function hasPendingReply(threadEvents: ReviewEvent[]): boolean {
-  let replies = 0;
+  const pending: PendingReplies = { waiting: new Set(), ended: new Set(), unnamed: 0 };
   for (const e of threadEvents) {
-    if (e.type === 'FollowUpGenerated') replies = 0;
-    else if (e.type === 'AuthorReplied') replies += 1;
-    else if (e.type === 'FollowUpDeclined') replies = Math.max(0, replies - 1);
+    if (e.type === 'AuthorReplied') askReply(pending, e);
+    else if (e.type === 'FollowUpGenerated' || e.type === 'FollowUpDeclined') endReply(pending, e);
   }
-  return replies > 0;
+  return pending.waiting.size > 0 || pending.unnamed > 0;
 }
 
 /** The server's detail reads "reply not answered: <why>"; the note keeps only the why. */
