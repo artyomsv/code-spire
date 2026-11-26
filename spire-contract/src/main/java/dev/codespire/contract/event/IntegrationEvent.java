@@ -48,6 +48,7 @@ import java.util.Set;
         @JsonSubTypes.Type(value = IntegrationEvent.CommentsPosted.class, name = "CommentsPosted"),
         @JsonSubTypes.Type(value = IntegrationEvent.FollowUpGenerated.class, name = "FollowUpGenerated"),
         @JsonSubTypes.Type(value = IntegrationEvent.FollowUpPosted.class, name = "FollowUpPosted"),
+        @JsonSubTypes.Type(value = IntegrationEvent.FollowUpDeclined.class, name = "FollowUpDeclined"),
         @JsonSubTypes.Type(value = IntegrationEvent.TurnCapNotified.class, name = "TurnCapNotified"),
         @JsonSubTypes.Type(value = IntegrationEvent.ArchivedNotified.class, name = "ArchivedNotified"),
         @JsonSubTypes.Type(value = IntegrationEvent.FindingConfirmed.class, name = "FindingConfirmed"),
@@ -413,6 +414,26 @@ public sealed interface IntegrationEvent {
      */
     record FollowUpPosted(String reviewId, ThreadRef threadRef, String commentId, boolean countsTurn)
             implements IntegrationEvent {
+    }
+
+    /**
+     * The worker chose not to answer a reply it was asked to answer: nothing was posted and no model was called.
+     * Without it the orchestrator's "answering" flag, set when it sent the ask, stayed up until the next review run
+     * (production PR #456: a third person replied without mentioning the bot). {@code threadRef} is the thread the
+     * ask named. Deliberately NOT a {@link FollowUpPosted}: nothing was said, so no turn is counted.
+     */
+    record FollowUpDeclined(String reviewId, ThreadRef threadRef, String triggeringCommentId, Reason reason)
+            implements IntegrationEvent {
+
+        /** Why the reply went unanswered. */
+        public enum Reason {
+            /** The forge's comment sink cannot read a thread, so replies are unsupported there. */
+            NO_THREAD_SOURCE,
+            /** A second person is in the thread and the reply did not mention the bot (scope "smart 1:1"). */
+            MULTI_PARTY_NO_MENTION,
+            /** This comment was answered already: a redelivery. */
+            ALREADY_ANSWERED
+        }
     }
 
     /**

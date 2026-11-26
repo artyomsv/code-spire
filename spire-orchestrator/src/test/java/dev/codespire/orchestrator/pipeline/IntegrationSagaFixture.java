@@ -51,6 +51,8 @@ abstract class IntegrationSagaFixture {
     final List<String> appendedEvents = new ArrayList<>();
     /** Reviews whose live harness runs a close asked to stop. */
     final List<String> closedReviewRuns = new ArrayList<>();
+    /** Each "answering" write, as {@code reviewId:answering}. */
+    final List<String> answeringCalls = new ArrayList<>();
     boolean reviewRegistered;
     /** The repository's factory account, when a test names one; otherwise every role answers the reviewer. */
     Optional<ScmProvider> factory;
@@ -190,6 +192,7 @@ abstract class IntegrationSagaFixture {
              */
             @Override
             public void setAnswering(String reviewId, boolean answering) {
+                answeringCalls.add(reviewId + ":" + answering);
             }
         };
         // Third un-overridden method on the path a deleted gate would take. Left null it reaches a

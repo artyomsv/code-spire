@@ -7,6 +7,7 @@ import dev.codespire.contract.event.IntegrationEvent.ContextAssembled;
 import dev.codespire.contract.event.IntegrationEvent.DiffFetched;
 import dev.codespire.contract.event.IntegrationEvent.FindingConfirmed;
 import dev.codespire.contract.event.IntegrationEvent.FindingRefused;
+import dev.codespire.contract.event.IntegrationEvent.FollowUpDeclined;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReplyPrepared;
@@ -154,6 +155,10 @@ public class ResultSaga {
     /** Dispatches a prepared reply's run (harness reviews, step 7). */
     @Inject
     dev.codespire.orchestrator.review.run.HarnessReplyLaunch harnessReplies;
+
+    /** A reply the worker stayed quiet on: recorded, and "answering" cleared (production PR #456). */
+    @Inject
+    FollowUpDeclines followUpDeclines;
 
     /** The phase a harness review's refusal and failure are recorded under. */
     public static final String HARNESS_PHASE = "harness-review";
@@ -387,6 +392,7 @@ public class ResultSaga {
                 // review run's registerHeader reset to clear the flag.
                 projection.setAnswering(e.reviewId(), false);
             }
+            case FollowUpDeclined e -> followUpDeclines.apply(e);
             case TurnCapNotified e -> {
                 ThreadRef root = threads.rootOf(e.reviewId(), e.threadRef());
                 projection.appendEvent(e.reviewId(), "result", "TurnCapNotified",
@@ -908,6 +914,7 @@ public class ResultSaga {
             case CommentsPosted e -> e.reviewId();
             case FollowUpGenerated e -> e.reviewId();
             case FollowUpPosted e -> e.reviewId();
+            case FollowUpDeclined e -> e.reviewId();
             case TurnCapNotified e -> e.reviewId();
             case ArchivedNotified e -> e.reviewId();
             case FindingConfirmed e -> e.reviewId();

@@ -154,6 +154,9 @@ public class IntegrationSaga {
                 boolean merged = e.reason() == CloseReason.MERGED;
                 lifecycle.handle(reviewId, new RecordCommand.CancelReview(e.reason().name()));
                 projection.setPrState(reviewId, merged ? "MERGED" : "CLOSED");
+                // Safety net: a reply still marked "answering" when the pull request ends would keep its mark for
+                // good, since no review run follows a close to reset it (production PR #456).
+                projection.setAnswering(reviewId, false);
                 // The badge alone left no record of WHEN the PR ended, or that it ended at all: the
                 // event history stopped at ReviewCompleted while the header said MERGED. Only the
                 // in-memory timeline saw it, so a restart erased even that.

@@ -8,6 +8,8 @@ import dev.codespire.contract.command.ReplyRetry;
 import dev.codespire.contract.event.IntegrationEvent.ArchivedNotified;
 import dev.codespire.contract.event.IntegrationEvent.FindingConfirmed;
 import dev.codespire.contract.event.IntegrationEvent.FindingRefused;
+import dev.codespire.contract.event.IntegrationEvent.FollowUpDeclined;
+import dev.codespire.contract.event.IntegrationEvent.FollowUpDeclined.Reason;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.event.IntegrationEvent.TurnCapNotified;
@@ -92,6 +94,7 @@ public class FollowUpWorker {
         if (!(clients.comments() instanceof ThreadSource threadSource)) {
             LOG.debugf("No ThreadSource for %s — conversational replies unsupported for this provider",
                     command.reviewId());
+            decline(command, Reason.NO_THREAD_SOURCE);
             return;
         }
         // Re-fetch the thread first (ADR-011): its participants decide whether to engage, BEFORE any paid
@@ -101,6 +104,7 @@ public class FollowUpWorker {
                 threadSource.fetchThread(command.repo(), command.prId(), command.threadRef());
         if (!shouldAnswer(transcript, command.mentioned())) {
             LOG.debugf("Staying quiet on %s — multi-party thread with no @-mention", command.reviewId());
+            decline(command, Reason.MULTI_PARTY_NO_MENTION);
             return;
         }
         // Idempotency per triggering comment: threadRef is the "commit" slot. A redelivered reply for the
@@ -109,6 +113,7 @@ public class FollowUpWorker {
         if (idempotency.claim(command.reviewId(), command.threadRef().value(), key)
                 instanceof CommentIdempotencyStore.Claim.AlreadyPosted) {
             LOG.debugf("Skipping already-answered %s for %s", key, command.reviewId());
+            decline(command, Reason.ALREADY_ANSWERED);
             return;
         }
         WorkerLlmProvider.LlmClient client = llm.forCommand(command);
@@ -122,6 +127,12 @@ public class FollowUpWorker {
         results.emit(new FollowUpGenerated(command.reviewId(), command.threadRef(), result.answerText(),
                 result.usage(), command.triggeringCommentId()));
         results.emit(new FollowUpPosted(command.reviewId(), command.threadRef(), result.postedCommentId(), true));
+    }
+
+    /** Every quiet exit says so, or the orchestrator's "answering" flag, set when it sent the ask, never clears. */
+    private void decline(AnswerFollowUp command, Reason reason) {
+        results.emit(new FollowUpDeclined(command.reviewId(), command.threadRef(), command.triggeringCommentId(),
+                reason));
     }
 
     /**
