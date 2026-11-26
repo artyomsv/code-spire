@@ -45,9 +45,10 @@ final class GitQuotedPath {
                 return new Token(bytes.toString(StandardCharsets.UTF_8), i + 1);
             }
             if (c != ESCAPE) {
-                byte[] encoded = String.valueOf(c).getBytes(StandardCharsets.UTF_8);
+                int codePoint = text.codePointAt(i);
+                byte[] encoded = new String(Character.toChars(codePoint)).getBytes(StandardCharsets.UTF_8);
                 bytes.write(encoded, 0, encoded.length);
-                i++;
+                i += Character.charCount(codePoint);
                 continue;
             }
             int consumed = escape(text, i + 1, bytes);

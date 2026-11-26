@@ -30,6 +30,12 @@ class GitQuotedPathTest {
     }
 
     @Test
+    void aLiteralSupplementaryCharacterSurvivesBesideAnEscape() {
+        String emoji = new String(Character.toChars(0x1F600));
+        assertEquals("src/TEST-" + emoji + "\t.java", GitQuotedPath.unquoteIfQuoted("\"src/TEST-" + emoji + "\\t.java\""));
+    }
+
+    @Test
     void anUnquotedPathIsLeftAsWritten() {
         assertEquals("src/TEST a.java", GitQuotedPath.unquoteIfQuoted("src/TEST a.java"));
     }
