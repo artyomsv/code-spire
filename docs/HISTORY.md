@@ -2784,8 +2784,12 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   The operator also found the reviews list's badges too wide. The Status column is one badge, with a pulsing icon
   for "responding"; PR state and provider are icons (lucide state icons, the forges' logos from `react-icons`, already
   a dependency); the Pipeline column draws segments only, each naming its step and state on hover (and in its `aria-label`), and the
-  strip's accessible name carries the state its dropped word said; Findings is the number only, its new and carried
-  split in the tooltip and in screen-reader text. The review header uses the same status cell and PR state icon. The
+  strip's accessible name carries the state its dropped word said; Findings is one small badge per severity with open
+  findings (the findings card's colours, most severe first, at most three then `+N`), with every severity and the
+  new and carried split in words in the tooltip, in screen-reader text and in the row's focus line. The list row
+  carries `openBySeverity` (`SeverityCounts`: critical, warning, suggestion, nit), counted on read from the same open
+  set as `findings`, carried findings included, with no migration; the detail payload does not carry it. A row
+  without it, or whose counts do not sum to `findings`, keeps the bare number. The review header uses the same status cell and PR state icon. The
   widgets are `ReviewIcons` and `ReviewRowCells` (WIDGETS.md). Analytics keeps its text platform badge.
   **Upgrading.** A new wire event: roll the orchestrator before the review worker, or a worker's
   `FollowUpDeclined` reaches an orchestrator that cannot read it and is logged as a poison record (the mark then

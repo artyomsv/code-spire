@@ -303,7 +303,7 @@
   .tablewrap { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-sm); overflow-x: auto; }
   .thead, .row {
     display: grid;
-    grid-template-columns: 52px 84px 92px minmax(150px, 1fr) 124px minmax(0, 1.25fr) 148px minmax(104px, 0.7fr) 78px 44px 72px 80px;
+    grid-template-columns: 52px 84px 92px minmax(150px, 1fr) 124px minmax(0, 1.25fr) 148px minmax(104px, 0.7fr) 92px 44px 72px 80px;
     align-items: center; gap: 14px;
     padding: 0 18px;
     min-width: 988px;
@@ -398,6 +398,14 @@
   .findcount { font-family: var(--font-mono); font-size: 13px; font-weight: 600; }
   .findcount.zero { color: var(--good); }
   .findcount.some { color: var(--text); }
+  /* The list's findings badges: one per severity with open findings, in the findings card's colours. */
+  .sevbadges { display: inline-flex; gap: 2px; align-items: center; justify-content: flex-end; }
+  .sevbadge { font-family: var(--font-mono); font-size: 11px; font-weight: 700; min-width: 16px; padding: 1px 4px; border-radius: 5px; text-align: center; color: var(--sv); background: var(--sv-soft); }
+  .sevbadge.sev-critical { --sv: var(--crit); --sv-soft: var(--crit-soft); }
+  .sevbadge.sev-warning { --sv: var(--warn); --sv-soft: var(--warn-soft); }
+  .sevbadge.sev-suggestion { --sv: var(--iris); --sv-soft: var(--iris-soft); }
+  .sevbadge.sev-nit { --sv: var(--muted); --sv-soft: var(--muted-soft); }
+  .sevbadge.sev-more { --sv: var(--text-2); --sv-soft: transparent; border: 1px solid var(--border); }
   .time { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
   .time .abs { display: block; font-size: 10px; color: var(--text-3); margin-top: 1px; }
 

@@ -1,6 +1,7 @@
-import type { ReviewStatus } from '../api';
+import type { ReviewStatus, SeverityCounts } from '../api';
 import { STAGES, stageLabel } from '../render';
 import Tooltip from './Tooltip';
+import { presentSeverities, severityBadges, severityWords, type SeverityCount } from './findingSeverities';
 
 /** The five steps a list row draws; "Done" is the state of the last, not a sixth segment. */
 const ROW_STEPS = STAGES.slice(0, 5);
@@ -73,37 +74,69 @@ export function miniPipeline(status: ReviewStatus, stage: number) {
   );
 }
 
-/** "7 open: 4 new, 3 carried": what the bare number is made of, said on hover and to a screen reader. */
-export function findingsBreakdown(findings: number, carriedOver: number): string {
+/** What the findings cell and its words read off a list row; a `ReviewSummary` is one. */
+export interface FindingsRow {
+  status: ReviewStatus;
+  findings: number;
+  carriedOverFindings?: number;
+  degraded?: boolean;
+  openBySeverity?: SeverityCounts | null;
+}
+
+/**
+ * "7 open: 1 critical, 2 warnings, 4 suggestions; 4 new, 3 carried": what the badges (or, without per-severity
+ * counts, the bare number) are made of, said on hover, to a screen reader and in the row's focus line.
+ */
+export function findingsBreakdown(row: FindingsRow): string {
+  const { findings } = row;
   if (findings === 0) return 'No open findings';
-  const carried = Math.max(0, Math.min(carriedOver, findings));
-  return `${findings} open: ${findings - carried} new, ${carried} carried`;
+  const carried = Math.max(0, Math.min(row.carriedOverFindings ?? 0, findings));
+  const split = `${findings - carried} new, ${carried} carried`;
+  const present = presentSeverities(findings, row.openBySeverity);
+  return present ? `${findings} open: ${severityWords(present)}; ${split}` : `${findings} open: ${split}`;
 }
 
 /** Statuses whose count would describe a diff no model finished reading. */
 const NO_COUNT = new Set<ReviewStatus>(['reviewing', 'waiting_for_checks', 'failed', 'cancelled', 'refused', 'skipped']);
 
-/** The findings split the count cell shows on hover, or null where the cell is a dash. */
-export function findingsSummary(status: ReviewStatus, findings: number, carriedOver = 0, degraded = false) {
-  return NO_COUNT.has(status) || degraded ? null : findingsBreakdown(findings, carriedOver);
+/** The findings breakdown the count cell shows on hover, or null where the cell is a dash. */
+export function findingsSummary(row: FindingsRow) {
+  return NO_COUNT.has(row.status) || row.degraded ? null : findingsBreakdown(row);
+}
+
+/** One badge per severity, most severe first, in the findings card's colours; the words are the group's. */
+function severityBadgeGroup(present: readonly SeverityCount[], breakdown: string) {
+  return (
+    <span className="sevbadges tnum">
+      {severityBadges(present).map((b) => (
+        <span key={b.key} className={`sevbadge sev-${b.key}`} aria-hidden="true">{b.text}</span>
+      ))}
+      <span className="sr-only">{breakdown}</span>
+    </span>
+  );
 }
 
 /**
- * The open-findings count as a number only; its split into new and carried-over findings is the tooltip. A bare
- * total going 1 → 2 reads as "my fix made things worse" when it is as often one new beside one never fixed.
+ * The open findings as one small badge per severity (at most three, then "+N"), the full breakdown in words on hover
+ * and in `sr-only` text. A bare total going 1 → 2 reads as "my fix made things worse" when it is as often one new
+ * beside one never fixed, and a total alone cannot say whether the open findings are blockers or nits.
  *
- * <p>A dash while running (a "0 so far" reads as a result), when no model saw the diff (failed, cancelled, refused,
- * skipped) and when the run produced nothing (degraded): a `0` there is how a degraded run passed for a clean one.
+ * <p>Zero, and a row without per-severity counts (an older server), stay the bare number. A dash while running (a
+ * "0 so far" reads as a result), when no model saw the diff (failed, cancelled, refused, skipped) and when the run
+ * produced nothing (degraded): a `0` there is how a degraded run passed for a clean one.
  */
-export function findCell(status: ReviewStatus, findings: number, carriedOver = 0, degraded = false) {
-  const breakdown = findingsSummary(status, findings, carriedOver, degraded);
+export function findCell(row: FindingsRow) {
+  const breakdown = findingsSummary(row);
   if (breakdown === null) return <span className="time">—</span>;
+  const present = presentSeverities(row.findings, row.openBySeverity);
   return (
     <Tooltip label={breakdown}>
-      <span className={`findcount ${findings === 0 ? 'zero' : 'some'} tnum`}>
-        {findings}
-        <span className="sr-only">{` — ${breakdown}`}</span>
-      </span>
+      {present ? severityBadgeGroup(present, breakdown) : (
+        <span className={`findcount ${row.findings === 0 ? 'zero' : 'some'} tnum`}>
+          {row.findings}
+          <span className="sr-only">{` — ${breakdown}`}</span>
+        </span>
+      )}
     </Tooltip>
   );
 }

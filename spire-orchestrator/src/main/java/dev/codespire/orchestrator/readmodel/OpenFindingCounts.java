@@ -35,6 +35,11 @@ record OpenFindingCounts(int open, int openBlockers, int carriedOver, List<Sever
         return new OpenFindingCounts(openSevByKey.size(), blockers, openSevByKey.size() - newlyRaised, severities);
     }
 
+    /** The open findings per severity, for the list row's badges; they sum to {@code open}. */
+    SeverityCounts bySeverity() {
+        return SeverityCounts.of(openSeverities);
+    }
+
     /** The open findings a repository blocking at {@code level} counts; BLOCKER is {@code openBlockers}. */
     int atOrAbove(BlockApprovalAt level) {
         return (int) openSeverities.stream().filter(level::blocks).count();

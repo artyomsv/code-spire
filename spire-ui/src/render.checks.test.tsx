@@ -27,7 +27,7 @@ describe('review statuses of "Start review: after checks finish"', () => {
   });
 
   it.each(NEW_STATUSES)('shows no findings count for %s: no model saw the diff', status => {
-    expect(renderToStaticMarkup(findCell(status, 0))).toContain('—');
+    expect(renderToStaticMarkup(findCell({ status, findings: 0 }))).toContain('—');
   });
 
   it('puts a waiting review under Reviewing and a skipped one under Closed, neither under Needs attention', () => {

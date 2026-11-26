@@ -9,7 +9,7 @@ import { findCell, findingsBreakdown } from './components/ReviewRowCells';
  */
 describe('findCell — the number, with the split on hover', () => {
   it('shows the number only, with no carried label', () => {
-    const { container } = render(<>{findCell('completed', 7, 3)}</>);
+    const { container } = render(<>{findCell({ status: 'completed', findings: 7, carriedOverFindings: 3 })}</>);
 
     expect(screen.getByText('7')).toBeInTheDocument();
     expect(screen.queryByText(/carried/i, { ignore: '.sr-only, script, style' })).toBeNull();
@@ -17,33 +17,33 @@ describe('findCell — the number, with the split on hover', () => {
   });
 
   it('names the split on hover', () => {
-    render(<>{findCell('completed', 7, 3)}</>);
+    render(<>{findCell({ status: 'completed', findings: 7, carriedOverFindings: 3 })}</>);
 
     fireEvent.mouseEnter(screen.getByText('7'));
     expect(screen.getByRole('tooltip')).toHaveTextContent('7 open: 4 new, 3 carried');
   });
 
   it('says the split to a screen reader', () => {
-    const { container } = render(<>{findCell('completed', 7, 3)}</>);
+    const { container } = render(<>{findCell({ status: 'completed', findings: 7, carriedOverFindings: 3 })}</>);
 
     expect(container.querySelector('.sr-only')).toHaveTextContent('7 open: 4 new, 3 carried');
   });
 
   it('says a first review is all new', () => {
-    expect(findingsBreakdown(2, 0)).toBe('2 open: 2 new, 0 carried');
+    expect(findingsBreakdown({ status: 'completed', findings: 2, carriedOverFindings: 0 })).toBe('2 open: 2 new, 0 carried');
   });
 
   it('still shows a clean review as zero', () => {
-    const { container } = render(<>{findCell('completed', 0, 0)}</>);
+    const { container } = render(<>{findCell({ status: 'completed', findings: 0, carriedOverFindings: 0 })}</>);
 
     expect(screen.getByText('0')).toBeInTheDocument();
     expect(container.querySelector('.findcount')).toHaveClass('zero');
-    expect(findingsBreakdown(0, 0)).toBe('No open findings');
+    expect(findingsBreakdown({ status: 'completed', findings: 0, carriedOverFindings: 0 })).toBe('No open findings');
   });
 
   /** A running review's tally is noise — "0 so far" reads as a result — whatever the previous run left open. */
   it('shows a placeholder while the review is still running', () => {
-    const { container } = render(<>{findCell('reviewing', 2, 1)}</>);
+    const { container } = render(<>{findCell({ status: 'reviewing', findings: 2, carriedOverFindings: 1 })}</>);
 
     expect(container.querySelector('.findcount')).toBeNull();
     expect(screen.getByText('—')).toBeInTheDocument();

@@ -27,6 +27,8 @@ public record ReviewSummary(
         int blockerCount,
         /** How many of {@code findings} were already open before this run — the rest are new here. */
         int carriedOverFindings,
+        /** {@code findings} per severity, carried-over ones included: the list's findings badges. */
+        SeverityCounts openBySeverity,
         long costMillicents,
         String model,
         String llmType,

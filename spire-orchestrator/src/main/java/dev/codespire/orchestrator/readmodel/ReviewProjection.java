@@ -2151,7 +2151,7 @@ public class ReviewProjection {
         ReviewSummary toSummary(LedgerSummary ledger, OpenFindingCounts openCounts) {
             return new ReviewSummary(id, workspace, slug, slug, pr, title, author, authorId, branch, base, sha,
                     htmlUrl, providerType, status, stage, openCounts.open(), openCounts.openBlockers(),
-                    openCounts.carriedOver(), ledger.totalCostMillicents(),
+                    openCounts.carriedOver(), openCounts.bySeverity(), ledger.totalCostMillicents(),
                     ledger.model() == null ? "" : ledger.model(),
                     ledger.llmType() == null ? "" : ledger.llmType(), updatedAt, answering, prState,
                     ledger.unpricedCalls(), archivedAt, degraded, verdictSlug(postedVerdict), reviewUrl(this));

@@ -5,7 +5,7 @@ import { findingsSummary, pipelineSummary } from './ReviewRowCells';
 
 /**
  * The words a list row's marks dropped, in row order: the status, a reply in progress, the pull request's state, the
- * forge, the pipeline's state and the findings split. The same words the marks give on hover.
+ * forge, the pipeline's state and the findings breakdown. The same words the marks give on hover.
  */
 export function rowSummaryParts(r: ReviewSummary): string[] {
   const parts = [outcomeOf(r.status, r.findings, r.blockerCount, r.degraded).label];
@@ -14,7 +14,7 @@ export function rowSummaryParts(r: ReviewSummary): string[] {
   const forge = providerName(providerLabel(r));
   if (forge) parts.push(forge);
   parts.push(`Pipeline: ${pipelineSummary(r.status, r.stage)}`);
-  const findings = findingsSummary(r.status, r.findings, r.carriedOverFindings, r.degraded);
+  const findings = findingsSummary(r);
   if (findings) parts.push(findings);
   return parts;
 }

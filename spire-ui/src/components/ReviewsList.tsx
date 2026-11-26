@@ -216,7 +216,7 @@ export default function ReviewsList({ reviews, loading, error, showArchived, onS
                     <CopyableValue text={r.sha} display={shortSha(r.sha)} mono copyTitle="Copy commit hash" />
                   </div>
                   <div className="cell-mini">{miniPipeline(r.status, r.stage)}</div>
-                  <div className="cell-r">{findCell(r.status, r.findings, r.carriedOverFindings, r.degraded)}</div>
+                  <div className="cell-r">{findCell(r)}</div>
                   <div className="model-cell">{llmIcon(r.model, r.llmType)}</div>
                   <div className="cell-r">
                     <span className="mono" title={cost.title}>{cost.text}</span>

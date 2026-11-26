@@ -249,7 +249,7 @@ describe("a refused review's detail page", () => {
 
 describe('the findings count of a review that was never sent to a model', () => {
   it('is a placeholder, not 0', () => {
-    const refused = renderToStaticMarkup(<>{findCell('refused', 0)}</>);
+    const refused = renderToStaticMarkup(<>{findCell({ status: 'refused', findings: 0 })}</>);
 
     expect(refused).toContain('—');
     // `0` renders in the `findcount zero` span — the class is what distinguishes "counted, none
@@ -258,7 +258,7 @@ describe('the findings count of a review that was never sent to a model', () => 
 
     // The two statuses that already read as "no count applies", so the assertion above cannot pass
     // by the placeholder having become universal.
-    expect(renderToStaticMarkup(<>{findCell('failed', 0)}</>)).toContain('—');
-    expect(renderToStaticMarkup(<>{findCell('completed', 0)}</>)).toContain('findcount');
+    expect(renderToStaticMarkup(<>{findCell({ status: 'failed', findings: 0 })}</>)).toContain('—');
+    expect(renderToStaticMarkup(<>{findCell({ status: 'completed', findings: 0 })}</>)).toContain('findcount');
   });
 });

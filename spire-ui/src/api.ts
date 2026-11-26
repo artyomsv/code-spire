@@ -232,6 +232,9 @@ export interface ReviewSummary {
   findings: number;
   blockerCount: number; // number of blocker-severity (critical) findings — drives the outcome badge
   carriedOverFindings: number; // how many of `findings` were already open before this run
+  // `findings` per severity, carried-over ones included: the list's findings badges. Optional because a live frame
+  // or list read from an older server has none; the cell then shows the bare number.
+  openBySeverity?: SeverityCounts | null;
   // Sum of the charge lines that COULD be priced (1/100,000 dollar). 0 means either no charge has
   // landed yet OR every priced charge was an asserted UNMETERED zero — `unpricedCalls` is what tells
   // those apart from "some calls have no known price yet"; never conflate a 0 here with unpriced.
@@ -257,6 +260,14 @@ export interface ReviewSummary {
   postedVerdict?: PostedVerdict | null;
   // The forge's link to that review, or null.
   reviewUrl?: string | null;
+}
+
+/** Open findings per severity, keyed by the findings card's slugs (`Finding['sev']`). */
+export interface SeverityCounts {
+  critical: number;
+  warning: number;
+  suggestion: number;
+  nit: number;
 }
 
 export interface Finding {
@@ -364,14 +375,14 @@ export interface ReviewEvent {
   loc?: string;
 }
 
-// The detail endpoint's Java record omits four ReviewSummary components — model, llmType,
-// costMillicents, carriedOverFindings are list-only projections the detail payload never sends.
+// The detail endpoint's Java record omits five ReviewSummary components — model, llmType,
+// costMillicents, carriedOverFindings, openBySeverity are list-only projections the detail payload never sends.
 // `extends ReviewSummary` used to declare them anyway, so a component could read one off a detail
 // payload, get `undefined`, and render as if the field were simply absent/zero — which is exactly
 // how `unpricedCalls` shipped as a silent `undefined` before it was wired into the record. Omit<>
 // makes the next such field a compile error instead of a repeat of that.
 export interface ReviewDetail
-  extends Omit<ReviewSummary, 'model' | 'llmType' | 'costMillicents' | 'carriedOverFindings'> {
+  extends Omit<ReviewSummary, 'model' | 'llmType' | 'costMillicents' | 'carriedOverFindings' | 'openBySeverity'> {
   // findings/blockerCount (from ReviewSummary) stay this RUN's raw counts — the findings card's
   // "+ N more" math depends on that meaning. openFindings/openBlockers are the reconciled
   // currently-open counts (this run's new findings + still-open/unchanged reconciliation,
