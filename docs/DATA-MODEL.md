@@ -353,7 +353,9 @@ Built by consuming `cs.events` / `cs.results`; **no FK to the event store** (dec
 TEXT, `started_at` TIMESTAMPTZ, PK the first two. One row per human reply the bot is answering; several can be
 outstanding at once. `review_status.answering` (V21) stays the flag the dashboard reads, true while any row is left:
 `AnsweringMarks` adds a reply's row and sets the flag, or removes its own row and sets the flag to whether any is
-left, in one transaction under the `review_status` row lock. A clear that names no comment (a new run, an archive, a
+left, in one transaction under the `review_status` row lock. Removing the row consumes the reply: only the finish
+that removed it records the reply's ending (a decline's history line), and any write that changed a row or the flag
+broadcasts the review. A clear that names no comment (a new run, an archive, a
 closed pull request, a `FollowUpPosted` from before V122) sets the flag false, and the `review_answering_cleared`
 trigger drops the review's rows in the same statement.
 

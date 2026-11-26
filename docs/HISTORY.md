@@ -2781,7 +2781,16 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   row's marks stay out of the tab order (the row's accessible name carries their words, and on keyboard focus the row
   shows them in one line, `RowFocusSummary`); the detail header's marks
   are tab stops whose tooltips open on focus.
-  The operator also found the reviews list's badges too wide. The Status column is one badge, with a pulsing icon
+  The next review round found that a redelivered or late decline still filed its line, and that a reply ending while
+  another kept the mark up was never broadcast. `AnsweringMarks.finish` now takes a `ReplyKey` and the ending to
+  record: the line is written only by the finish that removed the reply's row, and every write that changed a row or
+  the flag (and every cap notice) bumps the review, so an open detail hears it (`ReplyEndingsIT`). A conversation
+  stays pending while a reply since the bot's last answer has no decline of its own, so the first reply's late
+  decline no longer hides the second one's "responding…". The severity badges' numbers are the body text colour on
+  the severity tint (at least 9.9:1 in both themes; `sevbadge.contract.test.ts` computes it from the tokens); the
+  severity colour in the text measured 3.6 to 4.4:1.
+  The operator also found the reviews list's badges too wide. The Status column is one coloured icon per outcome (its
+  word in the tooltip and the accessible name; the review header keeps the word badge), with a pulsing icon
   for "responding"; PR state and provider are icons (lucide state icons, the forges' logos from `react-icons`, already
   a dependency); the Pipeline column draws segments only, each naming its step and state on hover (and in its `aria-label`), and the
   strip's accessible name carries the state its dropped word said; Findings is one small badge per severity with open
