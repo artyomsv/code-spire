@@ -19,6 +19,17 @@ describe('review statuses of "Start review: after checks finish"', () => {
     expect(renderToStaticMarkup(outcomeBadge('skipped', 0, 0))).toContain('Skipped: checks failed');
   });
 
+  /** PR #457: the full label ran into the PR icon in the list's status column. */
+  it.each([
+    ['skipped', 'Skipped', 'Skipped: checks failed'],
+    ['waiting_for_checks', 'Waiting', 'Waiting for checks'],
+  ] as const)('shows %s as one short word, with the full label as its tooltip and name', (status, word, full) => {
+    const badge = renderToStaticMarkup(outcomeBadge(status, 0, 0));
+    expect(badge).toContain(`>${word}</span>`);
+    expect(badge).toContain(`title="${full}"`);
+    expect(badge).toContain(`aria-label="${full}"`);
+  });
+
   it.each(NEW_STATUSES)('draws %s in its own colour and name, never as finished segments', status => {
     const cell = renderToStaticMarkup(miniPipeline(status, 0));
     expect(cell).not.toContain('seg done');

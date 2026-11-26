@@ -218,8 +218,20 @@ export function ago(updatedAt: string): string {
   return Math.round(s / 86400) + 'd ago';
 }
 
+/**
+ * The badge word for the statuses whose full label does not fit the list's status column (it ran into the PR icon on
+ * the dashboard, PR #457). The full label stays the badge's tooltip and accessible name.
+ */
+const SHORT_LABEL: Partial<Record<ReviewStatus, string>> = {
+  waiting_for_checks: 'Waiting',
+  skipped: 'Skipped',
+};
+
 export function pill(status: ReviewStatus) {
-  return <span className={`pill ${status}`}>{STATUS_LABEL[status]}</span>;
+  const full = STATUS_LABEL[status];
+  const short = SHORT_LABEL[status];
+  if (!short) return <span className={`pill ${status}`}>{full}</span>;
+  return <span className={`pill ${status}`} title={full} aria-label={full}>{short}</span>;
 }
 
 /**
