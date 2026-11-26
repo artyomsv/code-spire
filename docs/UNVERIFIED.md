@@ -78,8 +78,9 @@ Design: docs/superpowers/specs/2026-11-26-review-input-limit-design.md.
 - **A partial review never approves, proven against fakes only** (`ResultSagaPartialReviewTest`). Any truncation
   counts, a clipped context included, since an older result cannot say which input was cut; no live repository has
   posted a partial review since.
-- **A manual model has no window,** so its reviews keep today's 24,000 / 12,000 budgets whatever its real window;
-  no live review has run on one since this change. Neither has a rate-limited key on a large prompt.
+- **A manual model the catalog does not have has no window,** so its reviews keep today's 24,000 / 12,000 budgets
+  whatever its real window; no live review has run on one since this change. A manual model that shadows a catalog
+  entry by name or alias takes that entry's window (found live: a pre-catalog manual row kept every review at 24,000). Neither has a rate-limited key on a large prompt.
 - **The prompt preview does not size the diff.** Settings → Prompts' preview (`PromptSampleRenderer`) still clips at
   the palette's fixed budget, so it shows a clip a real review on a large window no longer makes.
 - **Live proof pending** (dev stack, `spire-test`): a PR well above 24,000 estimated tokens of diff reviewed on a

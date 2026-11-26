@@ -3,11 +3,9 @@ package dev.codespire.orchestrator.llm;
 import dev.codespire.contract.llm.ModelParams;
 import dev.codespire.llmcatalog.CatalogModel;
 import dev.codespire.orchestrator.llm.catalog.LlmModelCatalog;
-import dev.codespire.orchestrator.llm.catalog.ResolvedModel;
 import dev.codespire.orchestrator.settings.ReviewDiffLimit;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import org.jboss.logging.Logger;
 
 import java.util.Optional;
 
@@ -16,7 +14,7 @@ import java.util.Optional;
  * model takes, from the catalog's context window, and the operator's Review diff limit. Kept out of
  * {@link LlmModelRegistry} and {@link WorkerLlmCredentials}, which already held more than a reader can.
  *
- * <p>The two unknowns fail in opposite directions on purpose. An unknown window (a manual model, a catalog read fault)
+ * <p>The two unknowns fail in opposite directions on purpose. An unknown window (a manual model the catalog does not have)
  * keeps today's fixed budgets, the small answer. A Review diff limit the database cannot read never reads as unset,
  * because unset is the large answer: a database fault must never send an uncapped review (PR 456). It reads, as an
  * invalid stored limit does, as the lowest limit, a 24,000-token diff cap (with a known window a RECONCILE may get up
@@ -24,8 +22,6 @@ import java.util.Optional;
  */
 @ApplicationScoped
 public class ReviewInputLimits {
-
-    private static final Logger LOG = Logger.getLogger(ReviewInputLimits.class);
 
     @Inject
     LlmModelCatalog catalog;
@@ -47,19 +43,17 @@ public class ReviewInputLimits {
     }
 
     /**
-     * The model's context window in tokens, from the catalog. Empty for a manual model (it has no window), a name
-     * nobody has, and a read fault: unknown means the review keeps today's fixed diff budgets, never a larger one.
+     * The model's context window in tokens, read from the catalog entry of that name or alias. A manual model that
+     * shadows a catalog entry still gets the entry's window: the shadow overrides prices and request settings, while
+     * the window is a fact about the model (found live on PR 456, where a pre-catalog manual row for the same name
+     * kept every review at the old budget). Empty for a name the catalog does not have: unknown means the review keeps
+     * today's fixed diff budgets, never a larger one.
      */
     Optional<Long> contextWindow(String model) {
         if (model == null || model.isBlank()) {
             return Optional.empty();
         }
-        try {
-            return catalog.resolve(model).map(ResolvedModel::catalogEntry).map(CatalogModel::contextWindow);
-        } catch (LlmModelCatalog.CatalogueReadFailed e) {
-            LOG.warnf(e, "context window lookup failed for model %s", model);
-            return Optional.empty();
-        }
+        return catalog.snapshot().byName(model).map(CatalogModel::contextWindow);
     }
 
     /**

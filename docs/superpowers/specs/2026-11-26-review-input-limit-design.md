@@ -61,8 +61,9 @@ diffTokenCap   = app_setting 'review.diff-limit-tokens'     (null when the setti
 
 The reserve is the output cap the call really sends; the catalog's `maxOutputTokens` is not used.
 The 16,384 default moves from package-private `LangChain4jLlmProvider.DEFAULT_MAX_OUTPUT_TOKENS` to
-one public constant in `spire-contract` that both modules read. A manual model has no window, so
-`maxInputTokens` is null. Every pack site (REVIEW, RECONCILE, FOLLOWUP) gets the same values.
+one public constant in `spire-contract` that both modules read. The window is read from the catalog
+entry of that name or alias even when a manual model shadows it (the shadow overrides prices, not the model's
+window); a manual model the catalog does not have has no window, so `maxInputTokens` is null. Every pack site (REVIEW, RECONCILE, FOLLOWUP) gets the same values.
 
 ### The diff budget (worker, one pure function)
 
