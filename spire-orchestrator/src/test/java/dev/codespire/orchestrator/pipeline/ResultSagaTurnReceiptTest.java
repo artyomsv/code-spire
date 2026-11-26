@@ -63,6 +63,11 @@ class ResultSagaTurnReceiptTest {
             @Override
             public void setAnswering(String reviewId, boolean answering) {
             }
+
+            // A posted answer always broadcasts the review (PR #457); the real touch opens a database.
+            @Override
+            public void touch(String reviewId) {
+            }
         };
         saga.followUpEndings = HarnessSagaFakes.endings(saga.projection, finished);
         return saga;

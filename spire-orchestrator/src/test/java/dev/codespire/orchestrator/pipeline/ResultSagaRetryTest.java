@@ -628,6 +628,11 @@ class ResultSagaRetryTest {
             public Optional<String> summaryRefOf(String reviewId) {
                 return Optional.of("summary-1");
             }
+
+            // A posted answer always broadcasts the review (PR #457); the real touch opens a database.
+            @Override
+            public void touch(String reviewId) {
+            }
         };
         saga.followUpEndings = HarnessSagaFakes.endings(saga.projection, new ArrayList<>());
 
