@@ -142,7 +142,8 @@ The default model call timeout is 180 s, non-streaming, and a timeout is retryab
 
 - Key `review.diff-limit-tokens` in `app_setting`. Empty (no row) = as much as the window allows.
 - Accepted values: a whole number from 24,000 to 2,000,000. Anything else is a 400.
-- A stored row outside that range (edited by hand) packs as 24,000, today's budgets, with a WARN and a
+- A stored row outside that range (edited by hand) packs as 24,000, a 24,000-token diff cap (with a known
+  window a RECONCILE may get up to 24,000, more than its old 12,000), with a WARN and a
   `DIFF_LIMIT_INVALID` attention row; the form shows it as invalid and a blank Save deletes it. A failed read
   of the row retries the review through the saga's bounded retry; it never reads as unset (PR 456, round 2).
 - Settings → General, admin only, through the existing app-setting resource pattern (as

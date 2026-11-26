@@ -26,8 +26,8 @@ public class ReviewDiffLimitAttention {
             return;
         }
         rows.add(new AttentionView(CODE, Severity.WARNING, ReviewDiffLimit.KEY,
-                "The stored Review diff limit is not a whole number from 24,000 to 2,000,000, so every API review is "
-                        + "sent with today's default diff budgets. Save the limit again in Settings → General, or "
-                        + "save it blank to clear it.", "/settings/general"));
+                "The stored Review diff limit is not a whole number from 24,000 to 2,000,000, so every API review's "
+                        + "diff is capped at 24,000 tokens. Save the limit again in Settings → General, or save it "
+                        + "blank to clear it.", "/settings/general"));
     }
 }

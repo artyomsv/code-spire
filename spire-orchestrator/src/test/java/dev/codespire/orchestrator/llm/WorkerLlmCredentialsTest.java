@@ -199,9 +199,9 @@ class WorkerLlmCredentialsTest {
     }
 
     /**
-     * PR 456, code-quality/M-5: an invalid stored limit packs the lowest limit, never none and never a refusal. With a
-     * cap of 24,000 every kind keeps today's budget, by the worker's floor (DiffBudgetTest:
-     * theSettingNeverLowersTheBudgetUnderTheDefault,
+     * PR 456, code-quality/M-5: an invalid stored limit packs the lowest limit, never none and never a refusal: a
+     * 24,000-token diff cap. With a known window a RECONCILE may then get up to 24,000, more than its old 12,000
+     * (DiffBudgetTest: theSettingNeverLowersTheBudgetUnderTheDefault,
      * theSettingAtTheReviewMinimumLeavesAReconcileAtItsOwnDefaultOrMore).
      */
     @Test

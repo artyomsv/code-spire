@@ -2732,20 +2732,25 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   a review's credential is packed no longer dead-letters `ContextAssembled` and leaves the review `reviewing`:
   `ResultSaga` turns `AppSettingRepository.ReadFailed` into a retryable `ReviewFailed` at `GenerateReview`, so the
   review takes the saga's own bounded retry (`retry_at`, dispatched by `ReviewRetryScheduler`) and fails terminally
-  once the budget is spent. Nothing is encrypted and no `GenerateReview` is emitted for that attempt. RECONCILE rides
+  once the budget is spent. The retry is scheduled once per failed run (round 3): `LimitReadRetry` writes it as a
+  compare-and-set on the persisted attempt (`ReviewProjection.scheduleRetryFrom`), so the same `ContextAssembled`
+  delivered again before the retry runs finds the attempt advanced or `retry_at` set and changes nothing, keeping the
+  due time and the budget. Nothing is encrypted and no `GenerateReview` is emitted for that attempt. RECONCILE rides
   the same `GenerateReview`, so it shares the path. A reply (FOLLOWUP) has no retry of its own: its `AuthorReplied`
   is dead-lettered for replay, as on a failed provider read. (2) A stored value that is not a whole number from 24,000
-  to 2,000,000 no longer blocks reviews: it packs as 24,000, which by the worker's floor gives every kind today's
-  budget, with a WARN naming the key (the value quoted to 40 characters) and a `DIFF_LIMIT_INVALID` attention row
-  pointing at Settings → General. `GET /api/settings/review-diff-limit` returns `{limitTokens: null,
-  invalidStoredValue: true}` for it; the form says "The stored value is invalid; save to clear it or enter a new
-  limit", and a blank Save then sends `PUT {limitTokens: null}`, which deletes the row. (3) The methods the branch
-  added or grew are at most 30 lines (`ReviewWorker.generateReview` is 40, below its 46 before the branch).
-  CI proves these with `ResultSagaLimitReadTest` (retry scheduled, no `GenerateReview`; terminal past the budget),
+  to 2,000,000 no longer blocks reviews: it packs as 24,000, a 24,000-token diff cap (with a known window a RECONCILE
+  may then get up to 24,000, more than its old 12,000), with a WARN naming the key (the value quoted to 40
+  characters) and a `DIFF_LIMIT_INVALID` attention row pointing at Settings → General.
+  `GET /api/settings/review-diff-limit` returns `{limitTokens: null, invalidStoredValue: true}` for it; the form
+  says "The stored value is invalid; save to clear it or enter a new limit", and a blank Save then sends
+  `PUT {limitTokens: null}`, which deletes the row. (3) The methods the branch added or grew are at most 30 lines
+  (`ReviewWorker.generateReview` is 40, below its 46 before the branch).
+  CI proves these with `ResultSagaLimitReadTest` (retry scheduled, no `GenerateReview`; terminal past the budget;
+  a duplicate delivery schedules nothing more),
   `WorkerLlmCredentialsTest` (an invalid row packs 24,000, real database), `ReviewDiffLimitReadTest`,
   `ReviewDiffLimitResourceTest`, `ReviewDiffLimitAttentionTest` and the General form test that clears an invalid
   row. No live database fault has been injected.
 
   **Upgrading, round 2.** No migration. A row `review.diff-limit-tokens` edited by hand to something outside the
-  range now reviews at today's budgets and raises `DIFF_LIMIT_INVALID` until it is saved again in Settings → General
-  (blank clears it); `SELECT value FROM app_setting WHERE key = 'review.diff-limit-tokens';` shows it.
+  range now reviews with a 24,000-token diff cap and raises `DIFF_LIMIT_INVALID` until it is saved again in Settings →
+  General (blank clears it); `SELECT value FROM app_setting WHERE key = 'review.diff-limit-tokens';` shows it.

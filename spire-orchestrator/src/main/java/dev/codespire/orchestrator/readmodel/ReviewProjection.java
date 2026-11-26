@@ -448,6 +448,53 @@ public class ReviewProjection {
         broadcast(reviewId);
     }
 
+    /** The next attempt a retry moves a review to, the note it shows and when the sweeper may dispatch it. */
+    public record RetryPlan(int attempt, String note, Instant dueAt) {
+    }
+
+    /**
+     * {@link #scheduleRetry} as a compare-and-set: the row moves to {@code plan.attempt()} only while it is still on
+     * {@code fromAttempt} with no retry pending. A redelivered result of the same failed run finds the attempt
+     * advanced or {@code retry_at} set and changes nothing, so it cannot spend the retry budget twice (PR 456,
+     * code-quality/M-4).
+     *
+     * @return whether this call scheduled the retry
+     */
+    public boolean scheduleRetryFrom(String reviewId, int fromAttempt, RetryPlan plan) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
+                UPDATE review_status
+                   SET attempt = ?, status = 'reviewing', stage = ?, note = ?, retry_at = ?, updated_at = now()
+                 WHERE review_id = ? AND attempt = ? AND retry_at IS NULL AND lower(status) <> 'refused'
+                """)) {
+            ps.setInt(1, plan.attempt());
+            ps.setInt(2, STAGE_DIFF);
+            ps.setString(3, plan.note());
+            ps.setTimestamp(4, Timestamp.from(plan.dueAt()));
+            ps.setString(5, reviewId);
+            ps.setInt(6, fromAttempt);
+            boolean scheduled = ps.executeUpdate() == 1;
+            if (scheduled) {
+                broadcast(reviewId);
+            }
+            return scheduled;
+        } catch (SQLException e) {
+            throw new IllegalStateException("review_status write failed", e);
+        }
+    }
+
+    /** Whether a retry is waiting for the sweeper ({@code retry_at} set): the run already failed and was scheduled. */
+    public boolean retryPending(String reviewId) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
+                "SELECT 1 FROM review_status WHERE review_id = ? AND retry_at IS NOT NULL")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("review_status read failed", e);
+        }
+    }
+
     /**
      * Claim every review whose retry has come due, clearing {@code retry_at} in the SAME statement that
      * reads it. Only one caller can win a given row, so replicas (or an overlapping sweep) cannot both

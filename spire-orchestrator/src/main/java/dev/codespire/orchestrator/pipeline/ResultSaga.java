@@ -50,6 +50,9 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Set;
 
+import static dev.codespire.orchestrator.pipeline.RetryNotes.humanDelay;
+import static dev.codespire.orchestrator.pipeline.RetryNotes.terminalNote;
+
 /**
  * Reacts to worker results (cs.results): issues the next Action command and the matching Record command (CONTRACT §5).
  *
@@ -106,6 +109,7 @@ public class ResultSaga {
 
     @Inject
     dev.codespire.orchestrator.llm.WorkerLlmCredentials workerLlmCredentials;
+    @Inject LimitReadRetry limitRetry; // a failed read of the Review diff limit, retried once per run
 
     @Inject
     dev.codespire.orchestrator.llm.LlmModelRegistry llmModels;
@@ -255,46 +259,8 @@ public class ResultSaga {
                         // Read at diff-fetch from the target branch: the aggregator holds no SCM credential.
                         e.repoRules(), e.codeReferences()));
             });
-            case ContextAssembled e -> ifCurrentRun(e.reviewId(), e.commit(), "ContextAssembled", () -> {
-                projection.appendEvent(e.reviewId(), "result", "ContextAssembled", "context assembled");
-                projection.updateStage(e.reviewId(), ReviewProjection.STAGE_REVIEW);
-                // A new round clears the last round's refusal, so a re-run no longer refused drops its attention row.
-                projection.setHarnessRefusal(e.reviewId(), null);
-                if (applyHarnessDecision(e.reviewId(), e.commit(), harnessStart.start(e))) {
-                    return;
-                }
-                // GenerateReview needs the LLM credential (ADR-018) of the repository's provider, else the default; the
-                // resolve also answers priceability, the pre-spend guard. A failed read of the Review diff limit packs
-                // nothing and takes the bounded retry (C8), never the dead-letter queue (PR 456, code-quality/M-4).
-                DefaultLlm llm;
-                try {
-                    llm = workerLlmCredentials.resolveForReview(e.reviewId());
-                } catch (AppSettingRepository.ReadFailed fault) {
-                    onReviewFailed(new ReviewFailed(e.reviewId(), e.commit(), GENERATE_REVIEW, fault.getMessage(),
-                            true, 0));
-                    return;
-                }
-                if (!llm.isSpendable()) {
-                    skipUnspendable(e.reviewId(), GENERATE_REVIEW, llm);
-                    return;
-                }
-                // Task 6: the pre-spend gate beside priceability; both answer "may this paid call be made".
-                dev.codespire.orchestrator.caps.SpendGate.Decision spendDecision = spendGate.decide();
-                if (spendDecision.refused()) {
-                    refuse(e.reviewId(), e.commit(), GENERATE_REVIEW, ReviewProjection.STAGE_REVIEW,
-                            spendDecision.refusal());
-                    return;
-                }
-                PriorRun prior = projection.priorRunFor(e.reviewId()).orElse(null);
-                dev.codespire.contract.scm.RepoRef repo = ReviewIds.parse(e.reviewId()).repo();
-                dev.codespire.contract.llm.PromptTemplate reviewPrompt =
-                        promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.REVIEW, repo);
-                dev.codespire.contract.llm.PromptTemplate reconcilePrompt =
-                        promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.RECONCILE, repo);
-                emitWithCredential(e.reviewId(), GENERATE_REVIEW, scmCred -> new ActionCommand.GenerateReview(
-                        e.reviewId(), repo, e.prId(), e.commit(),
-                        e.contextRef(), 1, null, scmCred, llm.packed(), prior, reviewPrompt, reconcilePrompt));
-            });
+            case ContextAssembled e ->
+                    ifCurrentRun(e.reviewId(), e.commit(), "ContextAssembled", () -> dispatchReview(e));
             case ReviewGenerated e -> {
                 // OUTSIDE the staleness guard, and first — the same shape FollowUpGenerated has always
                 // had. The worker's PR-head re-check runs BEFORE the paid call, so a commit pushed (or
@@ -465,6 +431,56 @@ public class ResultSaga {
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());
         }
+    }
+
+    /** ContextAssembled: the harness decides first; on the API path the LLM credential and both pre-spend gates. */
+    private void dispatchReview(ContextAssembled e) {
+        projection.appendEvent(e.reviewId(), "result", "ContextAssembled", "context assembled");
+        projection.updateStage(e.reviewId(), ReviewProjection.STAGE_REVIEW);
+        // A new round clears the last round's refusal, so a re-run no longer refused drops its attention row.
+        projection.setHarnessRefusal(e.reviewId(), null);
+        if (applyHarnessDecision(e.reviewId(), e.commit(), harnessStart.start(e))) {
+            return;
+        }
+        java.util.Optional<DefaultLlm> llm = resolveLlm(e);
+        if (llm.isEmpty()) {
+            return;
+        }
+        if (!llm.get().isSpendable()) {
+            skipUnspendable(e.reviewId(), GENERATE_REVIEW, llm.get());
+            return;
+        }
+        // Task 6: the pre-spend gate beside priceability; both answer "may this paid call be made".
+        dev.codespire.orchestrator.caps.SpendGate.Decision spendDecision = spendGate.decide();
+        if (spendDecision.refused()) {
+            refuse(e.reviewId(), e.commit(), GENERATE_REVIEW, ReviewProjection.STAGE_REVIEW, spendDecision.refusal());
+            return;
+        }
+        emitGenerateReview(e, llm.get().packed());
+    }
+
+    /** The LLM credential (ADR-018) and priceability. A failed read of the Review diff limit packs nothing and takes
+     *  the bounded retry once per failed run (C8), never the dead-letter queue (PR 456, code-quality/M-4). */
+    private java.util.Optional<DefaultLlm> resolveLlm(ContextAssembled e) {
+        try {
+            return java.util.Optional.of(workerLlmCredentials.resolveForReview(e.reviewId()));
+        } catch (AppSettingRepository.ReadFailed fault) {
+            ReviewFailed failed =
+                    new ReviewFailed(e.reviewId(), e.commit(), GENERATE_REVIEW, fault.getMessage(), true, 0);
+            if (!limitRetry.scheduleOnce(failed)) {
+                onReviewFailed(failed);
+            }
+            return java.util.Optional.empty();
+        }
+    }
+
+    private void emitGenerateReview(ContextAssembled e, String packedLlm) {
+        PriorRun prior = projection.priorRunFor(e.reviewId()).orElse(null);
+        dev.codespire.contract.scm.RepoRef repo = ReviewIds.parse(e.reviewId()).repo();
+        emitWithCredential(e.reviewId(), GENERATE_REVIEW, scmCred -> new ActionCommand.GenerateReview(e.reviewId(),
+                repo, e.prId(), e.commit(), e.contextRef(), 1, null, scmCred, packedLlm, prior,
+                promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.REVIEW, repo),
+                promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.RECONCILE, repo)));
     }
 
     /**
@@ -758,26 +774,6 @@ public class ResultSaga {
                         "Authentication rejected (HTTP 401)"),
                 () -> LOG.warnf("Credential rejected for review %s but its provider could not be "
                         + "resolved — not recording", reviewId));
-    }
-
-    /** "8s" / "2m 30s" — the note is read by an operator wondering why nothing is happening yet. */
-    static String humanDelay(java.time.Duration delay) {
-        long seconds = Math.max(0, delay.toSeconds());
-        if (seconds < 60) {
-            return seconds + "s";
-        }
-        long remainder = seconds % 60;
-        return remainder == 0 ? (seconds / 60) + "m" : (seconds / 60) + "m " + remainder + "s";
-    }
-
-    private String terminalNote(ReviewFailed e, int attempt, int maxAttempts) {
-        if (e.retryable() && attempt >= maxAttempts) {
-            return "Failed at " + e.phase() + " after " + attempt + " attempts (retry budget exhausted).";
-        }
-        if (e.retryable()) {
-            return "Failed at " + e.phase() + " — provider unavailable, cannot retry.";
-        }
-        return "Failed terminally at " + e.phase() + ".";
     }
 
     /**

@@ -40,7 +40,7 @@ const HINT =
   '272,000 input tokens) are not modelled, so such calls are charged at the lower rate: set about 60,000 to keep a ' +
   'whole review below them.';
 
-/** Shown while the stored row is not a valid limit; reviews meanwhile use the lowest limit, today's budgets. */
+/** Shown while the stored row is not a valid limit; reviews meanwhile have a 24,000-token diff cap. */
 export const INVALID_STORED_MESSAGE = 'The stored value is invalid; save to clear it or enter a new limit';
 
 interface Props {
