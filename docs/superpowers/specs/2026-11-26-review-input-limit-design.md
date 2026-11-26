@@ -156,7 +156,7 @@ The prompt editor does not change (`PromptsSettings.tsx` does not show variable 
 Haiku 5.5's (above 100K); such calls are priced at short-context rates, so the ledger and the fleet
 caps read low for them. This change makes such calls possible. The operator chose "whole diff"; the
 spec does not clamp to the tier. It records the gap in `docs/UNVERIFIED.md` and in the setting's
-help text, and the operator may set the Review diff limit (for example 90,000) to stay below the
+help text, and the operator may set the Review diff limit (for example 60,000, since it caps only the diff and the other prompt parts add about 14,000 tokens) to stay below the
 tiers until they are modelled.
 
 ## Tests (what proves it)

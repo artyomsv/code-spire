@@ -2700,4 +2700,4 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   `SPIRE_LLM_TIMEOUT_SECONDS` 180 → 600 and `SPIRE_KAFKA_ACK_MAX_AGE_MS` 900000 → 1800000, so `LlmTimeoutBudget`
   still passes (two calls of 600 s plus 300 s of other work). A deployment that set either by hand keeps its value;
   one that set the timeout to 600 must raise the ack threshold above 1,500,000 too, or the worker refuses to start.
-  To stay below the long-context price tiers until they are priced, set the Review diff limit to about 90,000.
+  To stay below the long-context price tiers until they are priced, set the Review diff limit to about 60,000: the limit caps only the diff, the other prompt parts add about 14,000 tokens on top, and the estimate can run low on dense text.

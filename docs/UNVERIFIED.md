@@ -41,7 +41,7 @@ Design: docs/superpowers/specs/2026-11-26-review-input-limit-design.md.
 - **Long-context price tiers are not charged.** The catalog prices one tier per token type. A review may now send
   more than OpenAI's 272K-input threshold or Claude Haiku 5.5's 100,000-token threshold, and such a call is
   charged at the short-context rate, so the ledger and the fleet spend caps read low for it. The operator chose
-  "whole diff" over clamping to the tier; the Review diff limit (for example 90,000) keeps a review below them until
+  "whole diff" over clamping to the tier; the Review diff limit (for example 60,000, since it caps only the diff and the other prompt parts add about 14,000 tokens) keeps a review below them until
   the catalog can price tiers. The setting's help text says so.
 - **The 25% margin is a guess at the estimator's error.** `TokenBudget.estimateTokens` is `chars / 3.2`. Dense text
   (lock files, minified code, non-Latin text) has fewer characters per token, so a prompt sized to 75% of the window
