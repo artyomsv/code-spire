@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import type { ReviewSummary } from '../api';
-import { ago, archivedBadge, CopyableValue, findCell, llmIcon, miniPipeline, prStateBadge, providerBadge, shortSha, statusCell } from '../render';
+import { ago, archivedBadge, CopyableValue, llmIcon, providerLabel, shortSha, statusCell } from '../render';
+import { PrStateIcon, ProviderIcon } from './ReviewIcons';
+import { findCell, miniPipeline } from './ReviewRowCells';
 import { formatCost } from '../money';
 import ReviewsFilters, { matchesChip, needsAttention as wantsAttention, type ChipFilter } from './ReviewsFilters';
 
@@ -183,10 +185,10 @@ export default function ReviewsList({ reviews, loading, error, showArchived, onS
                     {statusCell(r)}
                   </div>
                   <div className="state-cell">
-                    {prStateBadge(r.prState)}
+                    <PrStateIcon prState={r.prState} />
                   </div>
                   <div className="prov-cell">
-                    {providerBadge(r) ?? <span className="prov-none">—</span>}
+                    <ProviderIcon provider={providerLabel(r)} />
                   </div>
                   <div style={{ minWidth: 0 }}>
                     <div className="repo">

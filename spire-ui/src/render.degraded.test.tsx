@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { findCell, findingsCard, outcomeBadge } from './render';
+import { findCell } from './components/ReviewRowCells';
+import { findingsCard, outcomeBadge } from './render';
 import { matchesChip, needsAttention, type ChipFilter } from './components/ReviewsFilters';
 import type { ReviewDetail, ReviewStatus } from './api';
 

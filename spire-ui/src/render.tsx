@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Archive, Bot, CheckCircle2, Cpu, GitMerge, GitPullRequest, GitPullRequestClosed, MessageCircle, MessageSquare } from 'lucide-react';
+import { Archive, Bot, CheckCircle2, Cpu, MessageSquare } from 'lucide-react';
 import { FindingConversation } from './components/FindingConversation';
 import { MessageText } from './components/MessageText';
+import { RespondingIcon } from './components/ReviewIcons';
 import { RiOpenaiFill } from 'react-icons/ri';
 import { SiClaude, SiGooglegemini } from 'react-icons/si';
 import type {
   Finding,
-  PrState,
   ReconciliationItem,
   ReviewDetail,
   ReviewEvent,
@@ -67,24 +67,6 @@ export function providerBadge(r: ProviderSource | undefined) {
   const p = providerLabel(r);
   if (p === '—') return null;
   return <span className={`prov-badge prov-${p}`}>{p}</span>;
-}
-
-/**
- * The pull/merge request's own state (open/merged/closed) — a badge distinct from the
- * review-outcome/status badge (`outcomeBadge`/`statusCell`), shown beside it in the
- * reviews-list row and the detail header.
- */
-export function prStateBadge(prState: PrState) {
-  const [cls, Icon, label] =
-    prState === 'MERGED' ? ['pr-merged', GitMerge, 'Merged'] :
-    prState === 'CLOSED' ? ['pr-closed', GitPullRequestClosed, 'Closed'] :
-    ['pr-open', GitPullRequest, 'Open'];
-  return (
-    <span className={`pr-state ${cls}`} title={`Pull request ${label.toLowerCase()}`}>
-      <Icon size={13} aria-hidden="true" />
-      {label}
-    </span>
-  );
 }
 
 /**
@@ -263,125 +245,16 @@ export function outcomeBadge(status: ReviewStatus, findings: number, blockerCoun
 }
 
 /**
- * Subtle "responding…" indicator shown while the bot is composing a follow-up reply
- * (`answering: true`). `answering` is best-effort and can rarely stay true if a
- * follow-up dies terminally, so this is a static pill — not an unbounded spinner
- * that would read as "stuck forever".
- */
-export function respondingPill() {
-  return (
-    <span className="responding" title="The bot is composing a reply">
-      <MessageCircle size={11} />
-      responding…
-    </span>
-  );
-}
-
-/**
- * The status cell: the outcome badge plus the "responding…" indicator when the bot
- * is mid-reply. Shared by the reviews-list row and the detail header so both stay
- * in sync with the same gating logic.
+ * The status cell: one outcome badge, and the responding icon while the bot is composing a reply. Shared by the
+ * reviews-list row and the detail header so both gate it the same way.
  */
 export function statusCell(r: { status: ReviewStatus; findings: number; blockerCount: number;
                                 answering?: boolean; degraded?: boolean }) {
   return (
     <>
       {outcomeBadge(r.status, r.findings, r.blockerCount, r.degraded)}
-      {r.answering && respondingPill()}
+      {r.answering && <RespondingIcon />}
     </>
-  );
-}
-
-/** The statuses whose pipeline cell is a label only. */
-const LABEL_ONLY: Partial<Record<ReviewStatus, string>> = {
-  cancelled: 'cancelled', superseded: 'superseded', refused: 'refused', observed: 'observed',
-  waiting_for_checks: 'waiting for checks', skipped: 'skipped: checks failed',
-};
-
-// In the list, ReviewSummary carries only `status` + `stage` (no per-segment
-// array), so segment states are derived exactly as the mockup's sample data
-// would have produced them.
-export function miniPipeline(status: ReviewStatus, stage: number) {
-  if (status === 'reviewing') {
-    const segs = Array.from({ length: 5 }, (_, i) => {
-      const cls = i < stage ? 'done' : i === stage ? 'active' : '';
-      return <span key={i} className={`seg ${cls}`}></span>;
-    });
-    return (
-      <div className="mini">
-        {segs}
-        <span className="lbl">{stageLabel(stage)}</span>
-      </div>
-    );
-  }
-  if (status === 'failed') {
-    const segs = Array.from({ length: 5 }, (_, i) => {
-      const cls = i < stage ? 'done' : i === stage ? 'failed' : '';
-      return <span key={i} className={`seg ${cls}`}></span>;
-    });
-    return (
-      <div className="mini">
-        {segs}
-        <span className="lbl" style={{ color: 'var(--crit)' }}>
-          stalled
-        </span>
-      </div>
-    );
-  }
-  // A label and no segments. A refused review once fell through to the terminal "done" below and rendered as five
-  // green segments; a cap refuses at the diff or the review stage, so drawing progress would only invite reading how
-  // far it got as how far it should have. A review waiting for or skipped on its checks has run nothing at all.
-  const label = LABEL_ONLY[status];
-  if (label) {
-    return (
-      <div className="mini">
-        <span className="lbl">{label}</span>
-      </div>
-    );
-  }
-  return (
-    <div className="mini">
-      {Array.from({ length: 5 }, (_, i) => (
-        <span key={i} className="seg done"></span>
-      ))}
-      <span className="lbl" style={{ color: 'var(--good)' }}>
-        done
-      </span>
-    </div>
-  );
-}
-
-/**
- * The open-findings count, split so its movement explains itself.
- *
- * <p>A bare total going 1 → 2 between rounds reads as "my fix made things worse", when it is just
- * as often one new finding beside one that was already open and never fixed. The breakdown is only
- * rendered when something actually is carried over, so an ordinary first review still shows a plain
- * number rather than paying for a distinction that does not apply to it.
- */
-export function findCell(status: ReviewStatus, findings: number, carriedOver = 0, degraded = false) {
-  // While a review is still running the running tally is noise (and "0 so far"
-  // reads as a result). Show a neutral placeholder until the review completes.
-  if (status === 'reviewing' || status === 'waiting_for_checks') return <span className="time">—</span>;
-  // `refused` belongs here for a stronger reason than the other two: a cap declined to run the
-  // review at all, so a `0` would be a findings count for a diff no model ever saw.
-  if (status === 'failed' || status === 'cancelled' || status === 'refused' || status === 'skipped')
-    return <span className="time">—</span>;
-  // A degraded run reports zero findings, and a plain `0` is exactly how it used to pass for a clean
-  // review here. The placeholder rather than a second pill: the outcome badge already carries the
-  // state, and a count for a review that produced nothing is not a count — which is why `failed`,
-  // `cancelled` and `refused` above render the same way.
-  if (degraded) return <span className="time">—</span>;
-  if (findings === 0) return <span className="findcount zero tnum">0</span>;
-  if (carriedOver <= 0) return <span className="findcount some tnum">{findings}</span>;
-  return (
-    <span
-      className="findcount some tnum"
-      title={`${findings - carriedOver} raised by this run · ${carriedOver} still open from an earlier run`}
-    >
-      {findings}
-      <small>{carriedOver} carried</small>
-    </span>
   );
 }
 

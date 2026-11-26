@@ -8,7 +8,8 @@ import ReviewsList from './components/ReviewsList';
 import ReviewDetail from './components/ReviewDetail';
 import { matchesChip, needsAttention } from './components/ReviewsFilters';
 import type { ChipFilter } from './components/ReviewsFilters';
-import { findCell, findingsCard, miniPipeline, outcomeBadge, STATUS_LABEL } from './render';
+import { findCell, miniPipeline } from './components/ReviewRowCells';
+import { findingsCard, outcomeBadge, STATUS_LABEL } from './render';
 import { renderWithQuery } from './test/queryWrapper';
 
 /**
@@ -105,12 +106,14 @@ describe('the refused status vocabulary', () => {
     expect(badge).toContain('pill refused');
   });
 
-  it('renders no progress bar at all', () => {
+  /** Segments in the refusal's own colour, never progress: how far a cap let it get is not how far it should go. */
+  it('renders no progress, only the refusal', () => {
     const markup = renderToStaticMarkup(<>{miniPipeline('refused', 3)}</>);
 
-    expect(markup).toContain('refused');
-    expect(markup).not.toContain('done');
-    expect(markup).not.toContain('seg');
+    expect(markup).toContain('Pipeline: refused');
+    expect(markup).toContain('seg st-refused');
+    expect(markup).not.toContain('seg done');
+    expect(markup).not.toContain(': done');
   });
 
   it('wants an operator, unlike the two Closed statuses', () => {

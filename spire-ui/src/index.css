@@ -389,7 +389,6 @@
   .prov-badge.prov-gitlab { --brand: #fc6d26; }
   .prov-badge.prov-bitbucket { --brand: #2684ff; }
   .findcount { font-family: var(--font-mono); font-size: 13px; font-weight: 600; }
-  .findcount small { font-weight: 500; color: var(--text-3); font-size: 10.5px; margin-left: 3px; text-transform: uppercase; letter-spacing: 0.04em; }
   .findcount.zero { color: var(--good); }
   .findcount.some { color: var(--text); }
   .time { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
@@ -440,25 +439,28 @@
   }
   .responding svg { flex: none; }
 
-  /* Status cell holds the outcome/status badge and the responding indicator. The status
-     column is narrow (116px), so let the responding pill WRAP onto a second line inside the
-     cell rather than overflow into the adjacent .state-cell (which corrupted the row). */
+  /* Status cell: one outcome badge, then the responding icon. Still allowed to wrap, so a long
+     badge never overflows into the adjacent .state-cell (which once corrupted the row). */
   .status-cell { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; row-gap: 4px; min-width: 0; }
   .state-cell { display: flex; align-items: center; }
 
-  /* PR-state badge (open/merged/closed) — the pull/merge request's own state, distinct
-     from the review-outcome/status badge (`.pill`) shown beside it. */
-  .pr-state {
-    display: inline-flex; align-items: center; gap: 4px;
-    font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em;
-    padding: 2px 7px; border-radius: 6px;
-    background: var(--pr-soft); color: var(--pr); border: 1px solid color-mix(in srgb, var(--pr) 28%, transparent);
-    white-space: nowrap;
+  /* Compact review marks (ReviewIcons.tsx): an icon whose tooltip and accessible name carry the word. */
+  .icon-mark { display: inline-flex; align-items: center; justify-content: center; flex: none; color: var(--text-3); border-radius: 5px; }
+  .icon-mark svg { display: block; flex: none; }
+  .pr-icon.pr-open { color: var(--good); }
+  .pr-icon.pr-merged { color: var(--iris); }
+  .pr-icon.pr-closed { color: var(--crit); }
+  .prov-icon.prov-github { color: var(--text-2); }
+  .prov-icon.prov-gitlab { color: #fc6d26; }
+  .prov-icon.prov-bitbucket { color: #2684ff; }
+  /* A soft pulse, never a spinner: "answering" can outlive a dead-lettered reply until the next run. */
+  .responding-icon { color: var(--iris); animation: pulse 1.8s ease-in-out infinite; }
+
+  /* Text for screen readers only. */
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
   }
-  .pr-state svg { flex: none; }
-  .pr-state.pr-open { --pr: var(--good); --pr-soft: var(--good-soft); }
-  .pr-state.pr-merged { --pr: var(--iris); --pr-soft: var(--iris-soft); }
-  .pr-state.pr-closed { --pr: var(--crit); --pr-soft: var(--crit-soft); }
 
   /* Archived marker — a third dimension beside the review status and the PR state, so it is
      deliberately quieter than either: retained work, not an outcome and not a warning. */
@@ -481,7 +483,17 @@
     animation: shimmer 1.5s linear infinite;
   }
   .mini .seg.failed { background: var(--crit); }
-  .mini .lbl { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-3); margin-left: 4px; white-space: nowrap; }
+  /* A status that ran no step: every segment in the status pill's colour, so the strip still says it. */
+  .mini .seg.st-refused, .mini .seg.st-skipped { background: var(--warn); }
+  .mini .seg.st-cancelled, .mini .seg.st-superseded { background: var(--muted); }
+  .mini .seg.st-waiting_for_checks, .mini .seg.st-observed { background: color-mix(in srgb, var(--iris) 45%, var(--border-strong)); }
+  /* Each segment is its own tooltip trigger; the padded wrapper gives a 5px bar a hoverable height. */
+  .mini .mini-step { flex: 1; display: flex; align-items: center; padding: 5px 0; cursor: default; }
+  .mini .mini-step .seg { width: 100%; transition: box-shadow 0.12s, filter 0.12s; }
+  .mini .mini-step:hover .seg, .mini .seg:focus-visible {
+    filter: brightness(1.12); box-shadow: 0 0 0 2px color-mix(in srgb, var(--iris) 40%, transparent); outline: none;
+  }
+  @media (prefers-reduced-motion: reduce) { .mini .mini-step .seg { transition: none; } }
 
   /* ---------- detail ---------- */
   .back { display: inline-flex; align-items: center; gap: 7px; color: var(--text-2); font-size: 13px; font-weight: 550; margin-bottom: 16px; cursor: pointer; }

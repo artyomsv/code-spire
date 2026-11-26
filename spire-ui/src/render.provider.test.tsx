@@ -1,4 +1,6 @@
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+import { ProviderIcon } from './components/ReviewIcons';
 import { openInLabel, providerBadge, providerLabel } from './render';
 
 /**
@@ -60,5 +62,31 @@ describe('openInLabel', () => {
 
   it('falls back to a generic label when unknown', () => {
     expect(openInLabel({ providerType: '', htmlUrl: 'https://git.mycorp.example/g/r' })).toBe('Open in provider');
+  });
+});
+
+/** The reviews list's Provider column: the forge's logo, named for a screen reader and on hover or focus. */
+describe('ProviderIcon', () => {
+  it.each([
+    ['github', 'GitHub'],
+    ['gitlab', 'GitLab'],
+    ['bitbucket', 'Bitbucket'],
+  ])('draws %s as its logo named %s, with no text', (slug, name) => {
+    render(<ProviderIcon provider={slug} />);
+
+    const icon = screen.getByRole('img', { name });
+    expect(icon).toHaveClass(`prov-${slug}`);
+    expect(icon.textContent).toBe('');
+    expect(icon.querySelector('svg')).not.toBeNull();
+
+    fireEvent.focus(icon);
+    expect(screen.getByRole('tooltip')).toHaveTextContent(name);
+  });
+
+  it('keeps the plain dash for a forge it cannot name', () => {
+    render(<ProviderIcon provider={providerLabel({ providerType: '', htmlUrl: 'https://git.mycorp.example/g/r' })} />);
+
+    expect(screen.queryByRole('img')).toBeNull();
+    expect(screen.getByText('—')).toHaveClass('prov-none');
   });
 });
