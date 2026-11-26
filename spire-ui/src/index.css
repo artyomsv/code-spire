@@ -303,12 +303,14 @@
   .tablewrap { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-sm); overflow-x: auto; }
   .thead, .row {
     display: grid;
-    grid-template-columns: 52px 84px 92px minmax(150px, 1fr) 124px minmax(0, 1.25fr) 148px minmax(104px, 0.7fr) 92px 44px 72px 80px;
+    grid-template-columns: 56px 56px 56px minmax(150px, 1fr) 124px minmax(0, 1.25fr) 148px minmax(104px, 0.7fr) 92px 44px 72px 80px;
     align-items: center; gap: 14px;
     padding: 0 18px;
-    min-width: 988px;
+    min-width: 928px;
   }
   .thead .h-model { text-align: center; }
+  /* The three icon-only columns share one narrow width, icon and heading centred (PR #457). */
+  .thead > :nth-child(-n+3) { text-align: center; }
   .model-cell { display: flex; align-items: center; justify-content: center; }
   .llm-icon { display: inline-flex; align-items: center; justify-content: center; }
   .llm-icon svg { display: block; }
@@ -365,7 +367,7 @@
   .copyval-empty { color: var(--text-3); }
 
   /* Provider + Author columns (extracted from the Pull request cell). */
-  .prov-cell { display: flex; align-items: center; min-width: 0; }
+  .prov-cell { display: flex; align-items: center; justify-content: center; min-width: 0; }
   .prov-none { color: var(--text-3); font-family: var(--font-mono); font-size: 12px; }
   .author-cell { font-size: 12px; color: var(--text-2); min-width: 0; display: flex; flex-direction: column; justify-content: center; }
   .author-cell .ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
@@ -462,8 +464,8 @@
 
   /* Status cell: the outcome (an icon in the list, a badge in the review header), then the responding icon. Still
      allowed to wrap, so nothing overflows into the adjacent .state-cell (which once corrupted the row). */
-  .status-cell { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; row-gap: 4px; min-width: 0; }
-  .state-cell { display: flex; align-items: center; }
+  .status-cell { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px; row-gap: 4px; min-width: 0; }
+  .state-cell { display: flex; align-items: center; justify-content: center; }
 
   /* Compact review marks (ReviewIcons.tsx): an icon whose tooltip and accessible name carry the word. */
   .icon-mark { display: inline-flex; align-items: center; justify-content: center; flex: none; color: var(--text-3); border-radius: 5px; }
