@@ -57,11 +57,16 @@ interface PrStateIconProps extends MarkFocus {
   prState: PrState;
 }
 
+/** "Pull request merged": what the state icon says on hover. */
+export function prStateLabel(prState: PrState): string {
+  return `Pull request ${(PR_STATES[prState] ?? PR_STATES.OPEN).word}`;
+}
+
 /** The pull request's own state as its icon: merged purple, open green, closed red. */
 export function PrStateIcon({ prState, tabIndex }: PrStateIconProps) {
-  const { cls, Icon, word } = PR_STATES[prState] ?? PR_STATES.OPEN;
+  const { cls, Icon } = PR_STATES[prState] ?? PR_STATES.OPEN;
   return (
-    <IconMark label={`Pull request ${word}`} className={`pr-icon ${cls}`} tabIndex={tabIndex}>
+    <IconMark label={prStateLabel(prState)} className={`pr-icon ${cls}`} tabIndex={tabIndex}>
       <Icon size={15} />
     </IconMark>
   );
@@ -72,6 +77,11 @@ const PROVIDERS: Record<string, { name: string; Logo: IconType }> = {
   gitlab: { name: 'GitLab', Logo: SiGitlab },
   bitbucket: { name: 'Bitbucket', Logo: SiBitbucket },
 };
+
+/** The forge's name for `providerLabel`'s slug ("GitHub"), or null for a forge with no logo. */
+export function providerName(provider: string): string | null {
+  return PROVIDERS[provider]?.name ?? null;
+}
 
 /** The forge's logo from `providerLabel`'s slug; an unknown forge keeps the list's plain dash. */
 export function ProviderIcon({ provider }: { provider: string }) {

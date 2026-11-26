@@ -47,6 +47,11 @@ function pipelineOf(status: ReviewStatus, stage: number): { segments: Segment[];
   return { segments: ROW_STEPS.map(() => ({ cls: 'done', word: 'done' })), summary: 'done' };
 }
 
+/** The sentence the strip says in place of its dropped word: "done", "stalled at Context", "skipped — checks failed". */
+export function pipelineSummary(status: ReviewStatus, stage: number): string {
+  return pipelineOf(status, stage).summary;
+}
+
 /**
  * The row's pipeline: segments only, no trailing word. Each segment names its step and state on hover, and the
  * strip's accessible name says the state the word used to say ("Pipeline: skipped — checks failed"). No segment is a
@@ -78,6 +83,11 @@ export function findingsBreakdown(findings: number, carriedOver: number): string
 /** Statuses whose count would describe a diff no model finished reading. */
 const NO_COUNT = new Set<ReviewStatus>(['reviewing', 'waiting_for_checks', 'failed', 'cancelled', 'refused', 'skipped']);
 
+/** The findings split the count cell shows on hover, or null where the cell is a dash. */
+export function findingsSummary(status: ReviewStatus, findings: number, carriedOver = 0, degraded = false) {
+  return NO_COUNT.has(status) || degraded ? null : findingsBreakdown(findings, carriedOver);
+}
+
 /**
  * The open-findings count as a number only; its split into new and carried-over findings is the tooltip. A bare
  * total going 1 → 2 reads as "my fix made things worse" when it is as often one new beside one never fixed.
@@ -86,8 +96,8 @@ const NO_COUNT = new Set<ReviewStatus>(['reviewing', 'waiting_for_checks', 'fail
  * skipped) and when the run produced nothing (degraded): a `0` there is how a degraded run passed for a clean one.
  */
 export function findCell(status: ReviewStatus, findings: number, carriedOver = 0, degraded = false) {
-  if (NO_COUNT.has(status) || degraded) return <span className="time">—</span>;
-  const breakdown = findingsBreakdown(findings, carriedOver);
+  const breakdown = findingsSummary(status, findings, carriedOver, degraded);
+  if (breakdown === null) return <span className="time">—</span>;
   return (
     <Tooltip label={breakdown}>
       <span className={`findcount ${findings === 0 ? 'zero' : 'some'} tnum`}>

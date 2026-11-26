@@ -5,6 +5,7 @@ import { ago, archivedBadge, CopyableValue, llmIcon, providerLabel, shortSha } f
 import { PrStateIcon, ProviderIcon } from './ReviewIcons';
 import { findCell, miniPipeline } from './ReviewRowCells';
 import { listStatusCell } from './ReviewStatusIcon';
+import RowFocusSummary from './RowFocusSummary';
 import { formatCost } from '../money';
 import ReviewsFilters, { matchesChip, needsAttention as wantsAttention, type ChipFilter } from './ReviewsFilters';
 
@@ -171,9 +172,9 @@ export default function ReviewsList({ reviews, loading, error, showArchived, onS
             rows.map((r) => {
               const cost = costCell(r);
               return (
-                // The row is the one keyboard stop: its marks are not, and its accessible name (from its content,
-                // the marks' and the pipeline's labels included) carries the words they dropped. Enter opens the
-                // detail, where everything is shown in full (WIDGETS.md, "Compact review marks").
+                // The row is the one keyboard stop: its marks are not. Its accessible name (from its content, the
+                // marks' and the pipeline's labels included) carries the words they dropped, and on keyboard focus
+                // RowFocusSummary shows them in one line. Enter opens the detail (WIDGETS.md, "Compact review marks").
                 <div
                   key={r.id}
                   className={`row ${r.status === 'superseded' || r.archivedAt ? 'faded' : ''}`}
@@ -223,6 +224,7 @@ export default function ReviewsList({ reviews, loading, error, showArchived, onS
                   <div className="cell-r">
                     <span className="time">{ago(r.updatedAt)}</span>
                   </div>
+                  <RowFocusSummary review={r} />
                 </div>
               );
             })

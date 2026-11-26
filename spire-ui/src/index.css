@@ -342,6 +342,13 @@
   .row:last-child { border-bottom: none; }
   .row:hover { background: var(--hover); }
   .row.faded { opacity: 0.55; }
+  /* The words the row's marks dropped, in one line across every column, shown only while the row has keyboard focus:
+     a sighted keyboard user cannot hover the marks (RowFocusSummary). */
+  .row .row-focus-summary {
+    display: none; grid-column: 1 / -1; margin: -6px 0 10px;
+    font-size: 12px; color: var(--text-2); overflow-wrap: anywhere;
+  }
+  .row:focus-visible .row-focus-summary { display: block; }
   .row .repo { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 7px; min-width: 0; }
   .row .repo .pr { color: var(--text-3); font-weight: 500; }
   .row .title { font-size: 13.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

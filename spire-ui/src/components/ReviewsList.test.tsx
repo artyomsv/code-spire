@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import type { ReviewSummary } from '../api';
@@ -111,5 +113,41 @@ describe('ReviewsList — the row names what its marks show', () => {
     expect(row).toHaveAccessibleName(/Pipeline: done/);
     expect(row).toHaveAttribute('tabindex', '0');
     expect(row.querySelectorAll('[role="img"][tabindex]')).toHaveLength(0);
+  });
+});
+
+/**
+ * A sighted keyboard user cannot hover the marks, and the row, not each mark, is the tab stop. So the row carries one
+ * line with the marks' words, which index.css shows only while the row has keyboard focus (`.row:focus-visible`).
+ * jsdom applies no stylesheet: the tests assert the line's words and the rule that reveals it, not the pixels.
+ */
+describe('ReviewsList — the row shows its marks\' words on keyboard focus', () => {
+  it('holds one line with every dropped word, hidden from assistive technology, and stays the only stop', () => {
+    renderList([summary({ prState: 'MERGED', answering: true, findings: 3, carriedOverFindings: 1, blockerCount: 1 })]);
+
+    const row = rowFor(1);
+    row.focus();
+    expect(document.activeElement).toBe(row);
+    const line = row.querySelector('.row-focus-summary') as HTMLElement;
+    expect(line).toHaveAttribute('aria-hidden', 'true');
+    expect(line.textContent).toBe(
+      'Changes · Responding to a reply… · Pull request merged · GitHub · Pipeline: done · 3 open: 2 new, 1 carried',
+    );
+    expect(line.querySelectorAll('[tabindex]')).toHaveLength(0);
+  });
+
+  it('says the full status word a short mark stands for, and no count where the cell is a dash', () => {
+    renderList([summary({ status: 'skipped', providerType: '' })]);
+
+    expect(rowFor(1).querySelector('.row-focus-summary')?.textContent).toBe(
+      'Skipped: checks failed · Pull request open · Pipeline: skipped — checks failed',
+    );
+  });
+
+  it('is revealed by the stylesheet only while the row has keyboard focus', () => {
+    const css = readFileSync(join(process.cwd(), 'src', 'index.css'), 'utf8');
+
+    expect(css).toMatch(/\.row \.row-focus-summary \{[^}]*display: none;/);
+    expect(css).toMatch(/\.row:focus-visible \.row-focus-summary \{ display: block; \}/);
   });
 });
