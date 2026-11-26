@@ -39,5 +39,5 @@ interface DeclinedNoteProps {
 export function DeclinedNote({ threadEvents }: DeclinedNoteProps) {
   const last = lastConversationEvent(threadEvents);
   if (last?.type !== 'FollowUpDeclined') return null;
-  return <div className="convo-note convo-declined">Not answered: {reasonOf(last)}</div>;
+  return <div className="convo-note">Not answered: {reasonOf(last)}</div>;
 }
