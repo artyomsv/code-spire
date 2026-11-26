@@ -11,6 +11,7 @@ import dev.codespire.orchestrator.factory.FixTargets;
 import dev.codespire.orchestrator.factory.RunFunding;
 import dev.codespire.orchestrator.llm.CallRefs;
 import dev.codespire.orchestrator.prompt.WorkerPromptTemplates;
+import dev.codespire.orchestrator.readmodel.AnsweringMarks;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
 import dev.codespire.orchestrator.repository.ReviewHarness;
@@ -42,6 +43,10 @@ public class HarnessReplyLaunch {
 
     @Inject
     ReviewProjection projection;
+
+    /** Clears the "responding" mark only while it is still this reply's comment (V122). */
+    @Inject
+    AnsweringMarks answering;
 
     @Inject
     FixTargets targets;
@@ -117,7 +122,7 @@ public class HarnessReplyLaunch {
     /** Persisted under the thread, so the conversation shows why no answer came; and the "responding" pill clears. */
     private void said(HarnessReplyPrepared prepared, String type, String detail) {
         projection.appendEvent(prepared.reviewId(), "result", type, detail, prepared.threadRef().value());
-        projection.setAnswering(prepared.reviewId(), false);
+        answering.finish(prepared.reviewId(), prepared.triggeringCommentId());
     }
 
     private ReviewRunRequest request(OnHarness onHarness, HarnessReplyPrepared prepared) {

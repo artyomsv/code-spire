@@ -11,6 +11,7 @@ import dev.codespire.orchestrator.factory.FactoryRunProjection;
 import dev.codespire.orchestrator.pipeline.CommandsEmitter;
 import dev.codespire.orchestrator.provider.ConversationLevels;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
+import dev.codespire.orchestrator.readmodel.AnsweringMarks;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -57,6 +58,10 @@ public class HarnessReplyResults {
     @Inject
     ReviewProjection projection;
 
+    /** Clears the "responding" mark only while it is still this reply's comment (V122). */
+    @Inject
+    AnsweringMarks answering;
+
     /** The run's row names the harness a refusal is about, as the review's refusal does. */
     @Inject
     FactoryRunProjection runRows;
@@ -97,14 +102,14 @@ public class HarnessReplyResults {
         String why = "harness reply refused: " + reason;
         timeline.record("result", "refused:HarnessReply", binding.reviewId(), reason);
         projection.appendEvent(binding.reviewId(), "result", "FollowUpRefused", why, call.threadRef());
-        projection.setAnswering(binding.reviewId(), false);
+        answering.finish(binding.reviewId(), call.triggeringCommentId());
         LOG.warnf("Harness reply on %s thread %s refused: %s", binding.reviewId(), call.threadRef(), reason);
     }
 
     private void fail(ReviewRunBinding binding, ReplyCall call, String why) {
         timeline.record("result", "failed:HarnessReply", binding.reviewId(), why);
         projection.appendEvent(binding.reviewId(), "result", "FollowUpFailed", why, call.threadRef());
-        projection.setAnswering(binding.reviewId(), false);
+        answering.finish(binding.reviewId(), call.triggeringCommentId());
         LOG.warnf("Harness reply on %s thread %s got no answer: %s", binding.reviewId(), call.threadRef(), why);
     }
 }

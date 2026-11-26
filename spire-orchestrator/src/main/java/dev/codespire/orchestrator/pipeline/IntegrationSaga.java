@@ -97,6 +97,8 @@ public class IntegrationSaga {
 
     @Inject ReviewStartGate reviewStart; // admits a run; starts it at once, or after checks (V121)
 
+    @Inject ReplyDispatch replies; // files a planned reply, marks it answering (V122) and sends it
+
     @Incoming("integration-in")
     @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
     public void on(IntegrationEvent event) {
@@ -190,24 +192,7 @@ public class IntegrationSaga {
                         LOG.infof("Not answering a reply on %s — observe-only mode", e.reviewId());
                         return;
                     }
-                    conversation.planFollowUp(e).ifPresent(cmd -> {
-                        String author = e.author() == null ? "unknown" : e.author().username();
-                        // The COMMAND's threadRef, not the event's: the saga normalized it to the
-                        // conversation root, so every turn of one conversation is stored under the same
-                        // ref — the review detail nests them all under the finding instead of spilling
-                        // later turns into a bogus "General discussion" with an under-counted label.
-                        projection.appendEvent(e.reviewId(), "integration", "AuthorReplied",
-                                "@" + author + ": " + Previews.of(e.text()), threadRefOf(cmd));
-                        // Flags "answering" AND bumps the live dashboard in one broadcast — replaces
-                        // the plain touch() that used to sit here (fix #5, avoid double-broadcast).
-                        // Only for a real answer: the cap notice is fixed text with no LLM call, and
-                        // flagging it would leave a "responding…" pill up for a reply that never comes.
-                        if (cmd instanceof ActionCommand.AnswerFollowUp
-                                || cmd instanceof ActionCommand.PrepareHarnessReply) {
-                            projection.setAnswering(e.reviewId(), true);
-                        }
-                        commands.emit(cmd);
-                    });
+                    conversation.planFollowUp(e).ifPresent(cmd -> replies.send(e, cmd));
                 }
             }
             default -> LOG.debugf("No integration reaction for %s", event.getClass().getSimpleName());
@@ -821,16 +806,6 @@ public class IntegrationSaga {
             case ManualCommandReceived e -> ReviewIds.reviewId(e.repo(), e.prId());
             case AuthorReplied e -> e.reviewId();
             default -> "";
-        };
-    }
-
-    /** The conversation root both reply commands carry, so the human's reply is filed under it either way. */
-    private static String threadRefOf(ActionCommand command) {
-        return switch (command) {
-            case ActionCommand.AnswerFollowUp c -> c.threadRef().value();
-            case ActionCommand.PrepareHarnessReply c -> c.threadRef().value();
-            case ActionCommand.NotifyTurnCap c -> c.threadRef().value();
-            default -> null;
         };
     }
 }

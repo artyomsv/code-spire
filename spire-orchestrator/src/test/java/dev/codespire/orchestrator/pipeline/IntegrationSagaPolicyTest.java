@@ -522,11 +522,11 @@ class IntegrationSagaPolicyTest extends IntegrationSagaFixture {
         var followUp = new ActionCommand.AnswerFollowUp(REPLY_REVIEW, new RepoRef("acme", "web"), 412L,
                 new ThreadRef("t-1"), "c-1", "why is this a bug?", "scm-cred", "llm-cred", false, 1, 100L, 2.0);
 
-        List<Boolean> answeringCalls = answeringCallsFor(followUp);
+        List<String> answeringCalls = answeringCallsFor(followUp);
 
         assertEquals(1, emitted.size(), "the planned AnswerFollowUp is still emitted");
-        assertEquals(List.of(true), answeringCalls,
-                "dispatching a follow-up flags the review as answering (and bumps the live dashboard)");
+        assertEquals(List.of(REPLY_REVIEW + ":c-1"), answeringCalls,
+                "dispatching a follow-up marks the review as answering this comment (V122)");
     }
 
     /** Harness reviews, step 7: a reply prepared for a harness run is an answer on its way, as an API one is. */
@@ -536,17 +536,17 @@ class IntegrationSagaPolicyTest extends IntegrationSagaFixture {
                 new ThreadRef("t-1"), "c-1", "scm-cred", false, 1, List.of(),
                 new dev.codespire.contract.command.ReplyRetry(1, 100L, 2.0), null);
 
-        List<Boolean> answeringCalls = answeringCallsFor(prepare);
+        List<String> answeringCalls = answeringCallsFor(prepare);
 
         assertEquals(List.of(prepare), emitted);
-        assertEquals(List.of(true), answeringCalls, "the responding pill shows while the reply run works");
+        assertEquals(List.of(REPLY_REVIEW + ":c-1"), answeringCalls, "the responding mark shows while the run works");
     }
 
     private static final String REPLY_REVIEW = "review::acme/web#412";
 
-    /** A live review whose reply the conversation plans as {@code followUp}; the review's answering writes. */
-    private List<Boolean> answeringCallsFor(ActionCommand followUp) {
-        List<Boolean> answeringCalls = new ArrayList<>();
+    /** A live review whose reply the conversation plans as {@code followUp}; the review's answering marks. */
+    private List<String> answeringCallsFor(ActionCommand followUp) {
+        List<String> answeringCalls = new ArrayList<>();
         String reviewId = REPLY_REVIEW;
 
         IntegrationSaga saga = new IntegrationSaga();
@@ -568,7 +568,8 @@ class IntegrationSagaPolicyTest extends IntegrationSagaFixture {
         // is the honest signal that the gate genuinely covers this branch.
         saga.policy = policyMode(false);
         saga.conversation = plannedAs(followUp);
-        saga.projection = liveReviewRecordingAnswering(answeringCalls);
+        saga.projection = liveReview();
+        saga.replies = ReplyDispatchFakes.recording(saga.projection, saga.commands, answeringCalls);
 
         saga.onRepository(new AuthorReplied(new RepoRef("acme", "web"), 412L, reviewId, new ThreadRef("t-1"), "c-1",
                 "why is this a bug?", Author.of("human-1", "alice", "Alice")), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
@@ -595,8 +596,8 @@ class IntegrationSagaPolicyTest extends IntegrationSagaFixture {
         };
     }
 
-    /** A live review whose "answering" writes land in {@code answeringCalls}; the real one opens a database. */
-    private static ReviewProjection liveReviewRecordingAnswering(List<Boolean> answeringCalls) {
+    /** A live review that files a reply nowhere; the real one opens a database. */
+    private static ReviewProjection liveReview() {
         return new dev.codespire.orchestrator.TestRepositoryProjection() {
             /** The archival gate reads this before the reply is handled at all; this review is live. */
             @Override
@@ -606,11 +607,6 @@ class IntegrationSagaPolicyTest extends IntegrationSagaFixture {
 
             @Override
             public void appendEvent(String reviewId, String lane, String type, String detail, String threadRef) {
-            }
-
-            @Override
-            public void setAnswering(String reviewId, boolean answering) {
-                answeringCalls.add(answering);
             }
         };
     }

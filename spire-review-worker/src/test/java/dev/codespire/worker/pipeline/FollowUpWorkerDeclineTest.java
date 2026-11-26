@@ -4,7 +4,7 @@ import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.ActionCommand.AnswerFollowUp;
 import dev.codespire.contract.event.IntegrationEvent;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpDeclined;
-import dev.codespire.contract.event.IntegrationEvent.FollowUpDeclined.Reason;
+import dev.codespire.contract.event.FollowUpDeclineReason;
 import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.ThreadSource;
@@ -40,9 +40,9 @@ class FollowUpWorkerDeclineTest {
 
     @Test
     void aProviderWithoutThreadsReportsTheDecline() {
-        worker(mock(CommentSink.class), new NoClaims(false)).answer(ask(true));
+        worker(mock(CommentSink.class), Claims.unclaimed()).answer(mentionedReply());
 
-        assertEquals(List.of(declined(Reason.NO_THREAD_SOURCE)), emitted);
+        assertEquals(List.of(declined(FollowUpDeclineReason.NO_THREAD_SOURCE)), emitted);
     }
 
     @Test
@@ -50,27 +50,32 @@ class FollowUpWorkerDeclineTest {
         CommentSink sink = threadOf(new ThreadMessage("TEST-alice", "TEST-ONE", false),
                 new ThreadMessage("TEST-bob", "TEST-TWO", false));
 
-        worker(sink, new NoClaims(false)).answer(ask(false));
+        worker(sink, Claims.unclaimed()).answer(unmentionedReply());
 
-        assertEquals(List.of(declined(Reason.MULTI_PARTY_NO_MENTION)), emitted);
+        assertEquals(List.of(declined(FollowUpDeclineReason.MULTI_PARTY_NO_MENTION)), emitted);
     }
 
     @Test
     void anAnsweredCommentReportsTheDecline() {
         CommentSink sink = threadOf(new ThreadMessage("TEST-alice", "TEST-QUESTION", false));
 
-        worker(sink, new NoClaims(true)).answer(ask(true));
+        worker(sink, Claims.alreadyPosted()).answer(mentionedReply());
 
-        assertEquals(List.of(declined(Reason.ALREADY_ANSWERED)), emitted);
+        assertEquals(List.of(declined(FollowUpDeclineReason.ALREADY_ANSWERED)), emitted);
     }
 
-    private static FollowUpDeclined declined(Reason reason) {
+    private static FollowUpDeclined declined(FollowUpDeclineReason reason) {
         return new FollowUpDeclined(REVIEW_ID, THREAD, COMMENT, reason);
     }
 
-    private static AnswerFollowUp ask(boolean mentioned) {
-        return new AnswerFollowUp(REVIEW_ID, REPO, 7, THREAD, COMMENT, "TEST-QUESTION", null, null, mentioned, 1, 0,
-                1.0);
+    /** A reply that mentioned the bot, which engages whoever else is in the thread. */
+    private static AnswerFollowUp mentionedReply() {
+        return new AnswerFollowUp(REVIEW_ID, REPO, 7, THREAD, COMMENT, "TEST-QUESTION", null, null, true, 1, 0, 1.0);
+    }
+
+    /** A reply that did not mention the bot. */
+    private static AnswerFollowUp unmentionedReply() {
+        return new AnswerFollowUp(REVIEW_ID, REPO, 7, THREAD, COMMENT, "TEST-QUESTION", null, null, false, 1, 0, 1.0);
     }
 
     private static CommentSink threadOf(ThreadMessage... messages) {
@@ -105,17 +110,27 @@ class FollowUpWorkerDeclineTest {
         return worker;
     }
 
-    /** The one claim method a decline reaches; {@code answered} says whether the comment was answered already. */
-    private static final class NoClaims extends CommentIdempotencyStore {
-        private final boolean answered;
+    /** The one claim method a decline reaches answers {@code claim}; posting fails the test. */
+    private static final class Claims extends CommentIdempotencyStore {
+        private final Claim claim;
 
-        NoClaims(boolean answered) {
-            this.answered = answered;
+        private Claims(Claim claim) {
+            this.claim = claim;
+        }
+
+        /** No answer was posted for the comment yet. */
+        static Claims unclaimed() {
+            return new Claims(new Claim.Post());
+        }
+
+        /** The comment was answered already: a redelivery. */
+        static Claims alreadyPosted() {
+            return new Claims(new Claim.AlreadyPosted("TEST-posted-1"));
         }
 
         @Override
         public Claim claim(String reviewId, String commit, String anchorKey) {
-            return answered ? new Claim.AlreadyPosted("TEST-posted-1") : new Claim.Post();
+            return claim;
         }
 
         @Override

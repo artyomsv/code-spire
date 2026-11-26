@@ -13,6 +13,7 @@ import dev.codespire.orchestrator.llm.CallRefs;
 import dev.codespire.orchestrator.pipeline.CommandsEmitter;
 import dev.codespire.orchestrator.provider.ConversationLevels;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
+import dev.codespire.orchestrator.readmodel.AnsweringMarks;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import org.junit.jupiter.api.Test;
@@ -44,7 +45,8 @@ class HarnessReplyResultsTest {
     private final List<ActionCommand> emitted = new ArrayList<>();
     private final List<String> events = new ArrayList<>();
     private final List<String> timelineDetails = new ArrayList<>();
-    private final List<Boolean> answering = new ArrayList<>();
+    /** Each "answering" mark a failure or refusal finished, by its triggering comment. */
+    private final List<String> answering = new ArrayList<>();
 
     private static RunReviewArtifact answer(String text) {
         return new RunReviewArtifact(RUN_ID, REPLY, text, false, Map.of("INPUT", 1200L, "OUTPUT", 340L), 4, List.of());
@@ -101,7 +103,7 @@ class HarnessReplyResultsTest {
                 false, null, List.of()), REPLY);
 
         assertEquals(List.of("FollowUpRefused@" + THREAD + ": harness reply refused: TEST-harness: fork_requires_credential_proxy"), events);
-        assertEquals(List.of(false), answering, "the responding pill clears");
+        assertEquals(List.of("987654"), answering, "the responding pill clears");
         assertTrue(emitted.isEmpty(), emitted.toString());
     }
 
@@ -149,7 +151,7 @@ class HarnessReplyResultsTest {
 
     private void assertFailed(String why) {
         assertEquals(List.of("FollowUpFailed@" + THREAD + ": " + why), events);
-        assertEquals(List.of(false), answering, "the responding pill clears");
+        assertEquals(List.of("987654"), answering, "the responding pill clears");
         assertTrue(emitted.isEmpty(), emitted.toString());
     }
 
@@ -179,6 +181,12 @@ class HarnessReplyResultsTest {
             }
         };
         results.projection = projection();
+        results.answering = new AnsweringMarks() {
+            @Override
+            public void finish(String reviewId, String commentId) {
+                answering.add(commentId);
+            }
+        };
         results.runRows = new FactoryRunProjection() {
             @Override public Optional<String> harnessOf(String runId) { return Optional.of("TEST-harness"); }
             @Override protected void push(String runId) { /* nothing: no live feed from a unit test */ }
@@ -196,7 +204,7 @@ class HarnessReplyResultsTest {
 
             @Override
             public void setAnswering(String reviewId, boolean value) {
-                answering.add(value);
+                throw new AssertionError("a reply clears only its own comment's mark (V122)");
             }
         };
     }

@@ -14,6 +14,7 @@ import dev.codespire.orchestrator.factory.FactoryRunProjection;
 import dev.codespire.orchestrator.factory.FixTargets;
 import dev.codespire.orchestrator.llm.CallRefs;
 import dev.codespire.orchestrator.prompt.WorkerPromptTemplates;
+import dev.codespire.orchestrator.readmodel.AnsweringMarks;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
 import dev.codespire.orchestrator.repository.ReviewHarness;
@@ -59,7 +60,8 @@ class HarnessReplyLaunchTest {
     private final Map<String, String> rowsBySlot = new HashMap<>();
     private final List<String> events = new ArrayList<>();
     private final List<String> timelineTypes = new ArrayList<>();
-    private final List<Boolean> answering = new ArrayList<>();
+    /** Each "answering" mark a refusal finished, by its triggering comment. */
+    private final List<String> answering = new ArrayList<>();
 
     private static HarnessReplyPrepared prepared(String head, String comment) {
         return new HarnessReplyPrepared(REVIEW_ID, PR, head, THREAD, comment, 2, INPUTS);
@@ -121,7 +123,7 @@ class HarnessReplyLaunchTest {
 
         assertEquals(List.of("FollowUpRefused@TEST-thread-1: harness reply refused: TEST-harness: "
                 + "subscription_unavailable"), events);
-        assertEquals(List.of(false), answering, "the responding pill clears");
+        assertEquals(List.of("TEST-comment-5"), answering, "the responding pill clears");
     }
 
     @Test
@@ -131,7 +133,7 @@ class HarnessReplyLaunchTest {
         launch().launch(prepared(HEAD, "TEST-comment-5"));
 
         assertEquals(List.of("FollowUpRefused@TEST-thread-1: pull request closed"), events);
-        assertEquals(List.of(false), answering);
+        assertEquals(List.of("TEST-comment-5"), answering);
         assertTrue(timelineTypes.contains("dropped:HarnessReplyPrepared"), timelineTypes.toString());
     }
 
@@ -144,7 +146,7 @@ class HarnessReplyLaunchTest {
         assertTrue(dispatched.isEmpty());
         assertEquals(List.of("FollowUpRefused@TEST-thread-1: harness reply refused: no harness: "
                 + "review_harness_removed"), events);
-        assertEquals(List.of(false), answering);
+        assertEquals(List.of("TEST-comment-5"), answering);
     }
 
     @Test
@@ -195,6 +197,7 @@ class HarnessReplyLaunchTest {
             }
         };
         launch.projection = projection();
+        launch.answering = marks();
         launch.targets = targets();
         launch.dispatch = dispatch();
         launch.runRows = runRows();
@@ -227,7 +230,16 @@ class HarnessReplyLaunchTest {
 
             @Override
             public void setAnswering(String reviewId, boolean value) {
-                answering.add(value);
+                throw new AssertionError("a reply clears only its own comment's mark (V122)");
+            }
+        };
+    }
+
+    private AnsweringMarks marks() {
+        return new AnsweringMarks() {
+            @Override
+            public void finish(String reviewId, String commentId) {
+                answering.add(commentId);
             }
         };
     }

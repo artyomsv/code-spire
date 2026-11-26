@@ -2,12 +2,9 @@ package dev.codespire.worker.pipeline;
 
 import dev.codespire.contract.command.ActionCommand.PostHarnessReply;
 import dev.codespire.contract.command.ActionCommand.PrepareHarnessReply;
-import dev.codespire.contract.event.IntegrationEvent.FollowUpDeclined;
-import dev.codespire.contract.event.IntegrationEvent.FollowUpDeclined.Reason;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReplyPrepared;
-import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.ThreadTranscript;
 import dev.codespire.llm.FollowUpAnswer;
@@ -18,6 +15,7 @@ import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * The review worker's half of a reply on a harness (harness reviews, step 7). {@link #prepare} does what the API path
@@ -84,23 +82,11 @@ public class HarnessReplyWorker {
 
     private void doPrepare(PrepareHarnessReply command) {
         WorkerScmClients.Clients clients = scm.forCommand(command);
-        if (!(clients.comments() instanceof ThreadSource threadSource)) {
-            LOG.debugf("No ThreadSource for %s — conversational replies unsupported for this provider",
-                    command.reviewId());
-            decline(command, Reason.NO_THREAD_SOURCE);
-            return;
-        }
-        ThreadTranscript transcript = threadSource.fetchThread(command.repo(), command.prId(), command.threadRef());
-        if (!FollowUpWorker.shouldAnswer(transcript, command.mentioned())) {
-            LOG.debugf("Staying quiet on %s — multi-party thread with no @-mention", command.reviewId());
-            decline(command, Reason.MULTI_PARTY_NO_MENTION);
-            return;
-        }
-        if (idempotency.claim(command.reviewId(), command.threadRef().value(),
-                claimKey(command.triggeringCommentId())) instanceof CommentIdempotencyStore.Claim.AlreadyPosted) {
-            LOG.debugf("Skipping already-answered comment %s for %s", command.triggeringCommentId(),
-                    command.reviewId());
-            decline(command, Reason.ALREADY_ANSWERED);
+        Optional<ThreadTranscript> transcript = new ReplyGate(results, () -> idempotency.claim(command.reviewId(),
+                command.threadRef().value(), claimKey(command.triggeringCommentId()))
+                instanceof CommentIdempotencyStore.Claim.AlreadyPosted)
+                .engage(clients.comments(), ReplyGate.Ask.of(command));
+        if (transcript.isEmpty()) {
             return;
         }
         rememberMention(command, clients.comments().mention(command.replyAuthor()).orElse(null));
@@ -108,13 +94,7 @@ public class HarnessReplyWorker {
         String head = clients.diff().fetchPullRequest(command.repo(), command.prId()).headCommit();
         results.emit(new HarnessReplyPrepared(command.reviewId(), command.prId(), head, command.threadRef(),
                 command.triggeringCommentId(), command.round(),
-                HarnessReviewInputFiles.reply(command.prId(), transcript, command.otherFindings())));
-    }
-
-    /** Every quiet exit says so, as the API path's do: no run starts, so nothing else would clear "answering". */
-    private void decline(PrepareHarnessReply command, Reason reason) {
-        results.emit(new FollowUpDeclined(command.reviewId(), command.threadRef(), command.triggeringCommentId(),
-                reason));
+                HarnessReviewInputFiles.reply(command.prId(), transcript.orElseThrow(), command.otherFindings())));
     }
 
     /**

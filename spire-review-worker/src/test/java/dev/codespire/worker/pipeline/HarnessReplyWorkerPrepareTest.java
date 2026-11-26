@@ -3,7 +3,7 @@ package dev.codespire.worker.pipeline;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.ReplyRetry;
 import dev.codespire.contract.event.IntegrationEvent;
-import dev.codespire.contract.event.IntegrationEvent.FollowUpDeclined.Reason;
+import dev.codespire.contract.event.FollowUpDeclineReason;
 import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.ThreadSource;
@@ -74,7 +74,7 @@ class HarnessReplyWorkerPrepareTest extends HarnessReplyWorkerFixture {
                 new ThreadMessage("TEST-human-2", "TEST-TWO", false)));
 
         worker.prepare(prepare(false, 1));
-        assertEquals(List.of(declined(Reason.MULTI_PARTY_NO_MENTION)), emitted,
+        assertEquals(List.of(declined(FollowUpDeclineReason.MULTI_PARTY_NO_MENTION)), emitted,
                 "staying quiet is reported, so the orchestrator clears \"answering\"");
 
         emitted.clear();
@@ -89,7 +89,7 @@ class HarnessReplyWorkerPrepareTest extends HarnessReplyWorkerFixture {
 
         worker.prepare(prepare(false, 1));
 
-        assertEquals(List.of(declined(Reason.ALREADY_ANSWERED)), emitted);
+        assertEquals(List.of(declined(FollowUpDeclineReason.ALREADY_ANSWERED)), emitted);
         verify(diffs, never()).fetchPullRequest(any(), anyLong());
     }
 
@@ -99,7 +99,7 @@ class HarnessReplyWorkerPrepareTest extends HarnessReplyWorkerFixture {
 
         noThreads.prepare(prepare(true, 1));
 
-        assertEquals(List.of(declined(Reason.NO_THREAD_SOURCE)), emitted);
+        assertEquals(List.of(declined(FollowUpDeclineReason.NO_THREAD_SOURCE)), emitted);
     }
 
     @Test
@@ -113,7 +113,7 @@ class HarnessReplyWorkerPrepareTest extends HarnessReplyWorkerFixture {
         assertEquals(List.of(), emitted);
     }
 
-    private static IntegrationEvent declined(Reason reason) {
+    private static IntegrationEvent declined(FollowUpDeclineReason reason) {
         return new IntegrationEvent.FollowUpDeclined(REVIEW_ID, THREAD, COMMENT, reason);
     }
 }

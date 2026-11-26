@@ -156,9 +156,9 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.review.run.HarnessReplyLaunch harnessReplies;
 
-    /** A reply the worker stayed quiet on: recorded, and "answering" cleared (production PR #456). */
+    /** A reply that ended without a model's answer: declined by the worker, or capped (production PR #456). */
     @Inject
-    FollowUpDeclines followUpDeclines;
+    FollowUpEndings followUpEndings;
 
     /** The phase a harness review's refusal and failure are recorded under. */
     public static final String HARNESS_PHASE = "harness-review";
@@ -385,24 +385,13 @@ public class ResultSaga {
                 // the stable thread root already.
                 threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
                 lifecycle.handle(e.reviewId(), new RecordCommand.RecordFollowUp(e.threadRef(), e.commentId()));
-                // Normal-completion clear (fix #5) — also bumps the live dashboard, replacing the
-                // plain touch() that used to sit here (avoid double-broadcast). A follow-up's
-                // terminal failure never reaches this saga as an event (FollowUpWorker re-throws
-                // straight to cs.dlq, no ReviewFailed), so that path relies instead on the next
-                // review run's registerHeader reset to clear the flag.
+                // Normal-completion clear (fix #5), unconditional: FollowUpPosted names the posted comment, not the
+                // triggering one, so it cannot match AnsweringMarks' comment (V122). A follow-up's terminal failure
+                // never reaches this saga as an event (re-thrown to cs.dlq), so the next run's registerHeader clears it.
                 projection.setAnswering(e.reviewId(), false);
             }
-            case FollowUpDeclined e -> followUpDeclines.apply(e);
-            case TurnCapNotified e -> {
-                ThreadRef root = threads.rootOf(e.reviewId(), e.threadRef());
-                projection.appendEvent(e.reviewId(), "result", "TurnCapNotified",
-                        "turn cap reached — handed back to the team", root.value());
-                // No bumpTurn: the notice about running out of turns must not consume one. Link it to
-                // the root anyway, so a human replying to the notice (on an SCM that threads by
-                // immediate parent) is still recognized as this conversation rather than a new thread.
-                threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
-                projection.setAnswering(e.reviewId(), false);
-            }
+            case FollowUpDeclined e -> followUpEndings.declined(e);
+            case TurnCapNotified e -> followUpEndings.capped(e);
             case ArchivedNotified e -> {
                 // Filed under the conversation root when the notice replied inside a thread, so it sits
                 // with the rest of that conversation. threadRef is null whenever the notice went to the

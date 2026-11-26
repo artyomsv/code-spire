@@ -53,6 +53,8 @@ abstract class IntegrationSagaFixture {
     final List<String> closedReviewRuns = new ArrayList<>();
     /** Each "answering" write, as {@code reviewId:answering}. */
     final List<String> answeringCalls = new ArrayList<>();
+    /** Each "answering" mark a dispatched reply started, as {@code reviewId:commentId} (V122). */
+    final List<String> answeringStarts = new ArrayList<>();
     boolean reviewRegistered;
     /** The repository's factory account, when a test names one; otherwise every role answers the reviewer. */
     Optional<ScmProvider> factory;
@@ -254,6 +256,7 @@ abstract class IntegrationSagaFixture {
                 return true;
             }
         };
+        saga.replies = ReplyDispatchFakes.recording(saga.projection, saga.commands, answeringStarts);
         return saga;
     }
 

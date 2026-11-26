@@ -170,7 +170,7 @@ public class ReviewProjection {
         boolean claimRun = claimRound != REFRESH;
         String outcomeColumns = claimRun
                 ? "status = EXCLUDED.status, stage = EXCLUDED.stage, attempt = 1, "
-                        + "error_detail = NULL, answering = FALSE, "
+                        + "error_detail = NULL, answering = FALSE, answering_comment = NULL, "
                         + "posted_verdict = NULL, posted_review_ref = NULL, posted_review_url = NULL, "
                         + "run_token = EXCLUDED.run_token,"
                         + (claimRound > NO_ROUND ? " run_round = EXCLUDED.run_round," : "")
@@ -359,16 +359,15 @@ public class ReviewProjection {
     }
 
     /**
-     * Transient "the bot is answering a reply" hint (fix #5): set true when a follow-up is
-     * dispatched. Best-effort UI signal, not part of the aggregate — cleared on
-     * {@code FollowUpPosted} (normal completion) and, failing that, reset on the NEXT review run
-     * via {@link #registerHeader}: a follow-up that terminally DLQs (no {@code ReviewFailed}
-     * reaches this flag) leaves it set only until that next run, never indefinitely. Also bumps
-     * updated_at and broadcasts, so callers should not additionally call {@link #touch} for the
-     * same state change (would double-broadcast).
+     * Transient "the bot is answering a reply" hint (fix #5), written here without the comment it is for (V122: NULL
+     * matches any result); {@code AnsweringMarks} sets it with the comment and clears it by the comment. Cleared
+     * unconditionally by a result that names no triggering comment, and reset on the next run by {@link
+     * #registerHeader}, so a follow-up that terminally DLQs leaves it set only until that run. Also bumps updated_at
+     * and broadcasts, so callers should not additionally call {@link #touch} (would double-broadcast).
      */
     public void setAnswering(String reviewId, boolean answering) {
-        update("UPDATE review_status SET answering = ?, updated_at = now() WHERE review_id = ?", ps -> {
+        update("UPDATE review_status SET answering = ?, answering_comment = NULL, updated_at = now() "
+                + "WHERE review_id = ?", ps -> {
             ps.setBoolean(1, answering);
             ps.setString(2, reviewId);
         });
@@ -1240,7 +1239,8 @@ public class ReviewProjection {
     private ArchiveOutcome archiveRow(String reviewId) {
         String sql = """
                 UPDATE review_status
-                   SET archived_at = now(), retry_at = NULL, answering = false, updated_at = now()
+                   SET archived_at = now(), retry_at = NULL, answering = false, answering_comment = NULL,
+                       updated_at = now()
                  WHERE review_id = ? AND archived_at IS NULL AND lower(status) NOT IN ('reviewing', 'waiting_for_checks')
                 """;
         try (Connection c = dataSource.getConnection()) {
