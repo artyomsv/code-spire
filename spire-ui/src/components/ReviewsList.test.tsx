@@ -119,7 +119,7 @@ describe('ReviewsList — the row names what its marks show', () => {
 /**
  * A sighted keyboard user cannot hover the marks, and the row, not each mark, is the tab stop. So the row carries one
  * line with the marks' words, which index.css shows only while the row has keyboard focus (`.row:focus-visible`).
- * jsdom applies no stylesheet: the tests assert the line's words and the rule that reveals it, not the pixels.
+ * The last case applies index.css and reads the line's computed display around a Tab key and focus.
  */
 describe('ReviewsList — the row shows its marks\' words on keyboard focus', () => {
   it('holds one line with every dropped word, hidden from assistive technology, and stays the only stop', () => {
@@ -144,10 +144,39 @@ describe('ReviewsList — the row shows its marks\' words on keyboard focus', ()
     );
   });
 
-  it('is revealed by the stylesheet only while the row has keyboard focus', () => {
-    const css = readFileSync(join(process.cwd(), 'src', 'index.css'), 'utf8');
+  /**
+   * With index.css applied to the page: hidden, shown after a Tab moves focus onto the row, hidden once focus leaves.
+   * jsdom matches `:focus-visible` on a Tab key event, as a browser does, and keeps computed styles until the DOM
+   * changes, which a focus move is not; `displayOf` changes an attribute first so each read is computed afresh.
+   */
+  it('is shown by the applied stylesheet only while the row has keyboard focus', () => {
+    const sheet = document.createElement('style');
+    sheet.textContent = readFileSync(join(process.cwd(), 'src', 'index.css'), 'utf8');
+    document.head.append(sheet);
+    try {
+      renderList([summary({ answering: true, findings: 3, carriedOverFindings: 1 })]);
+      const row = rowFor(1);
+      const line = row.querySelector('.row-focus-summary') as HTMLElement;
+      expect(displayOf(line)).toBe('none');
 
-    expect(css).toMatch(/\.row \.row-focus-summary \{[^}]*display: none;/);
-    expect(css).toMatch(/\.row:focus-visible \.row-focus-summary \{ display: block; \}/);
+      fireEvent.keyDown(document.body, { key: 'Tab' });
+      row.focus();
+      expect(document.activeElement).toBe(row);
+      expect(displayOf(line)).toBe('block');
+      expect(line).toHaveTextContent('Responding to a reply…');
+      expect(line).toHaveTextContent('3 open: 2 new, 1 carried');
+
+      row.blur();
+      expect(displayOf(line)).toBe('none');
+    } finally {
+      sheet.remove();
+    }
   });
 });
+
+let restyles = 0;
+
+function displayOf(element: HTMLElement): string {
+  document.body.setAttribute('data-restyle', String((restyles += 1)));
+  return getComputedStyle(element).display;
+}
