@@ -16,7 +16,7 @@ const DECLINED = 'reply not answered: another person is in the thread and the re
 const NOTE = 'Not answered: another person is in the thread and the reply did not mention the bot';
 
 function findingThread(events: ReviewEvent[]): string {
-  const finding = { sev: 'major', loc: 'src/App.java:9', msg: 'TEST-finding', threadRef: 'c1' } as Finding;
+  const finding = { sev: 'warning', loc: 'src/App.java:9', msg: 'TEST-finding', threadRef: 'c1' } as Finding;
   const r = { status: 'completed', findings: 1, findingsList: [finding], events } as unknown as ReviewDetail;
   return renderToStaticMarkup(<>{findingsCard(r)}</>);
 }

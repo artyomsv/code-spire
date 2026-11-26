@@ -300,6 +300,8 @@ class ArchivedEventGateTest {
                 emitted.add(command);
             }
         };
+        // A live reply goes through the dispatch (V122); its "answering" mark is recorded, not written.
+        saga.replies = ReplyDispatchFakes.recording(saga.projection, saga.commands, new ArrayList<>());
         // Claims a run, so an ungated PR event would really overwrite the archived row's status.
         saga.lifecycle = new ReviewLifecycleService() {
             @Override
