@@ -18,23 +18,44 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * PR 456, security/M-1: the Review diff limit cannot be read, on a model whose catalog window is known. The pack
- * throws, as a failed read of the default provider does, so the review is retried; no credential is encrypted, so no
- * review is sent with the operator's cap lifted. Hand-built with fakes: no container, no database.
+ * throws, as a failed read of the default provider does, and no credential is encrypted, so no review is sent with the
+ * operator's cap lifted. That the throw becomes a scheduled retry is ResultSagaLimitReadTest's. Hand-built with
+ * fakes: no container, no database.
  */
 class WorkerLlmCredentialsLimitFaultTest {
 
+    private final List<String> encrypted = new ArrayList<>();
+
     @Test
     void aFailedLimitReadEncryptsNoCredential() {
-        List<String> encrypted = new ArrayList<>();
+        WorkerLlmCredentials credentials = credentialsWith(knownWindowWithUnreadableLimit());
+
+        assertThrows(AppSettingRepository.ReadFailed.class, () -> credentials.resolveDefault("TEST-ws"));
+        assertTrue(encrypted.isEmpty(), "no credential is packed without its cap");
+    }
+
+    private WorkerLlmCredentials credentialsWith(ReviewInputLimits limits) {
         WorkerLlmCredentials credentials = new WorkerLlmCredentials();
-        credentials.registry = new LlmProviderRegistry() {
+        credentials.registry = oneDefaultProvider();
+        credentials.models = priceableModels();
+        credentials.encryption = recordingEncryption();
+        credentials.mapper = new ObjectMapper();
+        credentials.inputLimits = limits;
+        return credentials;
+    }
+
+    private static LlmProviderRegistry oneDefaultProvider() {
+        return new LlmProviderRegistry() {
             @Override
             public Optional<ResolvedDefault> resolveDefaultWithModel() {
                 return Optional.of(new ResolvedDefault(new LlmProviderConfig(UUID.randomUUID(), "TEST-provider",
                         "openai", "https://llm.example.invalid", "TEST-key", 0.2, null, true, true), "TEST-model"));
             }
         };
-        credentials.models = new LlmModelRegistry() {
+    }
+
+    private static LlmModelRegistry priceableModels() {
+        return new LlmModelRegistry() {
             @Override
             public boolean isPriceable(String model) {
                 return true;
@@ -45,18 +66,16 @@ class WorkerLlmCredentialsLimitFaultTest {
                 return Optional.of(ModelParamProfile.legacyDefault());
             }
         };
-        credentials.encryption = new EncryptionService(EncryptionService.generateKeysetBase64()) {
+    }
+
+    private EncryptionService recordingEncryption() {
+        return new EncryptionService(EncryptionService.generateKeysetBase64()) {
             @Override
             public String encryptString(String plaintext, String aad) {
                 encrypted.add(plaintext);
                 return "TEST-ciphertext";
             }
         };
-        credentials.mapper = new ObjectMapper();
-        credentials.inputLimits = knownWindowWithUnreadableLimit();
-
-        assertThrows(AppSettingRepository.ReadFailed.class, () -> credentials.resolveDefault("TEST-ws"));
-        assertTrue(encrypted.isEmpty(), "no credential is packed without its cap");
     }
 
     private static ReviewInputLimits knownWindowWithUnreadableLimit() {

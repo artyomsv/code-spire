@@ -73,25 +73,38 @@ abstract class ReviewWorkerInputLimitFixture {
         worker.inlinePostThrottleMs = 0;
         worker.rateLimitRetryCapSeconds = 0;
         worker.rateLimitBudgetSeconds = 180;
-        worker.results = new ResultsEmitter() {
+        worker.results = recordingResults();
+        worker.idempotency = idempotency;
+        worker.contextReader = emptyContext();
+        worker.scm = headScm();
+        worker.llm = llm(recordingLlm(), DiffBudget.Limits.UNKNOWN);
+    }
+
+    private ResultsEmitter recordingResults() {
+        return new ResultsEmitter() {
             @Override
             public void emit(IntegrationEvent event) {
                 emitted.add(event);
             }
         };
-        worker.idempotency = idempotency;
+    }
+
+    private static AssembledContextReader emptyContext() {
         AssembledContextReader reader = new AssembledContextReader();
         reader.blobStore = new ReviewWorkerTest.InMemoryBlobStore();
         reader.mapper = new ObjectMapper();
-        worker.contextReader = reader;
+        return reader;
+    }
+
+    /** The pull request and its diffs from {@link HeadDiffs}; comments into {@link #sink}. */
+    private WorkerScmClients headScm() {
         DiffSource diffs = new HeadDiffs();
-        worker.scm = new WorkerScmClients() {
+        return new WorkerScmClients() {
             @Override
             public Clients forCommand(ActionCommand command) {
                 return new Clients(diffs, sink);
             }
         };
-        worker.llm = llm(recordingLlm(), DiffBudget.Limits.UNKNOWN);
     }
 
     // --- fixtures ---

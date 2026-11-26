@@ -119,16 +119,8 @@ public class ReviewWorker {
             Diff diff = diffSource.fetchDiff(command.repo(), command.prId(), command.commit());
             List<ContextItem> context = contextReader.load(command.contextRef());
             WorkerLlmProvider.LlmClient client = llm.forCommand(command);
-
-            // ADR-019: reconcile (its own claim) runs before the LLM_KEY switch below. Skipped
-            // when there are no prior findings to judge — that call is guaranteed to yield zero
-            // verdicts, so paying for it would be pure waste (the summary-update path doesn't
-            // depend on verdicts either, so skipping here is otherwise a no-op).
-            PriorRun prior = command.priorRun();
-            ReconcileCall.Reconciliation reconciliation = prior == null || prior.findings().isEmpty()
-                    ? ReconcileCall.Reconciliation.NONE
-                    : new ReconcileCall(new ReconcileCall.Ports(idempotency, promptLog, mapper))
-                            .run(command, new ReconcileCall.Sources(clients, diff, client));
+            ReconcileCall.Reconciliation reconciliation =
+                    reconcileFirst(command, new ReconcileCall.Sources(clients, diff, client));
 
             // Command-level dedup (finding H4): a redelivered GenerateReview for a
             // commit whose LLM call already completed must not pay twice. A
@@ -153,6 +145,19 @@ public class ReviewWorker {
                     cause.getMessage(), WorkerFailures.isRetryable(cause), command.attempt(),
                     WorkerFailures.isCredentialRejected(cause)));
         }
+    }
+
+    /**
+     * ADR-019: reconcile (its own claim) runs before the review's LLM_KEY claim. Skipped when there are no prior
+     * findings to judge: that call is guaranteed to yield zero verdicts, so paying for it would be pure waste (the
+     * summary-update path does not depend on verdicts either, so skipping is otherwise a no-op).
+     */
+    private ReconcileCall.Reconciliation reconcileFirst(GenerateReview command, ReconcileCall.Sources sources) {
+        PriorRun prior = command.priorRun();
+        if (prior == null || prior.findings().isEmpty()) {
+            return ReconcileCall.Reconciliation.NONE;
+        }
+        return new ReconcileCall(new ReconcileCall.Ports(idempotency, promptLog, mapper)).run(command, sources);
     }
 
     /**
