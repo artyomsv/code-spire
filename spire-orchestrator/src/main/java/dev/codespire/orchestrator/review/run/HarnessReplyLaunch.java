@@ -124,6 +124,8 @@ public class HarnessReplyLaunch {
     private void said(HarnessReplyPrepared prepared, String type, String detail) {
         projection.appendEvent(prepared.reviewId(), "result", type, detail, prepared.threadRef().value());
         answering.finish(new ReplyKey(prepared.reviewId(), prepared.triggeringCommentId()));
+        // The line is new even when no mark changed (a close already removed the reply): broadcast it (PR #457).
+        projection.touch(prepared.reviewId());
     }
 
     private ReviewRunRequest request(OnHarness onHarness, HarnessReplyPrepared prepared) {

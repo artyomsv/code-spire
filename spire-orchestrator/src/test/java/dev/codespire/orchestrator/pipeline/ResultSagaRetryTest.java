@@ -590,21 +590,42 @@ class ResultSagaRetryTest {
         // itself unowned, so the very next reply was declined (threadIsOurs=false) unless the human
         // @-mentioned again — once the bot has spoken, the conversation is its own.
         List<String> ownedThreads = new ArrayList<>();
+        ResultSaga saga = ownershipSaga(ownedThreads);
+
+        saga.on(new FollowUpPosted(REVIEW_ID, new ThreadRef("mention-thread"), "answer-1", true, "TEST-reply-1"));
+        assertEquals(List.of("mention-thread"), ownedThreads, "the thread the bot spoke in becomes ours");
+
+        // …but NOT the summary thread: owning that would make every later top-level PR comment engage.
+        ownedThreads.clear();
+        saga.on(new FollowUpPosted(REVIEW_ID, new ThreadRef("summary-1"), "answer-2", true, "TEST-reply-2"));
+        assertTrue(ownedThreads.isEmpty(), "the summary thread's scope is deliberately unchanged");
+    }
+
+    /** A saga whose thread view records the threads marked ours; the summary thread is {@code summary-1}. */
+    private static ResultSaga ownershipSaga(List<String> ownedThreads) {
         ResultSaga saga = new ResultSaga();
         saga.findings = SILENT_FINDINGS;
         saga.preferenceFilter = NO_PREFERENCES;
-        saga.timeline = new TimelineBroadcaster() {
+        saga.timeline = HarnessSagaFakes.timeline(new ArrayList<>());
+        saga.lifecycle = HarnessSagaFakes.lifecycle(new ArrayList<>());
+        saga.threads = ownershipThreads(ownedThreads);
+        saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
             @Override
-            public void record(String lane, String type, String reviewId, String detail) {
+            public Optional<String> summaryRefOf(String reviewId) {
+                return Optional.of("summary-1");
+            }
+
+            // A posted answer always broadcasts the review (PR #457); the real touch opens a database.
+            @Override
+            public void touch(String reviewId) {
             }
         };
-        saga.lifecycle = new ReviewLifecycleService() {
-            @Override
-            public List<DomainEvent> handle(String reviewId, RecordCommand command) {
-                return List.of();
-            }
-        };
-        saga.threads = new ReviewThreadView() {
+        saga.followUpEndings = HarnessSagaFakes.endings(saga.projection, new ArrayList<>());
+        return saga;
+    }
+
+    private static ReviewThreadView ownershipThreads(List<String> ownedThreads) {
+        return new ReviewThreadView() {
             @Override
             public ThreadRef rootOf(String reviewId, ThreadRef thread) {
                 return thread;
@@ -623,26 +644,6 @@ class ResultSagaRetryTest {
             public void markAnswerThread(String reviewId, ThreadRef answer, ThreadRef root) {
             }
         };
-        saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
-            @Override
-            public Optional<String> summaryRefOf(String reviewId) {
-                return Optional.of("summary-1");
-            }
-
-            // A posted answer always broadcasts the review (PR #457); the real touch opens a database.
-            @Override
-            public void touch(String reviewId) {
-            }
-        };
-        saga.followUpEndings = HarnessSagaFakes.endings(saga.projection, new ArrayList<>());
-
-        saga.on(new FollowUpPosted(REVIEW_ID, new ThreadRef("mention-thread"), "answer-1", true, "TEST-reply-1"));
-        assertEquals(List.of("mention-thread"), ownedThreads, "the thread the bot spoke in becomes ours");
-
-        // …but NOT the summary thread: owning that would make every later top-level PR comment engage.
-        ownedThreads.clear();
-        saga.on(new FollowUpPosted(REVIEW_ID, new ThreadRef("summary-1"), "answer-2", true, "TEST-reply-2"));
-        assertTrue(ownedThreads.isEmpty(), "the summary thread's scope is deliberately unchanged");
     }
 
     @Test

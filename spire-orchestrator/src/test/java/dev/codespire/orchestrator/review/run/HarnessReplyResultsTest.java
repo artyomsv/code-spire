@@ -45,6 +45,7 @@ class HarnessReplyResultsTest {
     private Optional<String> reviewerCredential = Optional.of("TEST-packed-scm");
     private final List<ActionCommand> emitted = new ArrayList<>();
     private final List<String> events = new ArrayList<>();
+    private final List<String> touched = new ArrayList<>();
     private final List<String> timelineDetails = new ArrayList<>();
     /** Each "answering" mark a failure or refusal finished, by its triggering comment. */
     private final List<String> answering = new ArrayList<>();
@@ -105,6 +106,7 @@ class HarnessReplyResultsTest {
 
         assertEquals(List.of("FollowUpRefused@" + THREAD + ": harness reply refused: TEST-harness: fork_requires_credential_proxy"), events);
         assertEquals(List.of("987654"), answering, "the responding pill clears");
+        assertEquals(1, touched.size(), "the refusal line reaches an open dashboard");
         assertTrue(emitted.isEmpty(), emitted.toString());
     }
 
@@ -215,6 +217,11 @@ class HarnessReplyResultsTest {
             @Override
             public void setAnswering(String reviewId, boolean value) {
                 throw new AssertionError("a reply clears only its own comment's mark (V122)");
+            }
+
+            @Override
+            public void touch(String reviewId) {
+                touched.add(reviewId);
             }
         };
     }

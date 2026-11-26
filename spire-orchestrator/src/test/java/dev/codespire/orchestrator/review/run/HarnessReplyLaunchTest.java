@@ -60,6 +60,7 @@ class HarnessReplyLaunchTest {
     /** The rows a dispatch wrote, by call slot, as {@code factory_run.review_call_slot} holds them. */
     private final Map<String, String> rowsBySlot = new HashMap<>();
     private final List<String> events = new ArrayList<>();
+    private final List<String> touched = new ArrayList<>();
     private final List<String> timelineTypes = new ArrayList<>();
     /** Each "answering" mark a refusal finished, by its triggering comment. */
     private final List<String> answering = new ArrayList<>();
@@ -125,6 +126,7 @@ class HarnessReplyLaunchTest {
         assertEquals(List.of("FollowUpRefused@TEST-thread-1: harness reply refused: TEST-harness: "
                 + "subscription_unavailable"), events);
         assertEquals(List.of("TEST-comment-5"), answering, "the responding pill clears");
+        assertEquals(1, touched.size(), "the refusal line reaches an open dashboard");
     }
 
     @Test
@@ -232,6 +234,11 @@ class HarnessReplyLaunchTest {
             @Override
             public void setAnswering(String reviewId, boolean value) {
                 throw new AssertionError("a reply clears only its own comment's mark (V122)");
+            }
+
+            @Override
+            public void touch(String reviewId) {
+                touched.add(reviewId);
             }
         };
     }

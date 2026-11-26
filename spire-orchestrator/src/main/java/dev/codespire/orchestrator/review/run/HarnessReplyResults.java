@@ -104,6 +104,7 @@ public class HarnessReplyResults {
         timeline.record("result", "refused:HarnessReply", binding.reviewId(), reason);
         projection.appendEvent(binding.reviewId(), "result", "FollowUpRefused", why, call.threadRef());
         answering.finish(new ReplyKey(binding.reviewId(), call.triggeringCommentId()));
+        projection.touch(binding.reviewId()); // the line is new even when no mark changed (PR #457)
         LOG.warnf("Harness reply on %s thread %s refused: %s", binding.reviewId(), call.threadRef(), reason);
     }
 
@@ -111,6 +112,7 @@ public class HarnessReplyResults {
         timeline.record("result", "failed:HarnessReply", binding.reviewId(), why);
         projection.appendEvent(binding.reviewId(), "result", "FollowUpFailed", why, call.threadRef());
         answering.finish(new ReplyKey(binding.reviewId(), call.triggeringCommentId()));
+        projection.touch(binding.reviewId()); // the line is new even when no mark changed (PR #457)
         LOG.warnf("Harness reply on %s thread %s got no answer: %s", binding.reviewId(), call.threadRef(), why);
     }
 }
