@@ -25,19 +25,23 @@ class ResultSagaTurnReceiptTest {
 
     private final List<String> counted = new ArrayList<>();
     private final List<String> filed = new ArrayList<>();
+    private final List<String> finished = new ArrayList<>();
 
     @Test
     void anAnswerPostedSinceTheReceiptsExistIsCountedOnItsRoot() {
-        saga().on(new FollowUpPosted(HarnessSagaFakes.REVIEW_ID, new ThreadRef("TEST-reply"), "TEST-answer-new", true));
+        saga().on(new FollowUpPosted(HarnessSagaFakes.REVIEW_ID, new ThreadRef("TEST-reply"), "TEST-answer-new", true,
+                "TEST-comment-new"));
 
         assertEquals(List.of("TEST-root/TEST-answer-new"), counted);
         assertTrue(filed.isEmpty(), "a counted answer is not filed a second time");
+        assertEquals(List.of(HarnessSagaFakes.REVIEW_ID + ":TEST-comment-new"), finished,
+                "only the answered reply's responding mark ends (V122)");
     }
 
     @Test
     void anAnswerFromBeforeTheReceiptsIsFiledAndNeverCounted() {
         saga().on(new FollowUpPosted(HarnessSagaFakes.REVIEW_ID, new ThreadRef("TEST-reply"), "TEST-answer-old",
-                false));
+                false, null));
 
         assertEquals(List.of("TEST-root/TEST-answer-old"), filed, "filed under the root, as a counted answer is");
         assertTrue(counted.isEmpty(), "an old answer may already be in the count; it never counts again");
@@ -60,6 +64,7 @@ class ResultSagaTurnReceiptTest {
             public void setAnswering(String reviewId, boolean answering) {
             }
         };
+        saga.followUpEndings = HarnessSagaFakes.endings(saga.projection, finished);
         return saga;
     }
 

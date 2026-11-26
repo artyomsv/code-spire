@@ -58,7 +58,7 @@ public class HarnessReplyResults {
     @Inject
     ReviewProjection projection;
 
-    /** Clears the "responding" mark only while it is still this reply's comment (V122). */
+    /** Ends this reply's "responding" mark; another outstanding reply keeps it up (V122). */
     @Inject
     AnsweringMarks answering;
 

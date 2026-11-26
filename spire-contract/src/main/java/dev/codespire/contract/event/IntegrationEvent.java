@@ -397,17 +397,17 @@ public sealed interface IntegrationEvent {
     }
 
     /**
-     * The bot's answer {@code commentId} was posted in {@code threadRef}.
+     * The bot's answer {@code commentId} to {@code triggeringCommentId} was posted in {@code threadRef}, so that
+     * reply's "responding" mark ends (V122); an event from before that component names none and ends every mark.
      *
      * <p>{@code countsTurn} is true on every event a worker emits since the turn receipts (V110) exist, and the
-     * orchestrator then counts the answer as a turn once, whatever resends or replays follow. It is absent, so false,
-     * on an event recorded before them: whether such an answer was counted is named by nothing durable, and its
-     * replay can come back by any path in any order, so the orchestrator files it and counts nothing (review of PR
-     * #371, code-quality/M-1). A legacy answer never counted leaves its thread one answer before its cap, never one
-     * short. No shorter constructor: a site that forgets the flag must not compile into an uncounted answer.
+     * orchestrator then counts the answer as a turn once, whatever replays follow. It is absent, so false, on an event
+     * from before them: nothing durable says whether it was counted, and its replay can come back in any order, so the
+     * orchestrator files it and counts nothing (review of PR #371, code-quality/M-1). No shorter constructor: a site
+     * that forgets the flag must not compile into an uncounted answer.
      */
-    record FollowUpPosted(String reviewId, ThreadRef threadRef, String commentId, boolean countsTurn)
-            implements IntegrationEvent {
+    record FollowUpPosted(String reviewId, ThreadRef threadRef, String commentId, boolean countsTurn,
+                          String triggeringCommentId) implements IntegrationEvent {
     }
 
     /** The worker stayed quiet on a reply in {@code threadRef}: see {@link FollowUpDeclineReason}. */

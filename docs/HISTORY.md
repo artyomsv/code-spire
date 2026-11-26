@@ -2770,14 +2770,16 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   harness post's "already done" exit sends nothing new on purpose: its two events already went out and cleared the
   flag. A reply that dead-letters still keeps the mark until the next review run.
   Review of PR #457: `answering` is one flag per review, so reply A's decline cleared the mark while reply B was being
-  answered. V122 adds `review_status.answering_comment`: the ask records its triggering comment (`AnsweringMarks.start`,
-  via `ReplyDispatch`), and a result that names its triggering comment (`FollowUpDeclined`, a harness reply's refusal
-  or failure) clears the mark in one compare-and-clear UPDATE only while it is still that comment's. `FollowUpPosted`
-  and `TurnCapNotified` name no triggering comment and still clear it unconditionally; a new run, an archive and a
-  close clear both columns. `ALREADY_ANSWERED` (a redelivery of a comment the bot did answer) clears the mark and
-  records no event. The finding and general-discussion conversations end their pending reply at a `FollowUpDeclined`
+  answered. V122 adds the table `review_answering`, one row per reply being answered: the ask adds its row
+  (`AnsweringMarks.start`, via `ReplyDispatch`), and a result removes only its own (`FollowUpDeclined`, a harness
+  reply's refusal or failure, and `FollowUpPosted`, which now carries `triggeringCommentId`). `answering` stays up
+  while any row is left; both are written in one transaction under the review row's lock. A turn-cap notice never
+  set the mark and no longer clears it. A new run, an archive, a close and a `FollowUpPosted` from before the field
+  clear the flag, and a trigger drops the review's rows in that statement. `ALREADY_ANSWERED` (a redelivery of a
+  comment the bot did answer) ends its reply and records no event. The finding and general-discussion conversations end their pending reply at a `FollowUpDeclined`
   and show "Not answered: <why>"; the worker's three quiet exits are one `ReplyGate` for both reply paths. A list
-  row's marks stay out of the tab order (the row's accessible name carries their words); the detail header's marks
+  row's marks stay out of the tab order (the row's accessible name carries their words, and on keyboard focus the row
+  shows them in one line, `RowFocusSummary`); the detail header's marks
   are tab stops whose tooltips open on focus.
   The operator also found the reviews list's badges too wide. The Status column is one badge, with a pulsing icon
   for "responding"; PR state and provider are icons (lucide state icons, the forges' logos from `react-icons`, already
@@ -2787,5 +2789,8 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   widgets are `ReviewIcons` and `ReviewRowCells` (WIDGETS.md). Analytics keeps its text platform badge.
   **Upgrading.** A new wire event: roll the orchestrator before the review worker, or a worker's
   `FollowUpDeclined` reaches an orchestrator that cannot read it and is logged as a poison record (the mark then
-  stays up exactly as before). V122 adds one nullable column (`review_status.answering_comment`), additive: an older
-  orchestrator neither reads nor writes it.
+  stays up exactly as before). V122 adds a table (`review_answering`) and a trigger on
+  `review_status`, additive: an older orchestrator neither reads nor writes the table, and its clears still drop the
+  rows through the trigger. `FollowUpPosted` gains a nullable `triggeringCommentId`; an older orchestrator ignores it.
+  A dev database that ran the earlier V122 (`answering_comment`) has a different checksum: drop that column and
+  repair, or recreate the database.

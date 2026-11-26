@@ -349,6 +349,14 @@ Built by consuming `cs.events` / `cs.results`; **no FK to the event store** (dec
 `review_thread` (per conversation): `thread_id` TEXT PK (a `ThreadRef` value), `review_id` TEXT, `pr_id` BIGINT,
 `status` TEXT, `last_comment_id` TEXT, `updated_at`.
 
+`review_answering` (**V122**, review of PR #457): `review_id` (FK to `review_status`, ON DELETE CASCADE), `comment_id`
+TEXT, `started_at` TIMESTAMPTZ, PK the first two. One row per human reply the bot is answering; several can be
+outstanding at once. `review_status.answering` (V21) stays the flag the dashboard reads, true while any row is left:
+`AnsweringMarks` adds a reply's row and sets the flag, or removes its own row and sets the flag to whether any is
+left, in one transaction under the `review_status` row lock. A clear that names no comment (a new run, an archive, a
+closed pull request, a `FollowUpPosted` from before V122) sets the flag false, and the `review_answering_cleared`
+trigger drops the review's rows in the same statement.
+
 `review_thread_turn` (**V110**, harness reviews step 7): `review_id` TEXT, `thread_ref` TEXT, `comment_id` TEXT,
 `counted_at` TIMESTAMPTZ, PK all three. One row per bot answer counted as a turn, written in the same statement that
 raises `review_thread.turn_count`, so a resent or replayed `FollowUpPosted` (A, B, A) never counts an answer twice.

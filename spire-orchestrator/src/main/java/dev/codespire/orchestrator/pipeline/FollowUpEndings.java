@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.pipeline;
 
 import dev.codespire.contract.event.FollowUpDeclineReason;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpDeclined;
+import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.event.IntegrationEvent.TurnCapNotified;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.readmodel.AnsweringMarks;
@@ -11,8 +12,9 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
 /**
- * A reply that ended without a model's answer, so no turn is counted, unlike {@code FollowUpPosted}: the worker stayed
- * quiet on it (production PR #456), or the thread reached its turn cap and got the fixed hand-off notice.
+ * How a reply ends for the "responding" mark (V122), and the endings without a model's answer, which count no turn,
+ * unlike {@code FollowUpPosted}: the worker stayed quiet on it (production PR #456), or the thread reached its turn cap
+ * and got the fixed hand-off notice.
  */
 @ApplicationScoped
 public class FollowUpEndings {
@@ -29,9 +31,21 @@ public class FollowUpEndings {
     AnsweringMarks answering;
 
     /**
-     * Said under the conversation root, and the "responding" mark cleared only while it is still this comment's (V122,
-     * review of PR #457): reply A's decline must not clear the mark reply B set. {@code ALREADY_ANSWERED} is a
-     * redelivery of a comment the bot did answer, so it clears the mark but records nothing: the history would
+     * The answer landed: its own reply's mark ends, and the mark stays while another reply is outstanding. An answer
+     * posted before V122 names no triggering comment, so every mark of the review ends, as before.
+     */
+    public void posted(FollowUpPosted e) {
+        if (e.triggeringCommentId() == null) {
+            projection.setAnswering(e.reviewId(), false);
+            return;
+        }
+        answering.finish(e.reviewId(), e.triggeringCommentId());
+    }
+
+    /**
+     * Said under the conversation root, and only this comment's outstanding reply ended (V122, review of PR #457):
+     * reply B's decline must not clear the mark while reply A is still being answered. {@code ALREADY_ANSWERED} is a
+     * redelivery of a comment the bot did answer, so its reply ends but nothing is recorded: the history would
      * otherwise say an answered reply went unanswered, once per redelivery.
      */
     public void declined(FollowUpDeclined declined) {
@@ -47,14 +61,14 @@ public class FollowUpEndings {
     /**
      * The turn-cap notice: no bumpTurn, since the notice about running out of turns must not consume one. Linked to
      * the root anyway, so a human replying to the notice (on an SCM that threads by immediate parent) is still
-     * recognized as this conversation. The event names no triggering comment, so the mark clears unconditionally.
+     * recognized as this conversation. The "responding" mark is left alone: a cap notice never set one (ReplyDispatch
+     * marks only a real answer), so clearing here would only drop another reply's mark while it is being answered.
      */
     public void capped(TurnCapNotified e) {
         ThreadRef root = threads.rootOf(e.reviewId(), e.threadRef());
         projection.appendEvent(e.reviewId(), "result", "TurnCapNotified",
                 "turn cap reached — handed back to the team", root.value());
         threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
-        projection.setAnswering(e.reviewId(), false);
     }
 
     static String detail(FollowUpDeclineReason reason) {

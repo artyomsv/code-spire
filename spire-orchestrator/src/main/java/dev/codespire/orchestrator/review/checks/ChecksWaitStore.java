@@ -41,7 +41,7 @@ public class ChecksWaitStore {
     /** The header columns a run's first header write sets, kept when the locked row already holds the run's round. */
     private static final String UNINITIALISED_HEADER = String.join(", ", once("commit_sha", "r.head_commit"),
             once("attempt", "1"), once("error_detail", "NULL"), once("answering", "FALSE"), once("posted_verdict", "NULL"),
-            once("answering_comment", "NULL"), once("posted_review_ref", "NULL"), once("posted_review_url", "NULL"),
+            once("posted_review_ref", "NULL"), once("posted_review_url", "NULL"),
             once("run_token", "md5(random()::text || clock_timestamp()::text)"), once("run_round", "r.round"));
     private static final String DUE_STAGES = "('admitted', 'waiting', 'starting', 'starting_unfinished', 'skipping')";
 

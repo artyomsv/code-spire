@@ -385,10 +385,10 @@ public class ResultSaga {
                 // the stable thread root already.
                 threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
                 lifecycle.handle(e.reviewId(), new RecordCommand.RecordFollowUp(e.threadRef(), e.commentId()));
-                // Normal-completion clear (fix #5), unconditional: FollowUpPosted names the posted comment, not the
-                // triggering one, so it cannot match AnsweringMarks' comment (V122). A follow-up's terminal failure
-                // never reaches this saga as an event (re-thrown to cs.dlq), so the next run's registerHeader clears it.
-                projection.setAnswering(e.reviewId(), false);
+                // Normal completion (fix #5): this reply's mark ends, another outstanding reply's stays (V122). A
+                // follow-up's terminal failure never reaches this saga as an event (re-thrown to cs.dlq), so the next
+                // run's registerHeader clears it.
+                followUpEndings.posted(e);
             }
             case FollowUpDeclined e -> followUpEndings.declined(e);
             case TurnCapNotified e -> followUpEndings.capped(e);

@@ -25,7 +25,9 @@ import dev.codespire.orchestrator.llm.WorkerLlmCredentials;
 import dev.codespire.orchestrator.memory.PreferenceFilter;
 import dev.codespire.orchestrator.prompt.WorkerPromptTemplates;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
+import dev.codespire.orchestrator.readmodel.AnsweringMarks;
 import dev.codespire.orchestrator.readmodel.FindingProjection;
+import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
 import dev.codespire.orchestrator.readmodel.SuppressionBatch;
 import dev.codespire.orchestrator.repository.RepositoryAccounts;
@@ -111,6 +113,22 @@ final class HarnessSagaFakes {
                 types.add(type);
             }
         };
+    }
+
+    /**
+     * The reply endings over {@code projection}, with a stand-in for the per-reply marks (they open a database): each
+     * reply whose mark a result finishes lands in {@code finished} as {@code reviewId:commentId}.
+     */
+    static FollowUpEndings endings(ReviewProjection projection, List<String> finished) {
+        FollowUpEndings endings = new FollowUpEndings();
+        endings.projection = projection;
+        endings.answering = new AnsweringMarks() {
+            @Override
+            public void finish(String reviewId, String commentId) {
+                finished.add(reviewId + ":" + commentId);
+            }
+        };
+        return endings;
     }
 
     static ReviewThreadView silentThreads() {

@@ -68,7 +68,8 @@ class FollowUpWorkerAnswerTest {
                 "TEST-QUESTION", null, null, true, 1, 0, 1.0));
 
         assertEquals(2, emitted.size(), "FollowUpGenerated, then FollowUpPosted: " + emitted);
-        assertEquals(new IntegrationEvent.FollowUpPosted(REVIEW_ID, THREAD, "TEST-posted-3", true), emitted.get(1));
+        assertEquals(new IntegrationEvent.FollowUpPosted(REVIEW_ID, THREAD, "TEST-posted-3", true,
+                "TEST-comment-5"), emitted.get(1));
     }
 
     private FollowUpWorker worker(CommentSink sink, DiffSource diffs, LlmProvider llm) {

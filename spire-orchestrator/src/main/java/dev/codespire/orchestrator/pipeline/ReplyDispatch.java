@@ -9,8 +9,8 @@ import jakarta.inject.Inject;
 
 /**
  * Sends the command {@code ConversationSaga} planned for a human's reply, after {@code IntegrationSaga}'s gates: the
- * reply is filed under the conversation root and, for a real answer, the review is marked answering that comment
- * (V122), so only that comment's decline or refusal clears the mark.
+ * reply is filed under the conversation root and, for a real answer, its comment joins the replies being answered
+ * (V122): the "responding" mark stays up until every outstanding reply has ended.
  */
 @ApplicationScoped
 public class ReplyDispatch {

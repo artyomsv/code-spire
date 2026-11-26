@@ -275,13 +275,13 @@ review behind an hour-long build would wait an hour.
   (failed, cancelled, over the cap, no reviewer account) writes `FollowUpFailed`; both clear the "responding" flag.
   The worker's quiet exits, on the API reply and at the harness reply's prepare (no thread support, a second human
   with no mention, a comment already answered), emit `FollowUpDeclined` (PR #457): the orchestrator files "reply not
-  answered: <why>" under the thread (not for a comment already answered) and counts no turn. The flag is cleared per
-  comment: V122 adds `review_status.answering_comment`, the ask records its triggering comment, and a decline, a
-  refusal or a failure clears the flag in one compare-and-clear only while it is still that comment's. Limits that
-  remain, not fixed and not live-proven (docs/UNVERIFIED.md): one column holds one outstanding ask, so a later ask
-  takes the mark over and its decline clears it while an earlier answer is still being written; `FollowUpPosted` and
-  `TurnCapNotified` carry no triggering comment and clear it unconditionally; a redelivered decline files its line
-  again.
+  answered: <why>" under the thread (not for a comment already answered) and counts no turn. The flag is kept per
+  reply: V122 adds `review_answering`, one row per reply being answered. The ask adds its row; a decline, a refusal,
+  a failure or a posted answer (`FollowUpPosted` now carries its triggering comment) removes only its own, and the
+  flag stays up while any row is left, in one transaction under the review row's lock. A turn-cap notice never set
+  the flag and no longer clears it. A new run, an archive, a close and a `FollowUpPosted` from before the field clear
+  them all (a trigger drops the rows). Limits that remain, not live-proven (docs/UNVERIFIED.md): a redelivered
+  decline files its line again.
 - **The answer mentions the person it answers.** On the live proof the bot named the author as plain text, which
   notifies nobody, because the reply prompt forbids hand-written mentions (the syntax differs per forge, and a wrong
   one fails to link or notifies the wrong account). Code Spire now opens every reply, API and harness, with the

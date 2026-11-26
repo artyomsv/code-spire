@@ -122,7 +122,8 @@ public class HarnessReplyWorker {
                 ? already.postedRef() : postAndMark(command, key, text);
         results.emit(new FollowUpGenerated(command.reviewId(), command.threadRef(), text, null,
                 command.triggeringCommentId()));
-        results.emit(new FollowUpPosted(command.reviewId(), command.threadRef(), commentId, true));
+        results.emit(new FollowUpPosted(command.reviewId(), command.threadRef(), commentId, true,
+                command.triggeringCommentId()));
         String done = doneKey(command.triggeringCommentId());
         idempotency.claim(command.reviewId(), thread, done);
         idempotency.markPosted(command.reviewId(), thread, done, commentId);
