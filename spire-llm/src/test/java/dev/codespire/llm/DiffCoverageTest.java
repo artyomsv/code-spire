@@ -98,12 +98,12 @@ class DiffCoverageTest {
     private static final String E_ACUTE = String.valueOf((char) 0xE9);
 
     static final String QUOTED_RENAME = """
-            diff --git a/src/A.java "b/src/TEST-\303\251.java"
+            diff --git a/src/A.java "b/src/TEST-\\303\\251.java"
             similarity index 90%
             rename from src/A.java
-            rename to "src/TEST-\303\251.java"
+            rename to "src/TEST-\\303\\251.java"
             --- a/src/A.java
-            +++ "b/src/TEST-\303\251.java"
+            +++ "b/src/TEST-\\303\\251.java"
             @@ -5,1 +5,1 @@
             -leak();
             +close();
