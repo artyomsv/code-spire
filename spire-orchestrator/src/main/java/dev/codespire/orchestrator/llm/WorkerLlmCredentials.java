@@ -5,12 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.llm.LlmCredential;
 import dev.codespire.contract.llm.ModelParamProfile;
-import dev.codespire.contract.llm.ModelParams;
 import dev.codespire.encryption.EncryptionService;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
 import dev.codespire.orchestrator.repository.RepositoryRegistry.ReviewLlmChoice;
-import dev.codespire.orchestrator.settings.ReviewDiffLimit;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -46,7 +44,7 @@ public class WorkerLlmCredentials {
     RepositoryRegistry repositories;
 
     @Inject
-    ReviewDiffLimit diffLimit;
+    ReviewInputLimits inputLimits;
 
     /**
      * The encrypted default LLM credential bound to a workspace, or the reason it must not be spent.
@@ -135,29 +133,14 @@ public class WorkerLlmCredentials {
                     model, profile.outputTokenParam(), profile.supportsTemperature(), profile.reasoningEffort());
         }
         // Every pack site (review, reconcile, reply) carries the same limits; only REVIEW and RECONCILE size by them.
+        // Read before anything is encrypted: an unreadable Review diff limit throws here and the pack is retried.
+        ReviewInputLimits.Limits limits = inputLimits.forModel(model, cfg.maxTokens());
         LlmCredential cred = new LlmCredential(cfg.type(), cfg.baseUrl(), cfg.apiKey(),
-                model, cfg.temperature(), cfg.maxTokens(), profile,
-                maxInputTokens(models.contextWindowForName(model).orElse(null), cfg.maxTokens()),
-                diffLimit.current().orElse(null));
+                model, cfg.temperature(), cfg.maxTokens(), profile, limits.maxInputTokens(), limits.diffTokenCap());
         try {
             return encryption.encryptString(mapper.writeValueAsString(cred), LlmCredential.aad(workspace));
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to pack LLM credential for " + workspace, e);
         }
-    }
-
-    /**
-     * How much input a call may send: the model's context window minus the output cap the call really sends (the
-     * provider's max tokens, else {@link ModelParams#DEFAULT_MAX_OUTPUT_TOKENS}). The catalog's own output limit is
-     * not used, since the call does not send it. Null when the window is unknown, which keeps today's budgets; long
-     * arithmetic, clamped into an int, never below zero (no room refuses the review in the worker, by name).
-     */
-    static Integer maxInputTokens(Long contextWindow, Integer providerMaxTokens) {
-        if (contextWindow == null) {
-            return null;
-        }
-        long reserve = providerMaxTokens != null ? providerMaxTokens : ModelParams.DEFAULT_MAX_OUTPUT_TOKENS;
-        long input = contextWindow - reserve;
-        return (int) Math.max(0L, Math.min(Integer.MAX_VALUE, input));
     }
 }

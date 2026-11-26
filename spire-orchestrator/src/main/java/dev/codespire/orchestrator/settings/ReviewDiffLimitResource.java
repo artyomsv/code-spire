@@ -39,7 +39,7 @@ public class ReviewDiffLimitResource {
 
     @GET
     public ReviewDiffLimitView get() {
-        return new ReviewDiffLimitView(limit.current().orElse(null));
+        return new ReviewDiffLimitView(limit.shown().orElse(null));
     }
 
     @PUT

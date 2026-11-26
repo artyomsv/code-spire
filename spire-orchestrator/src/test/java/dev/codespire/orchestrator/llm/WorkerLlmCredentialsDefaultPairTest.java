@@ -6,7 +6,6 @@ import dev.codespire.contract.llm.LlmCredential;
 import dev.codespire.encryption.EncryptionService;
 import dev.codespire.orchestrator.attention.AttentionBroadcaster;
 import dev.codespire.orchestrator.settings.AppSettingRepository;
-import dev.codespire.orchestrator.settings.ReviewDiffLimit;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterEach;
@@ -42,7 +41,7 @@ class WorkerLlmCredentialsDefaultPairTest {
     @Inject ObjectMapper mapper;
     @Inject AttentionBroadcaster attention;
     @Inject AppSettingRepository appSettings;
-    @Inject ReviewDiffLimit diffLimit;
+    @Inject ReviewInputLimits inputLimits;
     @Inject DataSource dataSource;
 
     private String openaiModel;
@@ -74,7 +73,7 @@ class WorkerLlmCredentialsDefaultPairTest {
         credentials.models = models;
         credentials.encryption = encryption;
         credentials.mapper = mapper;
-        credentials.diffLimit = diffLimit; // pack reads the Review diff limit: an unset field would NPE there
+        credentials.inputLimits = inputLimits; // pack reads the input limits: an unset field would NPE there
 
         DefaultLlm llm = credentials.resolveDefault(WORKSPACE);
 

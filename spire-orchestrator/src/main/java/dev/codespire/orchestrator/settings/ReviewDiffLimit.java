@@ -11,7 +11,10 @@ import java.util.Optional;
  * Unset means "as much as the model's window allows". It caps the diff only, never the other prompt parts, and the
  * worker never lowers a diff below today's fixed budget for it (review input limit design, 2026-11-26).
  *
- * <p>Read fresh on every credential pack, so a change applies to the next review without a restart.
+ * <p>Read fresh on every credential pack, so a change applies to the next review without a restart. Unset is the
+ * expensive answer, so the pack reads it strictly ({@link #current}): a failed read or a stored value outside the range
+ * fails the pack and is retried, rather than sending a review uncapped (PR 456, security/M-1). The settings screen
+ * reads it leniently ({@link #shown}), so a bad row can still be seen and replaced.
  */
 @ApplicationScoped
 public class ReviewDiffLimit {
@@ -30,19 +33,33 @@ public class ReviewDiffLimit {
     @Inject
     AppSettingRepository settings;
 
-    /** The limit, or empty when unset. A stored value outside the range reads as unset, and says so. */
+    /**
+     * The limit a review is packed with, or empty when no row is stored.
+     *
+     * @throws AppSettingRepository.ReadFailed when the database read fails
+     * @throws Unreadable when the stored value is not a whole number in range
+     */
     public Optional<Integer> current() {
-        Optional<String> stored = settings.get(KEY);
+        Optional<String> stored = settings.getStrictly(KEY);
         if (stored.isEmpty()) {
             return Optional.empty();
         }
         Integer parsed = parse(stored.orElseThrow());
         if (parsed == null) {
-            LOG.warnf("app_setting %s holds '%s', which is not a whole number from %d to %d — treating it as unset",
-                    KEY, stored.orElseThrow(), MIN_TOKENS, MAX_TOKENS);
-            return Optional.empty();
+            throw new Unreadable(stored.orElseThrow());
         }
         return Optional.of(parsed);
+    }
+
+    /** The limit for the settings screen: a read failure or a stored value outside the range shows as unset. */
+    public Optional<Integer> shown() {
+        Optional<String> stored = settings.get(KEY);
+        Integer parsed = stored.map(ReviewDiffLimit::parse).orElse(null);
+        if (stored.isPresent() && parsed == null) {
+            LOG.warnf("app_setting %s holds '%s', which is not a whole number from %d to %d; reviews are not packed "
+                    + "until it is saved again in Settings -> General", KEY, stored.orElseThrow(), MIN_TOKENS, MAX_TOKENS);
+        }
+        return Optional.ofNullable(parsed);
     }
 
     /** Stores the limit, or clears it with {@code null}. Validate with {@link #isAccepted} first. */
@@ -68,6 +85,16 @@ public class ReviewDiffLimit {
             return isAccepted(value) ? (int) value : null;
         } catch (NumberFormatException e) {
             return null;
+        }
+    }
+
+    /** A stored limit no review may be packed with: reading it as unset would lift the operator's cap. */
+    public static final class Unreadable extends IllegalStateException {
+
+        Unreadable(String stored) {
+            super("app_setting " + KEY + " holds '" + stored + "', which is not a whole number from " + MIN_TOKENS
+                    + " to " + MAX_TOKENS + ". No review is sent until it is fixed: save the Review diff limit again "
+                    + "in Settings -> General (blank for no limit), or delete the row.");
         }
     }
 }
