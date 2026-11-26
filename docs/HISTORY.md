@@ -2758,3 +2758,23 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   General (blank clears it); `SELECT value FROM app_setting WHERE key = 'review.diff-limit-tokens';` shows it. A
   failed read of that row caps the review at 24,000 too, with a WARN `app_setting review.diff-limit-tokens could not
   be read` in the orchestrator log and no attention row.
+
+- **A "responding" mark that never cleared, and a compact reviews list (2026-11-26, branch `feat/compact-review-list`,
+  Part of #391).** On production PR #456 a third person replied in a review thread without mentioning the bot. The
+  orchestrator had set `review_status.answering` when it sent `AnswerFollowUp`; the worker stayed quiet ("smart
+  1:1") and reported nothing, so the dashboard said "responding…" for good. Every quiet exit of the API reply
+  (`FollowUpWorker`) and of the harness reply's prepare (`HarnessReplyWorker`) now emits the new integration event
+  `FollowUpDeclined` with its reason (`NO_THREAD_SOURCE`, `MULTI_PARTY_NO_MENTION`, `ALREADY_ANSWERED`) on
+  `cs.results`; the orchestrator (`FollowUpDeclines`) files "reply not answered: …" under the conversation root,
+  clears `answering` and counts no turn. A pull request close or merge clears `answering` too, as a safety net. The
+  harness post's "already done" exit sends nothing new on purpose: its two events already went out and cleared the
+  flag. A reply that dead-letters still keeps the mark until the next review run.
+  The operator also found the reviews list's badges too wide. The Status column is one badge, with a pulsing icon
+  for "responding"; PR state and provider are icons (lucide state icons, the forges' logos from `react-icons`, already
+  a dependency); the Pipeline column draws segments only, each naming its step and state on hover or focus, and the
+  strip's accessible name carries the state its dropped word said; Findings is the number only, its new and carried
+  split in the tooltip and in screen-reader text. The review header uses the same status cell and PR state icon. The
+  widgets are `ReviewIcons` and `ReviewRowCells` (WIDGETS.md). Analytics keeps its text platform badge.
+  **Upgrading.** A new wire event: roll the orchestrator before the review worker, or a worker's
+  `FollowUpDeclined` reaches an orchestrator that cannot read it and is logged as a poison record (the mark then
+  stays up exactly as before). No migration.
