@@ -50,14 +50,24 @@ Design: docs/superpowers/specs/2026-11-26-review-input-limit-design.md.
 - **A real large call's time and charge are unmeasured.** The 600 s default timeout and the 1,800,000 ms ack
   threshold are sized by arithmetic (two calls at 600 s plus 300 s of other work, one record in flight), not by a
   measured 500K-token call. Whether such a call returns inside 600 s on any provider is unknown.
-- **A large call's timeout is not retried, proven against fakes only.** `ReviewWorkerTest` fails a fake provider
-  with LangChain4j's `TimeoutException` (by reflection). Which exception a real provider timeout arrives as through
-  LangChain4j 1.23 (its own `TimeoutException`, an `HttpTimeoutException`, a `SocketTimeoutException`) is matched by
-  `LlmFailures.isTimeout` from reading, not from a real timeout.
-- **Which files a clipped RECONCILE missed is recovered from text.** A compare diff is parsed with
-  `UnifiedDiffParser`; the last file the cut reaches counts as not seen even when the cut fell exactly at its end,
-  and a cut section the parser cannot read moves that mark one file early (so a finding on a seen file can be kept
-  UNCHANGED). The rendered full-diff fallback is measured exactly. Tests only.
+- **A large call's timeout is not retried, proven against fakes only.** `ReviewWorkerInputLimitTest` fails a fake
+  provider with LangChain4j's `TimeoutException` (by reflection). Which exception a real provider timeout arrives as
+  through LangChain4j 1.23 (its own `TimeoutException`, an `HttpTimeoutException`, a `SocketTimeoutException`) is
+  matched by `LlmFailures.isTimeout` from reading, not from a real timeout.
+- **The client library makes one request per call, proven against a WireMock stub only** (`LlmSdkRetriesTest`, PR
+  456). A delayed response, a 429 and a 503 each reach the stub once through all three real adapters. No real
+  provider's 429 has been seen to reach the orchestrator's retry budget since; a reply on the conversation path retries
+  in the worker up to `conversation.max-attempts` (default 5) times, and those attempts are **not** counted by
+  `LlmTimeoutBudget`, so five reply timeouts of 600 s outlast the default 1,800,000 ms ack threshold. That gap predates
+  this branch (it was 5 x 3 x 180 s against 900,000 ms) and is not closed here.
+- **Which files a clipped RECONCILE saw whole is recovered from text, positively** (PR 456). A compare diff is parsed
+  with `UnifiedDiffParser`: every file section but the last one parsed from the kept text counts as seen, and a finding
+  on any other path, including one in a section the parser cannot read, stays UNCHANGED. Git's C-quoted paths are
+  decoded (octal and the simple escapes); a header no rule reads is simply not seen. The rendered full-diff fallback
+  is measured exactly. Tests only, including a quoted rename past the cut replayed through posting.
+- **A partial review never approves, proven against fakes only** (`ResultSagaPartialReviewTest`). Any truncation
+  counts, a clipped context included, since an older result cannot say which input was cut; no live repository has
+  posted a partial review since.
 - **A manual model has no window,** so its reviews keep today's 24,000 / 12,000 budgets whatever its real window;
   no live review has run on one since this change. Neither has a rate-limited key on a large prompt.
 - **The prompt preview does not size the diff.** Settings → Prompts' preview (`PromptSampleRenderer`) still clips at

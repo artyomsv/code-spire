@@ -2701,3 +2701,30 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   still passes (two calls of 600 s plus 300 s of other work). A deployment that set either by hand keeps its value;
   one that set the timeout to 600 must raise the ack threshold above 1,500,000 too, or the worker refuses to start.
   To stay below the long-context price tiers until they are priced, set the Review diff limit to about 60,000: the limit caps only the diff, the other prompt parts add about 14,000 tokens on top, and the estimate can run low on dense text.
+
+  **Review round 1 (PR 456).** A review of the branch found ten things, all fixed on it. (1) LangChain4j retried a
+  timeout, a 429 and a 5xx twice inside one call by default, so a large prompt could be sent three times and one call
+  could take three timeouts while `LlmTimeoutBudget` counted one: the three client factories now set
+  `maxRetries(0)` (`LangChain4jLlmProvider.SDK_MAX_RETRIES`), the budget counts `1 + SDK_MAX_RETRIES` attempts per call,
+  and `LlmSdkRetriesTest` counts the HTTP requests against a WireMock stub. A transient failure of a review call is
+  still retried, by the orchestrator's retry budget (the worker reports it retryable); a reply's by its own in-worker
+  attempts. (2) A partial review (`truncated`, or `omittedFiles` named) never posts Approve and is never labelled
+  `review: approved`: it posts a Comment, or Request changes when something blocks (`ReviewVerdictDecision`,
+  `partial_review` in the timeline). (3) A clipped reconcile now judges only files it positively saw whole
+  (`DiffCoverage`); any other file, including one the parser could not read, keeps its finding UNCHANGED, and
+  `UnifiedDiffParser` now decodes Git's C-quoted paths (a file whose path has a non-ASCII byte, a quote or a backslash
+  was dropped from every diff before). (4) The Review diff limit is read strictly when a credential is packed: a
+  failed read or a stored value outside 24,000 to 2,000,000 fails the pack, which is retried, rather than sending the
+  review uncapped. (5) The diff budget reserves the fence around each use of `{{diff}}`. (6) The field is named by its
+  label for assistive technology, its help says 60,000 and that the cap is on the diff only, and the API calls live
+  in `reviewDiffLimitApi.ts`. (7) New methods take at most three parameters and no boolean flag (`PromptSize`,
+  `DiffBasis`, input records), and the reconcile call moved to `ReconcileCall` so `ReviewWorker`, `ResultSaga` and
+  `LlmModelRegistry` are no larger than before the branch.
+
+  **Upgrading, round 1.** Still no migration, and any order is safe. Three behaviours change on upgrade. A review whose
+  diff was clipped no longer approves, so a repository that relied on the bot's Approve for a large pull request gets a
+  Comment until it raises or clears the Review diff limit. A transient 429 or 5xx on any model call is no longer retried
+  inside the call: a review fails as retryable and is re-run after the review retry delay, and a reply retries after its
+  own backoff. A row `review.diff-limit-tokens` edited by hand to something outside the range stops every API review
+  until it is saved again in Settings → General (blank for no limit) or deleted; `SELECT value FROM app_setting WHERE
+  key = 'review.diff-limit-tokens';` shows it.
