@@ -150,7 +150,7 @@ class ReplyEndingsIT {
     /** An answer whose reply holds no mark any more changes no row, but its line is new: it is broadcast anyway. */
     @Test
     void anAnswerWithNoMarkLeftIsStillBroadcast() {
-        String reviewId = registered(9);
+        String reviewId = registered(10);
         stopTheClock(reviewId);
 
         endings.posted(new FollowUpPosted(reviewId, THREAD, "TEST-answer-A", true, A));
