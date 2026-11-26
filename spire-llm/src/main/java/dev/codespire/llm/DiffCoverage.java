@@ -23,7 +23,7 @@ import java.util.regex.Pattern;
  */
 public final class DiffCoverage {
 
-    private static final Pattern RENDERED_HEADER = Pattern.compile("(?m)^## File: '(.*)' \([A-Z_]+\)$");
+    private static final Pattern RENDERED_HEADER = Pattern.compile("(?m)^## File: '(.*)' \\([A-Z_]+\\)$");
 
     private static final DiffCoverage WHOLE = new DiffCoverage(null, List.of());
 
