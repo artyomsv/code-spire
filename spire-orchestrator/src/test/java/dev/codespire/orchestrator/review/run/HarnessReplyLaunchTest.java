@@ -60,10 +60,12 @@ class HarnessReplyLaunchTest {
     /** The rows a dispatch wrote, by call slot, as {@code factory_run.review_call_slot} holds them. */
     private final Map<String, String> rowsBySlot = new HashMap<>();
     private final List<String> events = new ArrayList<>();
-    private final List<String> touched = new ArrayList<>();
     private final List<String> timelineTypes = new ArrayList<>();
-    /** Each "answering" mark a refusal finished, by its triggering comment. */
-    private final List<String> answering = new ArrayList<>();
+    /**
+     * Each reply a refusal ended through {@code finishAndBroadcast}, by its triggering comment. That call's one
+     * broadcast is counted on the real class in {@code ReplyEndingBroadcastsIT}, not here.
+     */
+    private final List<String> endedAndBroadcast = new ArrayList<>();
 
     private static HarnessReplyPrepared prepared(String head, String comment) {
         return new HarnessReplyPrepared(REVIEW_ID, PR, head, THREAD, comment, 2, INPUTS);
@@ -125,8 +127,7 @@ class HarnessReplyLaunchTest {
 
         assertEquals(List.of("FollowUpRefused@TEST-thread-1: harness reply refused: TEST-harness: "
                 + "subscription_unavailable"), events);
-        assertEquals(List.of("TEST-comment-5"), answering, "the responding pill clears");
-        assertEquals(1, touched.size(), "the refusal line reaches an open dashboard");
+        assertEquals(List.of("TEST-comment-5"), endedAndBroadcast, "ends the reply through finishAndBroadcast");
     }
 
     @Test
@@ -136,7 +137,7 @@ class HarnessReplyLaunchTest {
         launch().launch(prepared(HEAD, "TEST-comment-5"));
 
         assertEquals(List.of("FollowUpRefused@TEST-thread-1: pull request closed"), events);
-        assertEquals(List.of("TEST-comment-5"), answering);
+        assertEquals(List.of("TEST-comment-5"), endedAndBroadcast, "ends the reply through finishAndBroadcast");
         assertTrue(timelineTypes.contains("dropped:HarnessReplyPrepared"), timelineTypes.toString());
     }
 
@@ -149,7 +150,7 @@ class HarnessReplyLaunchTest {
         assertTrue(dispatched.isEmpty());
         assertEquals(List.of("FollowUpRefused@TEST-thread-1: harness reply refused: no harness: "
                 + "review_harness_removed"), events);
-        assertEquals(List.of("TEST-comment-5"), answering);
+        assertEquals(List.of("TEST-comment-5"), endedAndBroadcast, "ends the reply through finishAndBroadcast");
     }
 
     @Test
@@ -238,7 +239,7 @@ class HarnessReplyLaunchTest {
 
             @Override
             public void touch(String reviewId) {
-                touched.add(reviewId);
+                throw new AssertionError("a refusal broadcasts through finishAndBroadcast, never a touch of its own");
             }
         };
     }
@@ -247,13 +248,12 @@ class HarnessReplyLaunchTest {
         return new AnsweringMarks() {
             @Override
             public void finish(ReplyKey reply) {
-                answering.add(reply.commentId());
+                throw new AssertionError("a refusal recorded a line, so it ends through finishAndBroadcast");
             }
 
             @Override
             public void finishAndBroadcast(ReplyKey reply) {
-                finish(reply);
-                touched.add(reply.reviewId());
+                endedAndBroadcast.add(reply.commentId());
             }
         };
     }

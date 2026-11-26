@@ -51,6 +51,8 @@ final class HarnessSagaFakes {
     static final long PR = 7L;
     static final String REVIEW_ID = ReviewIds.reviewId(REPO, PR);
     static final String COMMIT = "0123456789abcdef0123456789abcdef01234567";
+    /** Marks an ending {@link #endings} saw arrive through {@code finishAndBroadcast}. */
+    static final String THROUGH_BROADCAST = " via finishAndBroadcast";
 
     static final PreferenceFilter NO_PREFERENCES = new PreferenceFilter() {
         @Override
@@ -118,21 +120,22 @@ final class HarnessSagaFakes {
 
     /**
      * The reply endings over {@code projection}, with a stand-in for the per-reply marks (they open a database): each
-     * reply whose mark a result finishes lands in {@code finished} as {@code reviewId:commentId}.
+     * reply a result ends lands in {@code ended} as {@code reviewId:commentId}, with {@link #THROUGH_BROADCAST} when it
+     * ended through {@code finishAndBroadcast}. That call's one broadcast is counted on the real class in
+     * {@code ReplyEndingBroadcastsIT}; this stand-in broadcasts nothing.
      */
-    static FollowUpEndings endings(ReviewProjection projection, List<String> finished) {
+    static FollowUpEndings endings(ReviewProjection projection, List<String> ended) {
         FollowUpEndings endings = new FollowUpEndings();
         endings.projection = projection;
         endings.answering = new AnsweringMarks() {
             @Override
             public void finish(ReplyKey reply) {
-                finished.add(reply.reviewId() + ":" + reply.commentId());
+                ended.add(reply.reviewId() + ":" + reply.commentId());
             }
 
             @Override
             public void finishAndBroadcast(ReplyKey reply) {
-                finish(reply);
-                projection.touch(reply.reviewId());
+                ended.add(reply.reviewId() + ":" + reply.commentId() + THROUGH_BROADCAST);
             }
 
             @Override

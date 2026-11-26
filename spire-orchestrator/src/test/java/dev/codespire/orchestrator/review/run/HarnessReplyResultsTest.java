@@ -45,10 +45,9 @@ class HarnessReplyResultsTest {
     private Optional<String> reviewerCredential = Optional.of("TEST-packed-scm");
     private final List<ActionCommand> emitted = new ArrayList<>();
     private final List<String> events = new ArrayList<>();
-    private final List<String> touched = new ArrayList<>();
     private final List<String> timelineDetails = new ArrayList<>();
-    /** Each "answering" mark a failure or refusal finished, by its triggering comment. */
-    private final List<String> answering = new ArrayList<>();
+    /** Each reply a failure or refusal ended through {@code finishAndBroadcast} (counted in ReplyEndingBroadcastsIT). */
+    private final List<String> endedAndBroadcast = new ArrayList<>();
 
     private static RunReviewArtifact answer(String text) {
         return new RunReviewArtifact(RUN_ID, REPLY, text, false, Map.of("INPUT", 1200L, "OUTPUT", 340L), 4, List.of());
@@ -65,7 +64,7 @@ class HarnessReplyResultsTest {
         assertEquals(List.of(new ActionCommand.PostHarnessReply(REVIEW_ID, REPO, 7, new ThreadRef(THREAD), "987654",
                 "TEST-REPLY-TEXT", "TEST-packed-scm", new ReplyRetry(3, 100, 2.0))), emitted);
         assertTrue(events.isEmpty(), events.toString());
-        assertTrue(answering.isEmpty(), "the pill clears when the posted reply's FollowUpPosted arrives");
+        assertTrue(endedAndBroadcast.isEmpty(),"the pill clears when the posted reply's FollowUpPosted arrives");
     }
 
     @Test
@@ -105,8 +104,7 @@ class HarnessReplyResultsTest {
                 false, null, List.of()), REPLY);
 
         assertEquals(List.of("FollowUpRefused@" + THREAD + ": harness reply refused: TEST-harness: fork_requires_credential_proxy"), events);
-        assertEquals(List.of("987654"), answering, "the responding pill clears");
-        assertEquals(1, touched.size(), "the refusal line reaches an open dashboard");
+        assertEquals(List.of("987654"), endedAndBroadcast, "ends the reply through finishAndBroadcast");
         assertTrue(emitted.isEmpty(), emitted.toString());
     }
 
@@ -154,7 +152,7 @@ class HarnessReplyResultsTest {
 
     private void assertFailed(String why) {
         assertEquals(List.of("FollowUpFailed@" + THREAD + ": " + why), events);
-        assertEquals(List.of("987654"), answering, "the responding pill clears");
+        assertEquals(List.of("987654"), endedAndBroadcast, "ends the reply through finishAndBroadcast");
         assertTrue(emitted.isEmpty(), emitted.toString());
     }
 
@@ -196,18 +194,17 @@ class HarnessReplyResultsTest {
         };
     }
 
-    /** Each reply a failure or refusal finished lands in {@link #answering} by its triggering comment. */
+    /** Each reply a failure or refusal ended lands in {@link #endedAndBroadcast} by its triggering comment. */
     private AnsweringMarks marks() {
         return new AnsweringMarks() {
             @Override
             public void finish(ReplyKey reply) {
-                answering.add(reply.commentId());
+                throw new AssertionError("an ending that recorded a line ends through finishAndBroadcast");
             }
 
             @Override
             public void finishAndBroadcast(ReplyKey reply) {
-                finish(reply);
-                touched.add(reply.reviewId());
+                endedAndBroadcast.add(reply.commentId());
             }
         };
     }
@@ -227,7 +224,7 @@ class HarnessReplyResultsTest {
 
             @Override
             public void touch(String reviewId) {
-                touched.add(reviewId);
+                throw new AssertionError("an ending broadcasts through finishAndBroadcast, never a touch of its own");
             }
         };
     }
