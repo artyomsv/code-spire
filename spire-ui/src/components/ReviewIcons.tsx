@@ -23,7 +23,7 @@ interface IconMarkProps extends MarkFocus {
   children: ReactNode;
 }
 
-function IconMark({ label, className, children, tabIndex }: IconMarkProps) {
+export function IconMark({ label, className, children, tabIndex }: IconMarkProps) {
   return (
     <Tooltip label={label}>
       <span className={`icon-mark ${className}`} role="img" aria-label={label} tabIndex={tabIndex}>

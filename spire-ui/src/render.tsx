@@ -218,49 +218,42 @@ export function ago(updatedAt: string): string {
   return Math.round(s / 86400) + 'd ago';
 }
 
-/**
- * The badge word for the statuses whose full label does not fit the list's status column (it ran into the PR icon on
- * the dashboard, PR #457). The full label stays the badge's tooltip and accessible name.
- */
-const SHORT_LABEL: Partial<Record<ReviewStatus, string>> = {
-  waiting_for_checks: 'Waiting',
-  skipped: 'Skipped',
-};
-
 export function pill(status: ReviewStatus) {
-  const full = STATUS_LABEL[status];
-  const short = SHORT_LABEL[status];
-  if (!short) return <span className={`pill ${status}`}>{full}</span>;
-  return <span className={`pill ${status}`} title={full} aria-label={full}>{short}</span>;
+  return <span className={`pill ${status}`}>{STATUS_LABEL[status]}</span>;
+}
+
+/** What a review's status cell says: a finished review's outcome, or the status itself. */
+export type OutcomeKey = Exclude<ReviewStatus, 'completed'> | 'passed' | 'changes' | 'suggestions' | 'no_result';
+
+export interface Outcome {
+  key: OutcomeKey;
+  label: string;
 }
 
 /**
- * Outcome-aware badge: a finished review is only "Passed" when it's clean. Findings with a
- * blocker read as "Changes requested"; lower-severity-only findings read as "Suggestions".
- * Non-terminal states (reviewing/failed/…) fall back to the plain status pill.
+ * Outcome-aware: a finished review is only "Passed" when it's clean. Findings with a blocker read as "Changes";
+ * lower-severity-only findings as "Suggestions". A degraded run has no outcome: zero findings is also what a clean
+ * pass writes, so without this the row would assert "Passed" about a review that never happened (as `refused` once did).
  */
+export function outcomeOf(status: ReviewStatus, findings: number, blockerCount: number,
+                          degraded = false): Outcome {
+  if (status !== 'completed') return { key: status, label: STATUS_LABEL[status] };
+  if (degraded) return { key: 'no_result', label: 'No result' };
+  if (findings === 0) return { key: 'passed', label: 'Passed' };
+  return blockerCount > 0 ? { key: 'changes', label: 'Changes' } : { key: 'suggestions', label: 'Suggestions' };
+}
+
+/** The outcome as a word badge, for the review header (the list draws it as an icon, ReviewStatusIcon). */
 export function outcomeBadge(status: ReviewStatus, findings: number, blockerCount: number,
                              degraded = false) {
-  if (status === 'completed') {
-    // A run that produced nothing has no outcome to report. Zero findings is also what a clean
-    // pass writes, so without this the most prominent cell on the row asserts "Passed" about a
-    // review that never happened — the same false-success rendering the `refused` status hit.
-    if (degraded) return <span className="pill pill--warn">No result</span>;
-    const [cls, label] =
-      findings === 0
-        ? ['passed', 'Passed']
-        : blockerCount > 0
-          ? ['changes', 'Changes']
-          : ['suggestions', 'Suggestions'];
-    return <span className={`pill ${cls}`}>{label}</span>;
-  }
-  return pill(status);
+  const { key, label } = outcomeOf(status, findings, blockerCount, degraded);
+  return <span className={`pill ${key === 'no_result' ? 'pill--warn' : key}`}>{label}</span>;
 }
 
 /**
- * The status cell: one outcome badge, and the responding icon while the bot is composing a reply. Shared by the
- * reviews-list row and the detail header so both gate it the same way; the header passes `tabIndex` 0, since it has
- * no row to be the keyboard stop (ReviewIcons).
+ * The detail header's status cell: the outcome as a word badge, and the responding icon while the bot is composing a
+ * reply. The list row draws the outcome as an icon instead (`listStatusCell`, ReviewRowCells). `tabIndex` 0 makes the
+ * icon a tab stop, since the header has no row to be the keyboard stop (ReviewIcons).
  */
 export function statusCell(r: { status: ReviewStatus; findings: number; blockerCount: number;
                                 answering?: boolean; degraded?: boolean }, tabIndex?: 0) {

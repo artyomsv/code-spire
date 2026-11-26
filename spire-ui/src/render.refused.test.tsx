@@ -79,7 +79,7 @@ describe('a refused review in the reviews list', () => {
     renderList([summary({ status: 'refused', stage: 3 })]);
 
     const row = rowFor(1);
-    expect(within(row).getByText('Refused')).toBeInTheDocument();
+    expect(within(row).getByRole('img', { name: 'Refused' })).toBeInTheDocument();
     expect(within(row).queryByText('done')).not.toBeInTheDocument();
     expect(row.querySelectorAll('.seg.done')).toHaveLength(0);
   });

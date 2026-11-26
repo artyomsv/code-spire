@@ -303,10 +303,10 @@
   .tablewrap { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-sm); overflow-x: auto; }
   .thead, .row {
     display: grid;
-    grid-template-columns: 116px 84px 92px minmax(150px, 1fr) 124px minmax(0, 1.25fr) 148px minmax(104px, 0.7fr) 78px 44px 72px 80px;
+    grid-template-columns: 52px 84px 92px minmax(150px, 1fr) 124px minmax(0, 1.25fr) 148px minmax(104px, 0.7fr) 78px 44px 72px 80px;
     align-items: center; gap: 14px;
     padding: 0 18px;
-    min-width: 1052px;
+    min-width: 988px;
   }
   .thead .h-model { text-align: center; }
   .model-cell { display: flex; align-items: center; justify-content: center; }
@@ -439,8 +439,8 @@
   }
   .responding svg { flex: none; }
 
-  /* Status cell: one outcome badge, then the responding icon. Still allowed to wrap, so a long
-     badge never overflows into the adjacent .state-cell (which once corrupted the row). */
+  /* Status cell: the outcome (an icon in the list, a badge in the review header), then the responding icon. Still
+     allowed to wrap, so nothing overflows into the adjacent .state-cell (which once corrupted the row). */
   .status-cell { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; row-gap: 4px; min-width: 0; }
   .state-cell { display: flex; align-items: center; }
 
@@ -455,6 +455,16 @@
   .prov-icon.prov-bitbucket { color: #2684ff; }
   /* A soft pulse, never a spinner: "answering" can outlive a dead-lettered reply until the next run. */
   .responding-icon { color: var(--iris); animation: pulse 1.8s ease-in-out infinite; }
+  /* The list's status icon (ReviewStatusIcon.tsx); its word is the tooltip and the accessible name. Reviewing spins
+     slowly; the global reduced-motion rule stops it. */
+  .status-icon.st-icon-good { color: var(--good); }
+  .status-icon.st-icon-crit { color: var(--crit); }
+  .status-icon.st-icon-blue { color: var(--blue); }
+  .status-icon.st-icon-warn { color: var(--warn); }
+  .status-icon.st-icon-muted { color: var(--muted); }
+  .status-icon.st-icon-spin { color: var(--iris); }
+  .status-icon.st-icon-spin svg { animation: status-spin 1.6s linear infinite; }
+  @keyframes status-spin { to { transform: rotate(360deg); } }
 
   /* Text for screen readers only. */
   .sr-only {
@@ -802,7 +812,7 @@
     .thead .h-prov, .row .prov-cell,
     .thead .h-model, .row .model-cell,
     .thead .h-author, .row .author-cell { display: none; }
-    .thead, .row { grid-template-columns: 116px minmax(0, 1fr) 74px 84px; min-width: 0; }
+    .thead, .row { grid-template-columns: 52px minmax(0, 1fr) 74px 84px; min-width: 0; }
   }
   :focus-visible { outline: 2px solid var(--iris); outline-offset: 2px; border-radius: 4px; }
 
