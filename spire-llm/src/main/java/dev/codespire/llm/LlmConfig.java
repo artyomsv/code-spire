@@ -22,8 +22,12 @@ public record LlmConfig(String baseUrl, String apiKey, String model, double temp
      * still cut off, and raising the output cap only moved the failure onto this timeout. It is also
      * the value that must stay below the Kafka ack threshold — see the worker's {@code commands-in}
      * channel, where the two were equal and a slow call killed the consumer.
+     *
+     * <p>Was 180s until the review input limit (2026-11-26) let a review send the whole diff, up to the
+     * model's window: a call of several hundred thousand input tokens, non-streaming, can outlast three
+     * minutes, and a timed-out large call is not retried.
      */
-    public static final String DEFAULT_TIMEOUT_SECONDS = "180";
+    public static final String DEFAULT_TIMEOUT_SECONDS = "600";
 
     /**
      * The same value as a {@link Duration}. Derived from the string rather than written twice: the

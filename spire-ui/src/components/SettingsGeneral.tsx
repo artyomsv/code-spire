@@ -5,15 +5,15 @@ import {
   getCapSettings,
   getConversationSettings,
   getReviewSettings,
-  setCapSettings,
-  setConversationSettings,
-  setReviewSettings,
   type ConversationSettings as ConversationSettingsShape,
   type ReviewSettings as ReviewSettingsShape,
 } from '../api';
-import CapFields, { capFieldsPayload, initialCapFields, validateCapFields, type CapFieldValues } from './CapSettings';
+import { getReviewDiffLimit } from '../reviewDiffLimitApi';
+import CapFields, { initialCapFields, type CapFieldValues } from './CapSettings';
 import ConversationFields from './ConversationSettings';
 import ReviewFields from './ReviewSettings';
+import ReviewDiffLimitField from './ReviewDiffLimitField';
+import { diffLimitFields, saveChangedGroups, validateGeneral, type GeneralForm } from './generalSettingsForm';
 
 /**
  * General preferences. The page owns the state and the single Save for BOTH groups — they are two
@@ -28,9 +28,9 @@ export default function SettingsGeneral() {
   const [review, setReview] = useState<ReviewSettingsShape | null>(null);
   const [conversation, setConversation] = useState<ConversationSettingsShape | null>(null);
   const [caps, setCaps] = useState<CapFieldValues | null>(null);
-  const [loaded, setLoaded] = useState<
-    { review: ReviewSettingsShape; conversation: ConversationSettingsShape; caps: CapFieldValues } | null
-  >(null);
+  // Kept as text, as the cap fields are: a blank field must send null ("as much as the model allows"), never 0.
+  const [diffLimit, setDiffLimit] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState<GeneralForm | null>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,8 +38,13 @@ export default function SettingsGeneral() {
   const read = useQuery({
     queryKey: generalSettingsKey,
     queryFn: async () => {
-      const [review, conversation, caps] = await Promise.all([getReviewSettings(), getConversationSettings(), getCapSettings()]);
-      return { review, conversation, caps };
+      const [review, conversation, caps, diffLimit] = await Promise.all([
+        getReviewSettings(),
+        getConversationSettings(),
+        getCapSettings(),
+        getReviewDiffLimit(),
+      ]);
+      return { review, conversation, caps, diffLimit };
     },
   });
   // The form fills once, from a read made on this visit: a cached copy may be out of date, and a save would send it
@@ -50,41 +55,41 @@ export default function SettingsGeneral() {
     if (!fresh || filled.current) return;
     filled.current = true;
     const capFields = initialCapFields(fresh.caps);
+    const limit = diffLimitFields(fresh.diffLimit);
     setReview(fresh.review);
     setConversation(fresh.conversation);
     setCaps(capFields);
-    setLoaded({ review: fresh.review, conversation: fresh.conversation, caps: capFields });
+    setDiffLimit(limit.diffLimit);
+    setLoaded({ review: fresh.review, conversation: fresh.conversation, caps: capFields, ...limit });
   }, [fresh]);
   const readError = read.error ? (read.error instanceof Error ? read.error.message : String(read.error)) : null;
 
+  function currentForm(): GeneralForm | null {
+    if (!review || !conversation || !caps || diffLimit === null) return null;
+    return { review, conversation, caps, diffLimit };
+  }
+
+  function showStored(stored: GeneralForm) {
+    setReview(stored.review);
+    setConversation(stored.conversation);
+    setCaps(stored.caps);
+    setDiffLimit(stored.diffLimit);
+    setLoaded(stored);
+  }
+
   async function save() {
-    if (!review || !conversation || !caps || !loaded || busy) return;
+    const form = currentForm();
+    if (!form || !loaded || busy) return;
     setSaved(false);
-    // Validated before anything is sent: a typed 0 must be rejected outright, not just skipped, and
-    // rejecting it here means the OTHER two groups don't get saved either on the same click — this
-    // is one Save for the whole page, not three independent ones.
-    const capsError = validateCapFields(caps);
-    if (capsError) {
-      setError(capsError);
+    const fieldError = validateGeneral(form);
+    if (fieldError) {
+      setError(fieldError);
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      // Write only what moved: an untouched group should not be rewritten just because its sibling was.
-      const reviewChanged = review.maxAttempts !== loaded.review.maxAttempts;
-      const conversationChanged = JSON.stringify(conversation) !== JSON.stringify(loaded.conversation);
-      const capsChanged = JSON.stringify(caps) !== JSON.stringify(loaded.caps);
-      const [nextReview, nextConversation, nextCaps] = await Promise.all([
-        reviewChanged ? setReviewSettings(review) : Promise.resolve(loaded.review),
-        conversationChanged ? setConversationSettings(conversation) : Promise.resolve(loaded.conversation),
-        capsChanged ? setCapSettings(capFieldsPayload(caps)).then(initialCapFields) : Promise.resolve(loaded.caps),
-      ]);
-      // The server clamps out-of-range values, so show what was actually stored.
-      setReview(nextReview);
-      setConversation(nextConversation);
-      setCaps(nextCaps);
-      setLoaded({ review: nextReview, conversation: nextConversation, caps: nextCaps });
+      showStored(await saveChangedGroups(form, loaded));
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -100,7 +105,7 @@ export default function SettingsGeneral() {
           <h2 className="prov-title">General</h2>
         </div>
         <div style={{ padding: '4px 18px 18px' }}>
-          {!review || !conversation || !caps ? (
+          {!review || !conversation || !caps || diffLimit === null ? (
             error ?? readError ? <p className="prov-error">{error ?? readError}</p> : <p className="prov-sub">Loading…</p>
           ) : (
             <>
@@ -110,6 +115,15 @@ export default function SettingsGeneral() {
                 disabled={busy}
                 onChange={(v) => {
                   setReview(v);
+                  setSaved(false);
+                }}
+              />
+              <ReviewDiffLimitField
+                value={diffLimit}
+                disabled={busy}
+                invalidStored={loaded?.diffLimitInvalid === true}
+                onChange={(v) => {
+                  setDiffLimit(v);
                   setSaved(false);
                 }}
               />

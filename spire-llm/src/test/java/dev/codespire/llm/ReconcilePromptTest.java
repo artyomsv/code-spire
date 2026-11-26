@@ -73,4 +73,44 @@ class ReconcilePromptTest {
 
         assertEquals(implicit, viaExplicitTemplate);
     }
+
+    // ---- review input limit (design 2026-11-26) ----
+
+    @Test
+    void aClippedDiffIsPartialAndNamesTheFilesItCut() {
+        String diff = DiffSelectionTest.fileDiff("src/TEST-a.java", 10) + DiffSelectionTest.fileDiff("src/TEST-b.java", 3_000);
+
+        ReconcilePrompt.Built built = ReconcilePrompt.build(incremental(diff), null, DiffBudget.Limits.UNKNOWN);
+
+        assertTrue(built.truncated(), "today's 12,000 cannot hold about 19,000 tokens of diff");
+        assertEquals(List.of("src/TEST-b.java"), built.omittedFiles());
+        assertEquals(PromptSize.WITHIN_DEFAULT, built.size());
+    }
+
+    @Test
+    void aKnownLargeWindowReconcilesOnTheWholeDiff() {
+        String diff = DiffSelectionTest.fileDiff("src/TEST-a.java", 10) + DiffSelectionTest.fileDiff("src/TEST-b.java", 3_000);
+
+        ReconcilePrompt.Built built = ReconcilePrompt.build(incremental(diff), null,
+                new DiffBudget.Limits(983_616, null));
+
+        assertFalse(built.truncated());
+        assertTrue(built.omittedFiles().isEmpty());
+        assertEquals(PromptSize.LARGE, built.size());
+    }
+
+    @Test
+    void aClippedDiffSeesOnlyTheFilesBeforeTheCut() {
+        String diff = DiffSelectionTest.fileDiff("src/TEST-a.java", 10) + DiffSelectionTest.fileDiff("src/TEST-b.java", 3_000);
+
+        DiffCoverage coverage = ReconcilePrompt.build(incremental(diff), null, DiffBudget.Limits.UNKNOWN).coverage();
+
+        assertTrue(coverage.sawWhole("src/TEST-a.java"));
+        assertFalse(coverage.sawWhole("src/TEST-b.java"));
+        assertFalse(coverage.sawWhole("src/A.java"), "the prior finding's file is not in the diff at all");
+    }
+
+    private ReconcilePrompt.ReconcileInput incremental(String diff) {
+        return new ReconcilePrompt.ReconcileInput(findings, Map.of(), diff, DiffBasis.INCREMENTAL);
+    }
 }

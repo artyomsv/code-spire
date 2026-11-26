@@ -33,6 +33,68 @@ evidence would settle it**.
 
 ---
 
+## Review input limit: the whole diff up to the model's window (2026-11-26, Part of #391)
+
+Live-proven on the dev stack on 2026-11-26 (`spire-test`, Claude `claude-haiku-5-5` on an API key), for a first review
+and one re-review only. CI runs the unit and service tests.
+Design: docs/superpowers/specs/2026-11-26-review-input-limit-design.md.
+
+- **Long-context price tiers are not charged.** The catalog prices one tier per token type. A review may now send
+  more than OpenAI's 272K-input threshold or Claude Haiku 5.5's 100,000-token threshold, and such a call is
+  charged at the short-context rate, so the ledger and the fleet spend caps read low for it. The operator chose
+  "whole diff" over clamping to the tier; the Review diff limit (for example 60,000, since it caps only the diff and the other prompt parts add about 14,000 tokens) keeps a review below them until
+  the catalog can price tiers. The setting's help text says so.
+- **The 25% margin is a guess at the estimator's error.** `TokenBudget.estimateTokens` is `chars / 3.2`. Dense text
+  (lock files, minified code, non-Latin text) has fewer characters per token, so a prompt sized to 75% of the window
+  by estimate may still exceed the window. Measured once, live: generated Java of 158,668 characters (about 49,600
+  estimated diff tokens) was 74,078 real input tokens with the rest of the prompt, so ordinary code ran at about
+  2.1 characters per token, not 3.2. The 25% margin covered it on a 1,000,000-token window; on a small window it may
+  not. No real tokenizer has measured a corpus of diffs against it. A provider
+  "prompt too long" refusal is a failed review with the provider's message and no smaller retry.
+- **One large call was measured; larger ones were not.** spire-test #112: 74,078 input tokens, about 11 s, 835
+  millicents. A call near the window's size is unmeasured. The 600 s default timeout and the 1,800,000 ms ack
+  threshold are sized by arithmetic (two calls at 600 s plus 300 s of other work, one record in flight), not by a
+  measured 500K-token call. Whether such a call returns inside 600 s on any provider is unknown.
+- **A large call's timeout is not retried, proven against fakes only.** `ReviewWorkerInputLimitTest` fails a fake
+  provider with LangChain4j's `TimeoutException` (by reflection). Which exception a real provider timeout arrives as
+  through LangChain4j 1.23 (its own `TimeoutException`, an `HttpTimeoutException`, a `SocketTimeoutException`) is
+  matched by `LlmFailures.isTimeout` from reading, not from a real timeout.
+- **The client library makes one request per call, proven against a WireMock stub only** (`LlmSdkRetriesTest`, PR
+  456). A delayed response, a 429 and a 503 each reach the stub once through all three real adapters. No real
+  provider's 429 has been seen to reach the orchestrator's retry budget since; a reply on the conversation path retries
+  in the worker up to `conversation.max-attempts` (default 5) times, and those attempts are **not** counted by
+  `LlmTimeoutBudget`, so five reply timeouts of 600 s outlast the default 1,800,000 ms ack threshold. That gap predates
+  this branch (it was 5 x 3 x 180 s against 900,000 ms) and is not closed here.
+- **Which files a clipped RECONCILE saw whole is recovered from text, positively** (PR 456). A compare diff is parsed
+  with `UnifiedDiffParser`: every file section but the last one parsed from the kept text counts as seen, and a finding
+  on any other path, including one in a section the parser cannot read, stays UNCHANGED. Git's C-quoted paths are
+  decoded (octal and the simple escapes); a header no rule reads is simply not seen. The rendered full-diff fallback
+  is measured exactly. Tests only, including a quoted rename past the cut replayed through posting.
+- **A failed read of the Review diff limit reviews at 24,000, proven by tests only** (PR 456, round 5).
+  `WorkerLlmCredentialsLimitFaultTest` and `ReviewInputLimitsTest` throw `AppSettingRepository.ReadFailed` from the
+  strict read under the real `ReviewDiffLimit` and assert a packed `diffTokenCap` of 24,000; no row packs none. No
+  saga-level test: the saga never sees the fault, and the dispatch after a pack is covered by the existing saga tests.
+  Not proven: a real database fault on a live stack, and the WARN line in a real log. A provider read that fails in the
+  same outage still throws before the limit is read and dead-letters the event, as before this branch. A failed read
+  raises no attention row (the rows are read from the same database), so only the log tells.
+- **An invalid stored Review diff limit reviews at 24,000** (PR 456, round 2): proven by `WorkerLlmCredentialsTest`
+  on a real database and by the General form's test with a stubbed API; the `DIFF_LIMIT_INVALID` row and the blank
+  Save have not been seen on a live stack.
+- **A partial review never approves, proven against fakes only** (`ResultSagaPartialReviewTest`). Any truncation
+  counts, a clipped context included, since an older result cannot say which input was cut; no live repository has
+  posted a partial review since.
+- **A manual model the catalog does not have has no window,** so its reviews keep today's 24,000 / 12,000 budgets
+  whatever its real window; no live review has run on one since this change. A manual model that shadows a catalog
+  entry by name or alias takes that entry's window (found live: a pre-catalog manual row kept every review at 24,000). Neither has a rate-limited key on a large prompt.
+- **The prompt preview does not size the diff.** Settings → Prompts' preview (`PromptSampleRenderer`) still clips at
+  the palette's fixed budget, so it shows a clip a real review on a large window no longer makes.
+- **Live proof (2026-11-26, dev stack, `spire-test`):** #112, setting empty: the whole diff was sent, no "Partial
+  review". #111, before the manual-shadow fix: the note named the three files left out, and the small last file was
+  still reviewed. #112 re-review, setting at 24,000: the note named the files left out, and the three findings on
+  the fixed but unseen `ZuluLedger.java` stayed open. The live test found that a pre-catalog manual model row with
+  the same name hid the catalog window (fixed: the window comes from the catalog entry). Not live: OpenAI or Gemini
+  models, a manual model the catalog does not have, a real timeout, a rate-limited key, the invalid-setting warning.
+
 ## Agent images on Debian trixie (2026-11-24)
 
 Built in CI only. Both agent images moved from `node:22-bookworm-slim` to `node:22-trixie-slim`.

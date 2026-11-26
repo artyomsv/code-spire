@@ -6,7 +6,6 @@ import dev.codespire.contract.event.IntegrationEvent.CommentsPosted;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
 import dev.codespire.contract.llm.Completion;
-import dev.codespire.contract.llm.Prompt;
 import dev.codespire.contract.command.ActionCommand.GenerateReview;
 import dev.codespire.contract.command.ActionCommand.PostComments;
 import dev.codespire.contract.port.CommentSink;
@@ -16,8 +15,6 @@ import dev.codespire.worker.adapters.WorkerScmClients;
 import dev.codespire.contract.review.ContextItem;
 import dev.codespire.contract.review.Finding;
 import dev.codespire.contract.review.FindingVerdict;
-import dev.codespire.contract.review.ModelUsage;
-import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.CommentRef;
@@ -26,18 +23,14 @@ import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.ScmApiException;
 import dev.codespire.contract.scm.ThreadRef;
-import dev.codespire.contract.scm.ThreadTranscript;
 import dev.codespire.diff.Anchors;
-import dev.codespire.diff.DiffRenderer;
 import dev.codespire.llm.FindingsParser;
-import dev.codespire.llm.ReconcilePrompt;
 import dev.codespire.llm.ReviewPromptBuilder;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
-import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -108,21 +101,9 @@ public class ReviewWorker {
     /** Idempotency slot for the paid LLM call itself (finding H4). */
     static final String LLM_KEY = "LLM";
 
-    /** Idempotency slot for the reconcile call (ADR-019) — same keyspace, its own claim. */
-    static final String RECONCILE_KEY = "LLM:reconcile";
-
-    /** Persisted under RECONCILE_KEY so redelivery replays verdicts without a second spend. */
-    private record ReconcileOutcome(List<FindingVerdict> verdicts, ModelUsage usage) {
-    }
-
-    /**
-     * The reconcile call's outcome (null when there is no prior run) plus the prior findings
-     * remapped through the incremental diff's renames — computed ONCE and reused for the reconcile
-     * prompt, the review call's exclusion list, and the verdicts (so a renamed file's finding
-     * carries its NEW path everywhere downstream, including on a redelivered/replayed run).
-     */
-    private record Reconciliation(List<PriorFinding> exclusions, ReconcileOutcome outcome) {
-        private static final Reconciliation NONE = new Reconciliation(List.of(), null);
+    /** What the review call reads besides the command: the pull request, its diff, its context, the model client. */
+    private record ReviewMaterial(PullRequest pr, Diff diff, List<ContextItem> context,
+                                  WorkerLlmProvider.LlmClient client) {
     }
 
     public void generateReview(GenerateReview command) {
@@ -138,14 +119,8 @@ public class ReviewWorker {
             Diff diff = diffSource.fetchDiff(command.repo(), command.prId(), command.commit());
             List<ContextItem> context = contextReader.load(command.contextRef());
             WorkerLlmProvider.LlmClient client = llm.forCommand(command);
-
-            // ADR-019: reconcile (its own claim) runs before the LLM_KEY switch below. Skipped
-            // when there are no prior findings to judge — that call is guaranteed to yield zero
-            // verdicts, so paying for it would be pure waste (the summary-update path doesn't
-            // depend on verdicts either, so skipping here is otherwise a no-op).
-            PriorRun prior = command.priorRun();
-            Reconciliation reconciliation = prior == null || prior.findings().isEmpty()
-                    ? Reconciliation.NONE : reconcile(command, clients, diff, prior, client);
+            ReconcileCall.Reconciliation reconciliation =
+                    reconcileFirst(command, new ReconcileCall.Sources(clients, diff, client));
 
             // Command-level dedup (finding H4): a redelivered GenerateReview for a
             // commit whose LLM call already completed must not pay twice. A
@@ -157,7 +132,7 @@ public class ReviewWorker {
                 }
                 case CommentIdempotencyStore.Claim.Post ignored -> { }
             }
-            runReviewCall(command, pr, diff, context, reconciliation, client);
+            runReviewCall(command, new ReviewMaterial(pr, diff, context, client), reconciliation);
         } catch (RuntimeException e) {
             Throwable cause = WorkerFailures.unwrap(e);
             if (WorkerFailures.isCommitGone(cause)) {
@@ -173,29 +148,37 @@ public class ReviewWorker {
     }
 
     /**
+     * ADR-019: reconcile (its own claim) runs before the review's LLM_KEY claim. Skipped when there are no prior
+     * findings to judge: that call is guaranteed to yield zero verdicts, so paying for it would be pure waste (the
+     * summary-update path does not depend on verdicts either, so skipping is otherwise a no-op).
+     */
+    private ReconcileCall.Reconciliation reconcileFirst(GenerateReview command, ReconcileCall.Sources sources) {
+        PriorRun prior = command.priorRun();
+        if (prior == null || prior.findings().isEmpty()) {
+            return ReconcileCall.Reconciliation.NONE;
+        }
+        return new ReconcileCall(new ReconcileCall.Ports(idempotency, promptLog, mapper)).run(command, sources);
+    }
+
+    /**
      * The review call: prompt (with the prior-run exclusion list, if any) -> LLM -> parse ->
      * drop still-open anchor collisions -> persist-then-emit. Split out of generateReview to
      * keep that method within the method-length budget.
      */
-    private void runReviewCall(GenerateReview command, PullRequest pr, Diff diff, List<ContextItem> context,
-                               Reconciliation reconciliation, WorkerLlmProvider.LlmClient client) {
-        ReviewPromptBuilder.Built built =
-                ReviewPromptBuilder.build(pr, diff.files(), context, reconciliation.exclusions(),
-                        command.reviewPrompt());
-        Completion completion = promptLog.tap("review", client.provider())
-                .complete(built.prompt(), client.params())
-                .toCompletableFuture().join();
+    private void runReviewCall(GenerateReview command, ReviewMaterial material,
+                               ReconcileCall.Reconciliation reconciliation) {
+        WorkerLlmProvider.LlmClient client = material.client();
+        ReviewPromptBuilder.Built built = ReviewPromptBuilder.build(new ReviewPromptBuilder.ReviewInput(material.pr(),
+                        material.diff().files(), material.context(), reconciliation.exclusions()),
+                command.reviewPrompt(), client.limits());
+        Completion completion = PaidCalls.complete(promptLog.tap("review", client.provider()), client.params(),
+                new PaidCalls.Call(built.prompt(), built.size()));
 
-        ReviewResult parsed = FindingsParser.parse(completion);
-        // Carry the "diff was clipped to fit the budget" flag so a partial review is
-        // marked on the dashboard and the posted summary comment (not silent).
-        ReviewResult truncatedAware = built.truncated()
-                ? parsed.withTruncated(true)
-                : parsed;
-        ReconcileOutcome reconcile = reconciliation.outcome();
+        ReconcileCall.ReconcileOutcome reconcile = reconciliation.outcome();
+        ReviewResult parsed = ReviewClipping.apply(FindingsParser.parse(completion), built, reconcile);
         ReviewResult result = reconcile == null
-                ? truncatedAware
-                : ReconcileSteps.dropAnchorCollisions(truncatedAware, reconcile.verdicts());
+                ? parsed
+                : ReconcileSteps.dropAnchorCollisions(parsed, reconcile.verdicts());
 
         // Persist-then-emit (finding M2): marking first makes the paid call
         // unrepeatable; the serialized result keeps redelivery re-emittable
@@ -208,99 +191,14 @@ public class ReviewWorker {
     }
 
     /**
-     * The reconcile call (ADR-019): its own claim-guarded, paid LLM call judging each prior
-     * finding against the incremental diff (or the full diff on a compare failure) plus its
-     * thread transcript. Runs before the review call so a crash between the two replays cleanly.
-     *
-     * <p>The {@code RECONCILE_KEY} claim is checked FIRST, before any SCM call (ordering fix): a
-     * redelivery whose claim is already posted must never re-fetch the compare diff — that live
-     * call's result can legitimately differ from the first run's (a transient error, a blank
-     * result, different rename detection) and re-deriving fresh exclusions from it would carry OLD
-     * paths while the persisted verdicts carry the FIRST run's remapped NEW paths, a mixed state.
-     * The AlreadyPosted branch instead rebuilds the exclusion list from the PERSISTED verdicts via
-     * {@link #exclusionsFromPersisted}. Only the Post branch — a genuinely fresh reconcile — fetches
-     * the compare diff and remaps prior findings through its renames, exactly as before.
-     */
-    private Reconciliation reconcile(GenerateReview command, WorkerScmClients.Clients clients,
-                                     Diff diff, PriorRun prior, WorkerLlmProvider.LlmClient client) {
-        switch (idempotency.claim(command.reviewId(), command.commit(), RECONCILE_KEY)) {
-            case CommentIdempotencyStore.Claim.AlreadyPosted already -> {
-                ReconcileOutcome outcome = readReconcileOutcome(already.postedRef());
-                return new Reconciliation(exclusionsFromPersisted(outcome.verdicts(), prior.findings()), outcome);
-            }
-            case CommentIdempotencyStore.Claim.Post ignored -> { }
-        }
-        ReconcileSteps.ReviewAt at = new ReconcileSteps.ReviewAt(command.repo(), command.prId(), command.commit());
-        ReconcileSteps.Basis basis = ReconcileSteps.basis(clients.diff(), at, prior);
-        String incremental = basis.incrementalDiff();
-        List<PriorFinding> remapped = basis.remapped();
-        String diffText = incremental != null ? incremental : DiffRenderer.render(diff.files());
-        Map<String, ThreadTranscript> transcripts = ReconcileSteps.transcripts(clients.comments(), at, remapped);
-        Prompt prompt = ReconcilePrompt.render(remapped, transcripts, diffText,
-                incremental != null, command.reconcilePrompt());
-        Completion completion = promptLog.tap("reconcile", client.provider())
-                .complete(prompt, client.params())
-                .toCompletableFuture().join();
-        List<FindingVerdict> verdicts = ReconcileSteps.judge(completion.text(), remapped, incremental);
-        ReconcileOutcome outcome = new ReconcileOutcome(verdicts, completion.usage());
-        idempotency.markPosted(command.reviewId(), command.commit(), RECONCILE_KEY, writeReconcileOutcome(outcome));
-        return new Reconciliation(remapped, outcome);
-    }
-
-    /**
-     * The review call's exclusion list, rebuilt from a PERSISTED reconcile outcome instead of a
-     * fresh compare fetch (AlreadyPosted branch of {@link #reconcile}) — mirrors the proven
-     * technique in {@code ReviewProjection.stillOpenPriorFindings}. Each verdict is matched back to
-     * the ORIGINAL prior finding it judged (threadRef when both are non-null, else path+line
-     * against the original — a verdict's own path/line already reflect whatever rename the FIRST
-     * run followed) and rebuilt carrying the verdict's (fresher) path/line with the matched
-     * finding's severity/message/threadRef. A verdict with no match is skipped; a prior finding
-     * with no matching verdict at all is appended with its original fields (carried un-verdicted).
-     */
-    private static List<PriorFinding> exclusionsFromPersisted(List<FindingVerdict> verdicts,
-                                                              List<PriorFinding> priorFindings) {
-        boolean[] matched = new boolean[priorFindings.size()];
-        List<PriorFinding> exclusions = new ArrayList<>();
-        for (FindingVerdict v : verdicts) {
-            int idx = matchPriorFindingIndex(v, priorFindings);
-            if (idx >= 0) {
-                matched[idx] = true;
-                PriorFinding pf = priorFindings.get(idx);
-                exclusions.add(new PriorFinding(v.path(), v.line(), pf.severity(), pf.message(), pf.threadRef()));
-            }
-        }
-        for (int i = 0; i < priorFindings.size(); i++) {
-            if (!matched[i]) {
-                exclusions.add(priorFindings.get(i));
-            }
-        }
-        return exclusions;
-    }
-
-    /** threadRef match first (both non-null), else path+line; -1 when neither matches. */
-    private static int matchPriorFindingIndex(FindingVerdict v, List<PriorFinding> priorFindings) {
-        for (int i = 0; i < priorFindings.size(); i++) {
-            if (v.threadRef() != null && v.threadRef().equals(priorFindings.get(i).threadRef())) {
-                return i;
-            }
-        }
-        for (int i = 0; i < priorFindings.size(); i++) {
-            PriorFinding pf = priorFindings.get(i);
-            if (pf.path().equals(v.path()) && pf.line() == v.line()) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    /**
      * Redelivery of a completed LLM call: never pay twice, but always converge —
      * the original emit may not have reached the broker, so ReviewGenerated is
      * re-emitted from the result persisted at markPosted time (downstream is
      * idempotent by reviewId/commit). Legacy rows predating the persisted
      * payload were only marked after a successful emit, so skipping is safe.
      */
-    private void reEmitPersistedResult(GenerateReview command, String payload, ReconcileOutcome reconcile) {
+    private void reEmitPersistedResult(GenerateReview command, String payload,
+                                       ReconcileCall.ReconcileOutcome reconcile) {
         ReviewResult persisted = readResult(payload);
         if (persisted == null) {
             LOG.infof("Skipping GenerateReview for %s: LLM call already completed for %s",
@@ -328,26 +226,6 @@ public class ReviewWorker {
             return mapper.readValue(payload, ReviewResult.class);
         } catch (JsonProcessingException e) {
             return null;
-        }
-    }
-
-    private String writeReconcileOutcome(ReconcileOutcome outcome) {
-        try {
-            return mapper.writeValueAsString(outcome);
-        } catch (JsonProcessingException e) {
-            throw new UncheckedIOException(e);
-        }
-    }
-
-    /** @return the persisted reconcile outcome, or an empty/null one for a null or unreadable (legacy) blob. */
-    private ReconcileOutcome readReconcileOutcome(String payload) {
-        if (payload == null) {
-            return new ReconcileOutcome(List.of(), null);
-        }
-        try {
-            return mapper.readValue(payload, ReconcileOutcome.class);
-        } catch (JsonProcessingException e) {
-            return new ReconcileOutcome(List.of(), null);
         }
     }
 
@@ -732,8 +610,7 @@ public class ReviewWorker {
         StringBuilder sb = new StringBuilder();
         sb.append("### Code Spire review (`").append(commit).append("`)\n\n");
         if (review.truncated()) {
-            sb.append("> **Partial review:** this PR's diff exceeded the review budget and was ")
-                    .append("truncated — changes beyond the token limit were not reviewed.\n\n");
+            sb.append(PartialReviewNote.markdown(review.omittedFiles()));
         }
         sb.append(review.summary() == null ? "" : review.summary()).append('\n');
         if (!review.findings().isEmpty()) {

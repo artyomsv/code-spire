@@ -41,6 +41,7 @@ class WorkerLlmCredentialsDefaultPairTest {
     @Inject ObjectMapper mapper;
     @Inject AttentionBroadcaster attention;
     @Inject AppSettingRepository appSettings;
+    @Inject ReviewInputLimits inputLimits;
     @Inject DataSource dataSource;
 
     private String openaiModel;
@@ -72,6 +73,7 @@ class WorkerLlmCredentialsDefaultPairTest {
         credentials.models = models;
         credentials.encryption = encryption;
         credentials.mapper = mapper;
+        credentials.inputLimits = inputLimits; // pack reads the input limits: an unset field would NPE there
 
         DefaultLlm llm = credentials.resolveDefault(WORKSPACE);
 

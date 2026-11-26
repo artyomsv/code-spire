@@ -585,7 +585,7 @@ async function errorMessage(res: Response, fallback: string): Promise<string> {
 }
 
 /** Read the response body and throw a concise error (HTML pages collapse to status). */
-async function throwResponse(res: Response, fallback: string): Promise<never> {
+export async function throwResponse(res: Response, fallback: string): Promise<never> {
   throw new Error(await errorMessage(res, fallback));
 }
 

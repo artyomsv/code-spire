@@ -38,11 +38,7 @@ import java.util.UUID;
 @ApplicationScoped
 public class AttentionQueries {
 
-    /**
-     * Past this many affected reviews the remainder collapses into one summary row. Five is enough
-     * to act on individually while keeping a systemic outage from burying the BLOCKING rows that
-     * mean nothing works at all.
-     */
+    /** Past this many affected reviews the rest collapse into one row: an outage must not bury the BLOCKING rows. */
     private static final int MAX_REVIEW_ROWS = 5;
 
     @Inject
@@ -72,6 +68,9 @@ public class AttentionQueries {
     /** Where a missing price is fixed for a catalog model, and whether the catalog URL is stale. */
     @Inject
     LlmCatalogAttention catalogAttention;
+
+    @Inject
+    ReviewDiffLimitAttention diffLimitAttention;
 
     /** The LLM provider and model rows: a missing default, an unpriced or mismatched model, a provider off. */
     @Inject
@@ -105,6 +104,7 @@ public class AttentionQueries {
             credentialRows(c, rows);
             costRows(c, rows);
             catalogAttention.staleRow(rows);
+            diffLimitAttention.collect(rows);
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to evaluate attention conditions", e);
         }
@@ -122,9 +122,8 @@ public class AttentionQueries {
      * This row says it before any of that, and it is the repository's row rather than the deployment's,
      * because each repository chooses its own harness and model.
      *
-     * <p>Priceability comes from the same {@link LlmModelPricer} the dispatch consults, for the reason
-     * the default model's pricing row gives (LlmProviderAttentionRows): a second definition of "priced" could disagree with the gate that actually
-     * refuses the run.
+     * <p>Priceability comes from the {@link LlmModelPricer} the dispatch consults (LlmProviderAttentionRows): a
+     * second definition of "priced" could disagree with the gate that refuses the run.
      */
     private void buildDefaultsPricingRows(Connection c, List<AttentionView> rows) throws SQLException {
         record Setup(String repository, String harness, String model) {}

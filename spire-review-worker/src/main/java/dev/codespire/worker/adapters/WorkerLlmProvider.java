@@ -12,6 +12,7 @@ import dev.codespire.contract.llm.Prompt;
 import dev.codespire.contract.port.LlmProvider;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.encryption.EncryptionService;
+import dev.codespire.llm.DiffBudget;
 import dev.codespire.llm.LangChain4jLlmProvider;
 import dev.codespire.llm.LlmConfig;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -31,8 +32,20 @@ import java.util.concurrent.CompletionStage;
 @ApplicationScoped
 public class WorkerLlmProvider {
 
-    /** The provider + the per-call params (temperature/maxTokens) resolved from the credential. */
-    public record LlmClient(LlmProvider provider, ModelParams params) {
+    /**
+     * The provider, the per-call params (temperature/maxTokens) and the input limits resolved from the credential.
+     * The limits size a review's diff; {@link DiffBudget.Limits#UNKNOWN} keeps today's fixed budgets.
+     */
+    public record LlmClient(LlmProvider provider, ModelParams params, DiffBudget.Limits limits) {
+
+        public LlmClient {
+            limits = limits == null ? DiffBudget.Limits.UNKNOWN : limits;
+        }
+
+        /** No input limits: the stub, and tests that do not size a diff. */
+        public LlmClient(LlmProvider provider, ModelParams params) {
+            this(provider, params, DiffBudget.Limits.UNKNOWN);
+        }
     }
 
     @ConfigProperty(name = "spire.llm.provider", defaultValue = "registry")
@@ -103,7 +116,8 @@ public class WorkerLlmProvider {
         LlmProvider guarded = new CircuitBreakingLlmProvider(provider,
                 CircuitBreakingLlmProvider.hostFor(cred.baseUrl(), cred.type()), ProviderCircuits.shared());
         return new LlmClient(guarded,
-                new ModelParams(cred.model(), cred.temperature(), cred.maxTokens(), cred.profile()));
+                new ModelParams(cred.model(), cred.temperature(), cred.maxTokens(), cred.profile()),
+                new DiffBudget.Limits(cred.maxInputTokens(), cred.diffTokenCap()));
     }
 
     // Package-private, not private, so a test can supply a credential without standing up Tink:

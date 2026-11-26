@@ -43,6 +43,9 @@ public class WorkerLlmCredentials {
     @Inject
     RepositoryRegistry repositories;
 
+    @Inject
+    ReviewInputLimits inputLimits;
+
     /**
      * The encrypted default LLM credential bound to a workspace, or the reason it must not be spent.
      *
@@ -129,8 +132,11 @@ public class WorkerLlmCredentials {
             LOG.infof("LLM model '%s' resolved: outputTokenParam=%s, supportsTemperature=%s, reasoningEffort=%s",
                     model, profile.outputTokenParam(), profile.supportsTemperature(), profile.reasoningEffort());
         }
+        // Every pack site (review, reconcile, reply) carries the same limits; only REVIEW and RECONCILE size by them.
+        // A failed read of the Review diff limit packs the lowest limit (24,000), never none (PR 456).
+        ReviewInputLimits.Limits limits = inputLimits.forModel(model, cfg.maxTokens());
         LlmCredential cred = new LlmCredential(cfg.type(), cfg.baseUrl(), cfg.apiKey(),
-                model, cfg.temperature(), cfg.maxTokens(), profile);
+                model, cfg.temperature(), cfg.maxTokens(), profile, limits.maxInputTokens(), limits.diffTokenCap());
         try {
             return encryption.encryptString(mapper.writeValueAsString(cred), LlmCredential.aad(workspace));
         } catch (JsonProcessingException e) {

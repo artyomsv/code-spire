@@ -1,10 +1,15 @@
 package dev.codespire.orchestrator.llm;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.ReviewIds;
+import dev.codespire.contract.llm.LlmCredential;
+import dev.codespire.encryption.EncryptionService;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.repository.RepositoryInput;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
+import dev.codespire.orchestrator.settings.AppSettingRepository;
+import dev.codespire.orchestrator.settings.ReviewDiffLimit;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterEach;
@@ -20,6 +25,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -40,6 +46,10 @@ class WorkerLlmCredentialsTest {
     @Inject RepositoryRegistry repositories;
     @Inject ReviewProjection reviews;
     @Inject DataSource dataSource;
+    @Inject ReviewDiffLimit diffLimit;
+    @Inject AppSettingRepository settings;
+    @Inject EncryptionService encryption;
+    @Inject ObjectMapper mapper;
 
     private final List<UUID> createdProviders = new ArrayList<>();
     private String workspace;
@@ -167,6 +177,46 @@ class WorkerLlmCredentialsTest {
 
         assertTrue(llm.isSpendable(), "a switched-off chosen model still runs: " + llm.detail());
         assertEquals(off, llm.model());
+    }
+
+    /**
+     * Review input limit: the Review diff limit rides the packed credential, and a manual model, which has no window
+     * in the catalog, packs none (the worker keeps today's budgets).
+     */
+    @Test
+    void theReviewDiffLimitRidesTheCredential() throws Exception {
+        diffLimit.set(90_000);
+        try {
+            DefaultLlm llm = credentials.resolveForReview(reviewOn(repository(null, null)));
+
+            LlmCredential packed = mapper.readValue(
+                    encryption.decryptString(llm.packed(), LlmCredential.aad(workspace)), LlmCredential.class);
+            assertEquals(90_000, packed.diffTokenCap());
+            assertNull(packed.maxInputTokens(), "a manual model has no context window");
+        } finally {
+            diffLimit.set(null);
+        }
+    }
+
+    /**
+     * PR 456, code-quality/M-5: an invalid stored limit packs the lowest limit, never none and never a refusal: a
+     * 24,000-token diff cap. With a known window a RECONCILE may then get up to 24,000, more than its old 12,000
+     * (DiffBudgetTest: theSettingNeverLowersTheBudgetUnderTheDefault,
+     * theSettingAtTheReviewMinimumLeavesAReconcileAtItsOwnDefaultOrMore).
+     */
+    @Test
+    void anInvalidStoredLimitPacksTheLowestLimit() throws Exception {
+        settings.set(ReviewDiffLimit.KEY, "TEST-abc");
+        try {
+            DefaultLlm llm = credentials.resolveForReview(reviewOn(repository(null, null)));
+
+            assertTrue(llm.isSpendable(), "an invalid limit never blocks a review");
+            LlmCredential packed = mapper.readValue(
+                    encryption.decryptString(llm.packed(), LlmCredential.aad(workspace)), LlmCredential.class);
+            assertEquals(ReviewDiffLimit.MIN_TOKENS, packed.diffTokenCap());
+        } finally {
+            diffLimit.set(null);
+        }
     }
 
     // ---- fixture -------------------------------------------------------------

@@ -2671,3 +2671,90 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   repository's "Start review" to "Immediately" and press Re-run on each review still "Waiting for checks" (a re-run on
   "Immediately" starts at once), or let the waits end (at most 65 minutes). Not yet run live: see the
   docs/UNVERIFIED.md entry.
+
+- **Review input limit: the whole diff up to the model's window (2026-11-26, branch `feat/review-input-limit`, Part
+  of #391).** An API review sent at most 24,000 estimated tokens of diff (12,000 on a re-review's reconcile) and
+  posted the rest as a "Partial review", while the catalog's models take about a million tokens; the operator asked
+  for the whole diff. The orchestrator now packs two nullable limits on the `LlmCredential`: `maxInputTokens`, the
+  model's catalog `contextWindow` minus the output cap the call really sends (the provider's max tokens, else
+  `ModelParams.DEFAULT_MAX_OUTPUT_TOKENS`, 16,384, moved there from `LangChain4jLlmProvider`), read from the catalog
+  entry of the model's name or alias even when a manual model shadows it, and null only when the catalog has no entry
+  or window for it; and `diffTokenCap`, the new **Review diff limit** (Settings → General, admin only, app setting
+  `review.diff-limit-tokens`, 24,000 to 2,000,000, empty means as much as the window allows). The worker sizes the
+  diff with one pure function (`DiffBudget`): an unknown window keeps today's budgets; a known one gives the diff 75%
+  of the input limit less the rest of the prompt (split per use of `{{diff}}`), never less than today's budget unless
+  the window cannot hold that, and the setting lowers it but never under today's budget. A window with no room fails
+  the review, by name, with no call. A REVIEW diff is cut at file boundaries: a file that does not fit is skipped and
+  later files still go in, and only when no whole file fits is the first clipped inside. A RECONCILE keeps line
+  clipping, recovers the files the cut reached from the diff text, and keeps every finding on such a file UNCHANGED.
+  `ReviewResult` gains `omittedFiles` (with a wither), the posted "Partial review" note and the dashboard note list up
+  to 20 of them and count the rest, and a clipped reconcile now marks the review partial too (it did not before).
+  `PromptRenderer` reports which variables were clipped, so a clipped context alone names no files. A model call's
+  timeout is now 600 s by default, and a timeout of a call that sent more diff than today's budget is not retried
+  (each attempt re-sends the whole prompt and may be billed); a small call's still is. FOLLOWUP replies and harness
+  reviews are unchanged. Long-context price tiers are not modelled, so a call above them is under-charged
+  (docs/UNVERIFIED.md). Live-proven on the dev stack on 2026-11-26 (`spire-test` #111 and #112, Claude Haiku 5.5 on an
+  API key) for a first review and one re-review; the live test found that a manual model row hid the catalog window,
+  fixed in the same PR. Other paths are listed in docs/UNVERIFIED.md.
+
+  **Upgrading.** No migration (no table or column is added), and any order is safe. A failed read of the
+  `review.diff-limit-tokens` row and a stored value outside 24,000 to 2,000,000 both review with a 24,000-token diff
+  cap and a WARN; the review is never held and never sent uncapped (review round 2 below). An older worker ignores the two credential fields and keeps
+  today's budgets, a newer worker reads a credential without them as today's budgets, and `omittedFiles` is ignored
+  by an older reader and read as empty from an older result. The review worker's defaults change:
+  `SPIRE_LLM_TIMEOUT_SECONDS` 180 → 600 and `SPIRE_KAFKA_ACK_MAX_AGE_MS` 900000 → 1800000, so `LlmTimeoutBudget`
+  still passes (two calls of 600 s plus 300 s of other work). A deployment that set either by hand keeps its value;
+  one that set the timeout to 600 must raise the ack threshold above 1,500,000 too, or the worker refuses to start.
+  To stay below the long-context price tiers until they are priced, set the Review diff limit to about 60,000: the limit caps only the diff, the other prompt parts add about 14,000 tokens on top, and the estimate can run low on dense text.
+
+  **Review round 1 (PR 456).** A review of the branch found ten things, all fixed on it. (1) LangChain4j retried a
+  timeout, a 429 and a 5xx twice inside one call by default, so a large prompt could be sent three times and one call
+  could take three timeouts while `LlmTimeoutBudget` counted one: the three client factories now set
+  `maxRetries(0)` (`LangChain4jLlmProvider.SDK_MAX_RETRIES`), the budget counts `1 + SDK_MAX_RETRIES` attempts per call,
+  and `LlmSdkRetriesTest` counts the HTTP requests against a WireMock stub. A transient failure of a review call is
+  still retried, by the orchestrator's retry budget (the worker reports it retryable); a reply's by its own in-worker
+  attempts. (2) A partial review (`truncated`, or `omittedFiles` named) never posts Approve and is never labelled
+  `review: approved`: it posts a Comment, or Request changes when something blocks (`ReviewVerdictDecision`,
+  `partial_review` in the timeline). (3) A clipped reconcile now judges only files it positively saw whole
+  (`DiffCoverage`); any other file, including one the parser could not read, keeps its finding UNCHANGED, and
+  `UnifiedDiffParser` now decodes Git's C-quoted paths (a file whose path has a non-ASCII byte, a quote or a backslash
+  was dropped from every diff before). (4) The Review diff limit is read strictly when a credential is packed: a
+  failed read never reads as unset, so no review is sent uncapped (round 2 below says what happens instead). (5) The
+  diff budget reserves the fence around each use of `{{diff}}`. (6) The field is named by its label for assistive
+  technology, its help says 60,000 and that the cap is on the diff only, and the API calls live in
+  `reviewDiffLimitApi.ts`. (7) New methods take at most three parameters and no boolean flag (`PromptSize`,
+  `DiffBasis`, input records), and the reconcile call moved to `ReconcileCall` so `ReviewWorker`, `ResultSaga` and
+  `LlmModelRegistry` are no larger than before the branch.
+
+  **Upgrading, round 1.** Still no migration, and any order is safe. Three behaviours change on upgrade. A review whose
+  diff was clipped no longer approves, so a repository that relied on the bot's Approve for a large pull request gets a
+  Comment until it raises or clears the Review diff limit. A transient 429 or 5xx on any model call is no longer retried
+  inside the call: a review fails as retryable and is re-run after the review retry delay, and a reply retries after its
+  own backoff. (Round 2 replaced round 1's rule that a row `review.diff-limit-tokens` outside the range stops every API
+  review; see below.)
+
+  **Review round 2 (PR 456).** Three findings, all fixed on the branch. (1) A failed read of the Review diff limit while
+  a credential is packed no longer dead-letters `ContextAssembled` and leaves the review `reviewing`: `ReviewDiffLimit`
+  reads the fault as the documented conservative bound, 24,000, exactly as an invalid row, logs a WARN (the key, no
+  value) and the review goes on, for REVIEW, RECONCILE and FOLLOWUP alike. Rounds 2 to 4 tried a saga retry, then a
+  compare-and-set on the attempt, then a time-bounded deferral table (V122); each left a redelivery or interruption
+  the recovery state got wrong, and round 5 removed all of it (V122 never reached master, so its file is deleted).
+  With no recovery state there is nothing to get wrong, and the operator's cap is never lifted. A failed read raises
+  no attention row: the rows are derived from the same database that just failed. (2) A stored value that is not a whole number from 24,000
+  to 2,000,000 no longer blocks reviews: it packs as 24,000, a 24,000-token diff cap (with a known window a RECONCILE
+  may then get up to 24,000, more than its old 12,000), with a WARN naming the key (the value quoted to 40
+  characters) and a `DIFF_LIMIT_INVALID` attention row pointing at Settings → General.
+  `GET /api/settings/review-diff-limit` returns `{limitTokens: null, invalidStoredValue: true}` for it; the form
+  says "The stored value is invalid; save to clear it or enter a new limit", and a blank Save then sends
+  `PUT {limitTokens: null}`, which deletes the row. (3) The methods the branch added or grew are at most 30 lines
+  (`ReviewWorker.generateReview` is 40, below its 46 before the branch).
+  CI proves these with `WorkerLlmCredentialsLimitFaultTest` (a failed read and an invalid row pack 24,000, no row
+  packs none), `ReviewInputLimitsTest`, `WorkerLlmCredentialsTest` (an invalid row packs 24,000, real database),
+  `ReviewDiffLimitReadTest`, `ReviewDiffLimitResourceTest`, `ReviewDiffLimitAttentionTest` and the General form test
+  that clears an invalid row. No live database fault has been injected.
+
+  **Upgrading, round 2.** No migration. A row `review.diff-limit-tokens` edited by hand to something outside the
+  range now reviews with a 24,000-token diff cap and raises `DIFF_LIMIT_INVALID` until it is saved again in Settings →
+  General (blank clears it); `SELECT value FROM app_setting WHERE key = 'review.diff-limit-tokens';` shows it. A
+  failed read of that row caps the review at 24,000 too, with a WARN `app_setting review.diff-limit-tokens could not
+  be read` in the orchestrator log and no attention row.

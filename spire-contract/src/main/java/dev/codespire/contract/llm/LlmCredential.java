@@ -7,21 +7,34 @@ package dev.codespire.contract.llm;
  * this record, and encrypts it; the worker decrypts it to build the model per
  * command. Never logged.
  *
- * @param type        provider type — {@code openai}, {@code anthropic}, or {@code gemini}
- * @param baseUrl     API base URL
- * @param apiKey      the API key (decrypted only inside the worker)
- * @param model       the model name
- * @param temperature sampling temperature
- * @param maxTokens   max output tokens, or {@code null} for the provider default
- * @param profile     the model's API parameter dialect (never null)
+ * <p>The two input limits size a review's diff (review input limit design, 2026-11-26). Both are null on a
+ * credential packed before they existed, and the worker reads null as "today's fixed budgets".
+ *
+ * @param type           provider type — {@code openai}, {@code anthropic}, or {@code gemini}
+ * @param baseUrl        API base URL
+ * @param apiKey         the API key (decrypted only inside the worker)
+ * @param model          the model name
+ * @param temperature    sampling temperature
+ * @param maxTokens      max output tokens, or {@code null} for the provider default
+ * @param profile        the model's API parameter dialect (never null)
+ * @param maxInputTokens the model's context window minus the output cap the call sends, or {@code null} when the
+ *                       catalog has no window for the model (a manual model, an unknown one)
+ * @param diffTokenCap   the operator's Review diff limit in tokens, or {@code null} when it is not set
  */
 public record LlmCredential(String type, String baseUrl, String apiKey, String model,
-                            double temperature, Integer maxTokens, ModelParamProfile profile) {
+                            double temperature, Integer maxTokens, ModelParamProfile profile,
+                            Integer maxInputTokens, Integer diffTokenCap) {
 
     public LlmCredential {
         if (profile == null) {
             profile = ModelParamProfile.legacyDefault();
         }
+    }
+
+    /** Convenience: no input limits, so the worker keeps the fixed prompt budgets. */
+    public LlmCredential(String type, String baseUrl, String apiKey, String model,
+                         double temperature, Integer maxTokens, ModelParamProfile profile) {
+        this(type, baseUrl, apiKey, model, temperature, maxTokens, profile, null, null);
     }
 
     /** Convenience: the classic Chat Completions dialect (max_tokens + temperature). */

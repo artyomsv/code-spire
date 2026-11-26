@@ -54,7 +54,8 @@ final class ReviewPostSettings {
     /**
      * ADR-047 D4: decided here because the projection's open count at the repository's "Block approval at"
      * (V115) is what the land gate reads, and it is already right at this point (recordOpenFindings ran first).
-     * An unknown repository counts at BLOCKER. A review that started before its checks finished never approves.
+     * An unknown repository counts at BLOCKER. A review that started before its checks finished never approves, nor
+     * does one that did not see its whole diff (PR 456).
      */
     ReviewVerdictDecision.Decision decide(ReviewGenerated generated, ReviewResult visible) {
         String reviewId = generated.reviewId();
@@ -66,11 +67,12 @@ final class ReviewPostSettings {
                 .orElse(false);
         ReviewVerdictDecision.Decision decision = ReviewVerdictDecision.decide(new ReviewVerdictDecision.VerdictFacts(
                 visible.degraded(), sources.projection().openBlocking(reviewId, level), level, setting, identityKnown));
-        return switch (ciHold(generated)) {
+        ReviewVerdictDecision.Decision held = switch (ciHold(generated)) {
             case NONE -> decision;
             case UNFINISHED, UNREADABLE -> ReviewVerdictDecision.holdForUnfinishedChecks(decision);
             case UNCONFIRMED -> ReviewVerdictDecision.holdForUnconfirmedChecks(decision);
         };
+        return ReviewVerdictDecision.isPartial(visible) ? ReviewVerdictDecision.holdForPartialReview(held) : held;
     }
 
     /** The result as posted: a review started before its checks finished says so ahead of its summary. */
@@ -88,14 +90,15 @@ final class ReviewPostSettings {
     /**
      * The repository's "Verdict labels" (V120); off for an unknown repository. The worker labels from the assessment,
      * as before V121 (ADR-047: "Reviewer may approve" off still labels approved). An approving review that started
-     * before its checks finished, or whose run cannot be identified, sends no label command, so no
-     * {@code review: approved} reaches a review that does not approve; a blocking one still labels
-     * {@code review: changes-requested}, which an unfinished build does not weaken.
+     * before its checks finished, whose run cannot be identified, or that did not see its whole diff (PR 456) sends no
+     * label command, so no {@code review: approved} reaches a review that does not approve; a blocking one still
+     * labels {@code review: changes-requested}, which an unfinished build or a partial review does not weaken.
      */
     boolean verdictLabels(ReviewGenerated generated, ReviewVerdictDecision.Decision decision) {
         boolean on = sources.projection().repositoryIdOf(generated.reviewId())
                 .flatMap(id -> sources.repositories().verdictLabels(id)).orElse(false);
-        return on && !(decision.assessment() == ReviewVerdict.APPROVE && ciHold(generated) != CiHold.NONE);
+        boolean approvalHeld = ciHold(generated) != CiHold.NONE || ReviewVerdictDecision.isPartial(generated.result());
+        return on && !(decision.assessment() == ReviewVerdict.APPROVE && approvalHeld);
     }
 
     /**

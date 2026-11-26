@@ -90,7 +90,7 @@ spire:
     # How long one model call may take. Not a credential, so unlike everything else under spire.llm
     # it defaults. Coupled to the commands-in ack threshold below and validated against it at
     # startup by LlmTimeoutBudget — raising this without raising that stalls the whole worker.
-    timeout-seconds: ${SPIRE_LLM_TIMEOUT_SECONDS:180}
+    timeout-seconds: ${SPIRE_LLM_TIMEOUT_SECONDS:600}
   review:
     # Writes the fully rendered prompt (system + user, including the fenced context slot) to the log
     # before each model call. OFF by default, and that is a security decision: a rendered prompt
@@ -130,7 +130,7 @@ mp:
         # LlmTimeoutBudget refuses to start when it does not.
         throttled:
           unprocessed-record-max-age:
-            ms: ${SPIRE_KAFKA_ACK_MAX_AGE_MS:900000}
+            ms: ${SPIRE_KAFKA_ACK_MAX_AGE_MS:1800000}
         # A record ages from when it is POLLED, not from when processing starts, so the threshold
         # above is only sound if the number of records the connector may hold ahead of the ordered,
         # blocking dispatcher is bounded. At the defaults (500 per poll, doubled for the queue) a

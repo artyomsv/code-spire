@@ -15,6 +15,7 @@ import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.contract.scm.ThreadTranscript;
 import dev.codespire.diff.UnifiedDiffParser;
+import dev.codespire.llm.DiffCoverage;
 import dev.codespire.llm.VerdictsParser;
 import org.jboss.logging.Logger;
 
@@ -96,6 +97,23 @@ final class ReconcileSteps {
     /** The answer's verdicts against the numbered findings (an id outside them is dropped), then the backstop. */
     static List<FindingVerdict> judge(String answerText, List<PriorFinding> numbered, String incrementalDiff) {
         return downgradeUntouched(VerdictsParser.parse(answerText, numbered), incrementalDiff);
+    }
+
+    /**
+     * A clipped reconcile judges only what it saw: a verdict on a file the model did not positively see whole becomes
+     * UNCHANGED whatever the answer said, keeping its thread, place and note. A reconcile must never resolve, or
+     * reopen, what it could not see; a file the diff parser could not read counts as unseen (PR 456, H-3).
+     */
+    static List<FindingVerdict> unchangedWhereUnseen(List<FindingVerdict> verdicts, DiffCoverage coverage) {
+        if (!coverage.isClipped()) {
+            return verdicts;
+        }
+        return verdicts.stream()
+                .map(v -> coverage.sawWhole(v.path()) || v.status() == FindingVerdict.Status.UNCHANGED
+                        ? v
+                        : new FindingVerdict(v.threadRef(), v.path(), v.line(), FindingVerdict.Status.UNCHANGED,
+                                v.note()))
+                .toList();
     }
 
     /**

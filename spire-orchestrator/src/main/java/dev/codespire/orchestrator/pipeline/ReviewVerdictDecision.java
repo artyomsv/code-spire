@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.pipeline;
 
+import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.ReviewVerdict;
 import dev.codespire.orchestrator.repository.BlockApprovalAt;
 
@@ -19,6 +20,7 @@ public final class ReviewVerdictDecision {
     public static final String REASON_IDENTITY_UNKNOWN = "reviewer_identity_unknown";
     public static final String REASON_CHECKS_UNFINISHED = "checks_unfinished";
     public static final String REASON_CHECKS_UNCONFIRMED = "checks_unconfirmed";
+    public static final String REASON_PARTIAL = "partial_review";
 
     public record Decision(ReviewVerdict assessment, ReviewVerdict verdict, boolean mayApprove, String reason) {
         /** The timeline line: what is posted, what the findings said, and why they differ when they do. */
@@ -89,6 +91,25 @@ public final class ReviewVerdictDecision {
     private static Decision heldForChecks(Decision decision, String hold) {
         String reason = decision.reason() == null ? hold : decision.reason() + " · " + hold;
         return new Decision(decision.assessment(), ReviewVerdict.COMMENT, false, reason);
+    }
+
+    /**
+     * A review that did not see its whole diff never approves (review input limit, PR 456): files were skipped or cut
+     * ({@code omittedFiles}), or some input was clipped ({@code truncated}, all an older result says). An approving
+     * assessment is posted as a Comment; a blocking one still requests changes, since a partial review can only
+     * understate what blocks. The assessment is kept, as for the CI holds.
+     */
+    public static Decision holdForPartialReview(Decision decision) {
+        if (decision.assessment() != ReviewVerdict.APPROVE) {
+            return decision;
+        }
+        String reason = decision.reason() == null ? REASON_PARTIAL : decision.reason() + " · " + REASON_PARTIAL;
+        return new Decision(decision.assessment(), ReviewVerdict.COMMENT, false, reason);
+    }
+
+    /** Whether the review saw less than its whole input: the rule {@link #holdForPartialReview} applies to. */
+    public static boolean isPartial(ReviewResult result) {
+        return result.truncated() || !result.omittedFiles().isEmpty();
     }
 
     /** Why the bot may not change merge state here; null when it may. */

@@ -45,6 +45,16 @@ class WorkerLlmProviderTest {
         assertFalse(client.params().profile().supportsTemperature());
     }
 
+    /** The brokered input limits size the review's diff; dropping them here would quietly restore today's budgets. */
+    @Test
+    void clientForCarriesTheInputLimits() {
+        var cred = new LlmCredential("openai", "https://api.openai.com/v1", "sk-test", "gpt-4o", 0.2, null,
+                ModelParamProfile.legacyDefault(), 983_616, 90_000);
+        WorkerLlmProvider.LlmClient client = new WorkerLlmProvider().clientFor(cred, LlmConfig.DEFAULT_TIMEOUT);
+        assertEquals(983_616, client.limits().maxInputTokens());
+        assertEquals(90_000, client.limits().diffTokenCap());
+    }
+
     @Test
     void credentialProfileSurvivesTheJsonWireRoundTrip() throws Exception {
         // The credential is JSON-serialized, encrypted, brokered, then read back in the

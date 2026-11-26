@@ -17,6 +17,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ReviewPromptBuilderTest {
@@ -142,6 +143,75 @@ class ReviewPromptBuilderTest {
                 PR.description(), PR.sourceBranch(), PR.targetBranch(), PR.headCommit(), PR.author(), PR.htmlUrl());
         ReviewPromptBuilder.Built built = ReviewPromptBuilder.build(evil, UnifiedDiffParser.parse(DIFF), List.of());
         assertTrue(built.prompt().user().contains("END_UNTRUSTED-DATA"), "neutralized");
+    }
+
+    // ---- review input limit (design 2026-11-26) ----
+
+    /** About 19,000 estimated tokens per file, two files: the first fits today's 24,000, the second does not. */
+    private static final String LARGE_DIFF = DiffSelectionTest.fileDiff("src/TEST-a.java", 3_000)
+            + DiffSelectionTest.fileDiff("src/TEST-b.java", 3_000);
+
+    @Test
+    void aKnownLargeWindowSendsTheWholeDiff() {
+        ReviewPromptBuilder.Built built = ReviewPromptBuilder.build(input(LARGE_DIFF), null,
+                new DiffBudget.Limits(983_616, null));
+
+        assertFalse(built.truncated(), "a model that can hold the diff gets all of it");
+        assertTrue(built.omittedFiles().isEmpty());
+        assertEquals(PromptSize.LARGE, built.size(), "a budget above today's marks the call large");
+    }
+
+    @Test
+    void anUnknownWindowKeepsTodaysBudgetAndNamesWhatItLeftOut() {
+        ReviewPromptBuilder.Built built = ReviewPromptBuilder.build(PR, UnifiedDiffParser.parse(LARGE_DIFF), List.of());
+
+        assertTrue(built.truncated());
+        assertEquals(List.of("src/TEST-b.java"), built.omittedFiles(), "the first file fits, the second is skipped");
+        assertEquals(PromptSize.WITHIN_DEFAULT, built.size());
+    }
+
+    @Test
+    void theSettingCapsTheDiffAndTheCapIsNamed() {
+        ReviewPromptBuilder.Built built = ReviewPromptBuilder.build(input(LARGE_DIFF), null,
+                new DiffBudget.Limits(983_616, 24_000));
+
+        assertEquals(List.of("src/TEST-b.java"), built.omittedFiles());
+        assertEquals(PromptSize.WITHIN_DEFAULT, built.size(), "capped at today's budget, a timeout is retried as today");
+    }
+
+    @Test
+    void aClippedContextAloneIsPartialButNamesNoFiles() {
+        ContextItem chatty = new ContextItem("JIRA_TICKET", "TEST-1", "TEST ".repeat(20_000), null);
+
+        ReviewPromptBuilder.Built built = ReviewPromptBuilder.build(PR, UnifiedDiffParser.parse(DIFF), List.of(chatty));
+
+        assertTrue(built.truncated(), "a clipped context still makes the review partial");
+        assertTrue(built.omittedFiles().isEmpty(), "but every changed file was seen");
+    }
+
+    @Test
+    void aDiffNamedTwiceIsCountedTwice() {
+        // 200,000-token input limit: once, the diff may use about 150,000 less the rest; twice, half that per use.
+        String big = DiffSelectionTest.fileDiff("src/TEST-big.java", 15_000); // about 104,000 tokens
+        PromptTemplate once = new PromptTemplate(PromptKind.REVIEW, "persona", "{{diff}}");
+        PromptTemplate twice = new PromptTemplate(PromptKind.REVIEW, "persona", "{{diff}}\n{{diff}}");
+        DiffBudget.Limits limits = new DiffBudget.Limits(200_000, null);
+
+        assertTrue(ReviewPromptBuilder.build(input(big), once, limits)
+                .omittedFiles().isEmpty());
+        assertEquals(List.of("src/TEST-big.java"),
+                ReviewPromptBuilder.build(input(big), twice, limits)
+                        .omittedFiles());
+    }
+
+    @Test
+    void aWindowWithNoRoomForADiffRefuses() {
+        assertThrows(DiffBudget.NoRoomForDiff.class, () -> ReviewPromptBuilder.build(input(DIFF), null,
+                new DiffBudget.Limits(100, null)));
+    }
+
+    private static ReviewPromptBuilder.ReviewInput input(String diff) {
+        return new ReviewPromptBuilder.ReviewInput(PR, UnifiedDiffParser.parse(diff), List.of(), List.of());
     }
 
     private static int count(String haystack, String needle) {

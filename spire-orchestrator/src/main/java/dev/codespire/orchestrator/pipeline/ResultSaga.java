@@ -583,12 +583,9 @@ public class ResultSaga {
                     + "— findings beyond the cut were never produced. Re-run it; if it repeats, raise "
                     + "the model's output cap.";
         }
-        if (result.truncated()) {
-            return "Diff exceeded the review budget — partial review "
-                    + "(changes beyond the token limit were not reviewed).";
-        }
-        return null;
+        return PartialReviewSentence.of(result);
     }
+
     /**
      * Bounded auto-retry (C8). A retryable failure with budget left restarts the
      * pipeline from FetchDiff (same as a manual re-push, but automatic and

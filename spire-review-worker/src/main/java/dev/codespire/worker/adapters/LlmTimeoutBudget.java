@@ -1,5 +1,6 @@
 package dev.codespire.worker.adapters;
 
+import dev.codespire.llm.LangChain4jLlmProvider;
 import dev.codespire.llm.LlmConfig;
 import io.quarkus.runtime.StartupEvent;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -45,6 +46,16 @@ public class LlmTimeoutBudget {
      * {@code GenerateReview}, so an ack budget sized for one of them stalls on the other.
      */
     static final int LLM_CALLS_PER_COMMAND = 2;
+
+    /**
+     * HTTP attempts one paid call makes: the first, plus the retries the client library makes inside it. Derived
+     * from {@link LangChain4jLlmProvider#SDK_MAX_RETRIES} rather than written here, so turning the library's retries
+     * back on raises what a command needs instead of silently outgrowing the ack threshold (PR 456: the library's
+     * default of two retries made one call up to three timeouts long, which this check did not count). The
+     * provider's one-off resend without {@code temperature} follows an immediate refusal, not a timeout, so it adds
+     * no timeout here.
+     */
+    static final int ATTEMPTS_PER_CALL = 1 + LangChain4jLlmProvider.SDK_MAX_RETRIES;
 
     /**
      * Everything in a command that is not a model call: the PR and diff fetches, one thread fetch per
@@ -112,7 +123,12 @@ public class LlmTimeoutBudget {
 
     /** What one record may cost between being polled and being acknowledged. */
     static long needed(int timeoutSeconds, int inFlightRecords) {
-        return ((long) timeoutSeconds * 1000L * LLM_CALLS_PER_COMMAND + NON_LLM_OVERHEAD_MS)
+        return needed(timeoutSeconds, inFlightRecords, ATTEMPTS_PER_CALL);
+    }
+
+    /** As {@link #needed(int, int)} for a client making {@code attemptsPerCall} HTTP attempts per call. */
+    static long needed(int timeoutSeconds, int inFlightRecords, int attemptsPerCall) {
+        return ((long) timeoutSeconds * 1000L * LLM_CALLS_PER_COMMAND * attemptsPerCall + NON_LLM_OVERHEAD_MS)
                 * inFlightRecords;
     }
 
@@ -142,8 +158,8 @@ public class LlmTimeoutBudget {
         return "mp.messaging.incoming.commands-in.throttled.unprocessed-record-max-age.ms is "
                 + ackMaxAgeMs + "ms, which does not exceed the " + needed + "ms a record may spend "
                 + "between being polled and being acknowledged (" + inFlightRecords + " record(s) in "
-                + "flight, each up to " + LLM_CALLS_PER_COMMAND + " LLM call(s) at "
-                + "spire.llm.timeout-seconds=" + timeoutSeconds + ", plus " + NON_LLM_OVERHEAD_MS
+                + "flight, each up to " + LLM_CALLS_PER_COMMAND + " LLM call(s) of " + ATTEMPTS_PER_CALL
+                + " attempt(s) at spire.llm.timeout-seconds=" + timeoutSeconds + ", plus " + NON_LLM_OVERHEAD_MS
                 + "ms of fetches, retries and posting). A review that takes its full budget would go "
                 + "unacknowledged, fail the commands-in channel, and stall every later command until "
                 + "the consumer group is seeked past it. Raise SPIRE_KAFKA_ACK_MAX_AGE_MS above "

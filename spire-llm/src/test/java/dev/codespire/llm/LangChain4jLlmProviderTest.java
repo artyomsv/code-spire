@@ -108,7 +108,7 @@ class LangChain4jLlmProviderTest {
 
         provider.complete(PROMPT, PARAMS).toCompletableFuture().join(); // PARAMS has maxTokens == null
 
-        assertEquals(LangChain4jLlmProvider.DEFAULT_MAX_OUTPUT_TOKENS, captured.get().maxOutputTokens());
+        assertEquals(ModelParams.DEFAULT_MAX_OUTPUT_TOKENS, captured.get().maxOutputTokens());
         assertEquals(0.2, captured.get().temperature());
     }
 
@@ -148,7 +148,7 @@ class LangChain4jLlmProviderTest {
         var params = LangChain4jLlmProvider.requestParameters(new ModelParams("gpt-4o", 0.2, null, profile));
 
         assertEquals("flex", params.customParameters().get("service_tier"));
-        assertEquals(LangChain4jLlmProvider.DEFAULT_MAX_OUTPUT_TOKENS, params.maxOutputTokens(),
+        assertEquals(ModelParams.DEFAULT_MAX_OUTPUT_TOKENS, params.maxOutputTokens(),
                 "unset cap still enforces the default output cap");
     }
 
@@ -205,7 +205,7 @@ class LangChain4jLlmProviderTest {
     @Test
     void nativeParametersDefaultTheCapWhenUnset() {
         var p = LangChain4jLlmProvider.nativeParameters(new ModelParams("gemini-pro", 0.2, null));
-        assertEquals(LangChain4jLlmProvider.DEFAULT_MAX_OUTPUT_TOKENS, p.maxOutputTokens());
+        assertEquals(ModelParams.DEFAULT_MAX_OUTPUT_TOKENS, p.maxOutputTokens());
     }
 
     @Test
@@ -292,6 +292,6 @@ class LangChain4jLlmProviderTest {
         // Pinned to the literal on purpose. Every other test compares against the constant, so a
         // revert to 4096 — the exact regression this exists to prevent, where two models each spent
         // the whole budget thinking and returned nothing — would leave them all green.
-        assertEquals(16384, LangChain4jLlmProvider.DEFAULT_MAX_OUTPUT_TOKENS);
+        assertEquals(16384, ModelParams.DEFAULT_MAX_OUTPUT_TOKENS);
     }
 }

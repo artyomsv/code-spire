@@ -28,6 +28,31 @@ public class AppSettingRepository {
 
     /** The stored value for a key, or empty when unset (the caller falls back to its default). */
     public Optional<String> get(String key) {
+        try {
+            return getStrictly(key);
+        } catch (ReadFailed e) {
+            // A settings read must never break a caller (e.g. the review pipeline) —
+            // fall back to empty so the caller uses its default.
+            LOG.warnf(e.getCause(), "app_setting read failed for '%s'", key);
+            return Optional.empty();
+        }
+    }
+
+    /** A read of {@code app_setting} that failed in the database; retryable, as any database fault is. */
+    public static final class ReadFailed extends IllegalStateException {
+        public ReadFailed(String key, SQLException cause) {
+            super("app_setting read failed for '" + key + "'", cause);
+        }
+    }
+
+    /**
+     * The stored value, or empty when unset, telling a failed read apart: a database fault throws instead of reading
+     * as unset. For a setting whose absence lifts a limit, where "unset" is the expensive answer (the Review diff
+     * limit, PR 456, which reads a fault as its lowest limit).
+     *
+     * @throws ReadFailed wrapping the {@link SQLException} when the read fails
+     */
+    public Optional<String> getStrictly(String key) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("SELECT value FROM app_setting WHERE key = ?")) {
             ps.setString(1, key);
@@ -35,10 +60,7 @@ public class AppSettingRepository {
                 return rs.next() ? Optional.ofNullable(rs.getString("value")) : Optional.empty();
             }
         } catch (SQLException e) {
-            // A settings read must never break a caller (e.g. the review pipeline) —
-            // fall back to empty so the caller uses its default.
-            LOG.warnf(e, "app_setting read failed for '%s'", key);
-            return Optional.empty();
+            throw new ReadFailed(key, e);
         }
     }
 
