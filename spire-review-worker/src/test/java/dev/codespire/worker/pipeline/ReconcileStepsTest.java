@@ -10,11 +10,11 @@ import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadTranscript;
+import dev.codespire.llm.DiffCoverage;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -43,6 +43,8 @@ class ReconcileStepsTest {
             """;
     private static final String TOUCHES_A3 = "diff --git a/src/A.java b/src/A.java\n"
             + "--- a/src/A.java\n+++ b/src/A.java\n@@ -2,3 +2,3 @@\n line2\n-old3\n+new3\n line4\n";
+    private static final String TOUCHES_B9 = "diff --git a/src/B.java b/src/B.java\n"
+            + "--- a/src/B.java\n+++ b/src/B.java\n@@ -8,3 +8,3 @@\n line8\n-old9\n+new9\n line10\n";
 
     private static DiffSource comparing(String compare, RuntimeException failure) {
         return new ComparingDiff(compare, failure);
@@ -171,17 +173,45 @@ class ReconcileStepsTest {
         assertEquals(FindingVerdict.Status.STILL_OPEN, verdicts.getFirst().status());
     }
 
-    /** Review input limit: a clipped reconcile never resolves a finding on a file the model did not fully see. */
+    /** Review input limit: a clipped reconcile never resolves a finding on a file the model did not see whole. */
     @Test
-    void aFindingOnAnOmittedFileStaysUnchangedWhateverTheAnswerSaid() {
+    void aFindingOnAFileTheCutReachedStaysUnchangedWhateverTheAnswerSaid() {
         List<PriorFinding> numbered = List.of(at("src/A.java", 3, "TEST-thread-1"), at("src/B.java", 9, "TEST-thread-2"));
         String answer = "{\"verdicts\":[{\"id\":1,\"status\":\"resolved\"},{\"id\":2,\"status\":\"resolved\"}]}";
+        String full = TOUCHES_A3 + TOUCHES_B9;
+        DiffCoverage coverage = DiffCoverage.clipped(full, full.substring(0, full.indexOf("+new9")));
 
-        List<FindingVerdict> verdicts = ReconcileSteps.judge(answer, numbered, null, Set.of("src/B.java"));
+        List<FindingVerdict> verdicts = ReconcileSteps.unchangedWhereUnseen(
+                ReconcileSteps.judge(answer, numbered, null), coverage);
 
-        assertEquals(FindingVerdict.Status.RESOLVED, verdicts.get(0).status(), "src/A.java was seen");
-        assertEquals(FindingVerdict.Status.UNCHANGED, verdicts.get(1).status(), "src/B.java was not");
+        assertEquals(FindingVerdict.Status.RESOLVED, verdicts.get(0).status(), "src/A.java was seen whole");
+        assertEquals(FindingVerdict.Status.UNCHANGED, verdicts.get(1).status(), "src/B.java was cut");
         assertEquals("TEST-thread-2", verdicts.get(1).threadRef(), "the verdict keeps its thread");
+    }
+
+    /** PR 456, H-3: a finding whose file the clipped diff never named is unseen, not seen by default. */
+    @Test
+    void aFindingOnAFileTheClippedDiffNeverNamedStaysUnchanged() {
+        List<PriorFinding> numbered = List.of(at("src/C.java", 4, "TEST-thread-3"));
+        String answer = "{\"verdicts\":[{\"id\":1,\"status\":\"superseded\"}]}";
+        String full = TOUCHES_A3 + TOUCHES_B9;
+        DiffCoverage coverage = DiffCoverage.clipped(full, full.substring(0, full.indexOf("+new9")));
+
+        List<FindingVerdict> verdicts = ReconcileSteps.unchangedWhereUnseen(
+                ReconcileSteps.judge(answer, numbered, null), coverage);
+
+        assertEquals(FindingVerdict.Status.UNCHANGED, verdicts.getFirst().status());
+    }
+
+    @Test
+    void anUnclippedReconcileKeepsEveryVerdict() {
+        List<PriorFinding> numbered = List.of(at("src/C.java", 4, "TEST-thread-3"));
+        String answer = "{\"verdicts\":[{\"id\":1,\"status\":\"resolved\"}]}";
+
+        List<FindingVerdict> verdicts = ReconcileSteps.unchangedWhereUnseen(
+                ReconcileSteps.judge(answer, numbered, null), DiffCoverage.whole());
+
+        assertEquals(FindingVerdict.Status.RESOLVED, verdicts.getFirst().status());
     }
 
     @Test

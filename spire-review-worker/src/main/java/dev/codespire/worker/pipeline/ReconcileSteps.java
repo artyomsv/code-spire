@@ -15,6 +15,7 @@ import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.contract.scm.ThreadTranscript;
 import dev.codespire.diff.UnifiedDiffParser;
+import dev.codespire.llm.DiffCoverage;
 import dev.codespire.llm.VerdictsParser;
 import org.jboss.logging.Logger;
 
@@ -99,24 +100,19 @@ final class ReconcileSteps {
     }
 
     /**
-     * As {@link #judge(String, List, String)}, and a finding on a file the clipped diff left the model not fully
-     * seeing is UNCHANGED whatever the answer said: a reconcile must never resolve, or reopen, what it could not see.
+     * A clipped reconcile judges only what it saw: a verdict on a file the model did not positively see whole becomes
+     * UNCHANGED whatever the answer said, keeping its thread, place and note. A reconcile must never resolve, or
+     * reopen, what it could not see; a file the diff parser could not read counts as unseen (PR 456, H-3).
      */
-    static List<FindingVerdict> judge(String answerText, List<PriorFinding> numbered, String incrementalDiff,
-                                      Set<String> omittedPaths) {
-        return unchangedWhereUnseen(judge(answerText, numbered, incrementalDiff), omittedPaths);
-    }
-
-    /** Every verdict on an omitted path becomes UNCHANGED, keeping its thread, place and note. */
-    static List<FindingVerdict> unchangedWhereUnseen(List<FindingVerdict> verdicts, Set<String> omittedPaths) {
-        if (omittedPaths.isEmpty()) {
+    static List<FindingVerdict> unchangedWhereUnseen(List<FindingVerdict> verdicts, DiffCoverage coverage) {
+        if (!coverage.isClipped()) {
             return verdicts;
         }
         return verdicts.stream()
-                .map(v -> omittedPaths.contains(v.path()) && v.status() != FindingVerdict.Status.UNCHANGED
-                        ? new FindingVerdict(v.threadRef(), v.path(), v.line(), FindingVerdict.Status.UNCHANGED,
-                                v.note())
-                        : v)
+                .map(v -> coverage.sawWhole(v.path()) || v.status() == FindingVerdict.Status.UNCHANGED
+                        ? v
+                        : new FindingVerdict(v.threadRef(), v.path(), v.line(), FindingVerdict.Status.UNCHANGED,
+                                v.note()))
                 .toList();
     }
 

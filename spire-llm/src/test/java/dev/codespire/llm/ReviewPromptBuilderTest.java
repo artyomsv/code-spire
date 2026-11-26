@@ -153,12 +153,12 @@ class ReviewPromptBuilderTest {
 
     @Test
     void aKnownLargeWindowSendsTheWholeDiff() {
-        ReviewPromptBuilder.Built built = ReviewPromptBuilder.build(PR, UnifiedDiffParser.parse(LARGE_DIFF), List.of(),
-                List.of(), null, new DiffBudget.Limits(983_616, null));
+        ReviewPromptBuilder.Built built = ReviewPromptBuilder.build(input(LARGE_DIFF), null,
+                new DiffBudget.Limits(983_616, null));
 
         assertFalse(built.truncated(), "a model that can hold the diff gets all of it");
         assertTrue(built.omittedFiles().isEmpty());
-        assertTrue(built.largePrompt(), "a budget above today's marks the call large");
+        assertEquals(PromptSize.LARGE, built.size(), "a budget above today's marks the call large");
     }
 
     @Test
@@ -167,16 +167,16 @@ class ReviewPromptBuilderTest {
 
         assertTrue(built.truncated());
         assertEquals(List.of("src/TEST-b.java"), built.omittedFiles(), "the first file fits, the second is skipped");
-        assertFalse(built.largePrompt());
+        assertEquals(PromptSize.WITHIN_DEFAULT, built.size());
     }
 
     @Test
     void theSettingCapsTheDiffAndTheCapIsNamed() {
-        ReviewPromptBuilder.Built built = ReviewPromptBuilder.build(PR, UnifiedDiffParser.parse(LARGE_DIFF), List.of(),
-                List.of(), null, new DiffBudget.Limits(983_616, 24_000));
+        ReviewPromptBuilder.Built built = ReviewPromptBuilder.build(input(LARGE_DIFF), null,
+                new DiffBudget.Limits(983_616, 24_000));
 
         assertEquals(List.of("src/TEST-b.java"), built.omittedFiles());
-        assertFalse(built.largePrompt(), "capped at today's budget, a timeout is retried as today");
+        assertEquals(PromptSize.WITHIN_DEFAULT, built.size(), "capped at today's budget, a timeout is retried as today");
     }
 
     @Test
@@ -197,17 +197,21 @@ class ReviewPromptBuilderTest {
         PromptTemplate twice = new PromptTemplate(PromptKind.REVIEW, "persona", "{{diff}}\n{{diff}}");
         DiffBudget.Limits limits = new DiffBudget.Limits(200_000, null);
 
-        assertTrue(ReviewPromptBuilder.build(PR, UnifiedDiffParser.parse(big), List.of(), List.of(), once, limits)
+        assertTrue(ReviewPromptBuilder.build(input(big), once, limits)
                 .omittedFiles().isEmpty());
         assertEquals(List.of("src/TEST-big.java"),
-                ReviewPromptBuilder.build(PR, UnifiedDiffParser.parse(big), List.of(), List.of(), twice, limits)
+                ReviewPromptBuilder.build(input(big), twice, limits)
                         .omittedFiles());
     }
 
     @Test
     void aWindowWithNoRoomForADiffRefuses() {
-        assertThrows(DiffBudget.NoRoomForDiff.class, () -> ReviewPromptBuilder.build(PR, UnifiedDiffParser.parse(DIFF),
-                List.of(), List.of(), null, new DiffBudget.Limits(100, null)));
+        assertThrows(DiffBudget.NoRoomForDiff.class, () -> ReviewPromptBuilder.build(input(DIFF), null,
+                new DiffBudget.Limits(100, null)));
+    }
+
+    private static ReviewPromptBuilder.ReviewInput input(String diff) {
+        return new ReviewPromptBuilder.ReviewInput(PR, UnifiedDiffParser.parse(diff), List.of(), List.of());
     }
 
     private static int count(String haystack, String needle) {

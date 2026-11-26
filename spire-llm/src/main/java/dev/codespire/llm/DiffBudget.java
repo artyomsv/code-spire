@@ -25,7 +25,8 @@ import java.util.Map;
  * <p>Today's fixed budget is the floor everywhere except where the model's own window cannot hold it (then the call
  * gets what the window holds, where today's call would have overflowed). The 25% margin covers the estimator:
  * {@link TokenBudget#estimateTokens} is {@code chars / 3.2} with no safety factor, and dense text has fewer characters
- * per token.
+ * per token. {@code others} includes the fence each use of the diff is wrapped in, so a diff of exactly {@code full}
+ * tokens still renders inside the window by estimate.
  */
 public final class DiffBudget {
 
@@ -47,6 +48,20 @@ public final class DiffBudget {
         public static final Limits UNKNOWN = new Limits(null, null);
     }
 
+    /**
+     * What the budget is computed from, besides the limits.
+     *
+     * @param defaultBudget today's fixed budget for the kind
+     * @param otherTokens   the estimate of everything in the prompt except the diff, its fences included
+     * @param diffUses      how many times the body names {@code {{diff}}}; the diff is sent once per use
+     */
+    public record PromptShape(int defaultBudget, int otherTokens, int diffUses) {
+
+        int uses() {
+            return Math.max(1, diffUses);
+        }
+    }
+
     /** Today's fixed diff budget for the kind: the palette's (24,000 on REVIEW, 12,000 on RECONCILE and FOLLOWUP). */
     public static int defaultFor(PromptKind kind) {
         for (PromptVariable variable : PromptCatalog.palette(kind)) {
@@ -60,40 +75,38 @@ public final class DiffBudget {
     /**
      * The diff budget per use of {@code {{diff}}}.
      *
-     * @param defaultBudget today's fixed budget for the kind
-     * @param otherTokens   the estimate of everything in the prompt except the diff
-     * @param diffUses      how many times the body names {@code {{diff}}}; the diff is sent once per use
      * @throws NoRoomForDiff when the model's window is known and leaves no room for a diff at all
      */
-    public static int tokens(int defaultBudget, int otherTokens, int diffUses, Limits limits) {
-        int uses = Math.max(1, diffUses);
+    public static int tokens(PromptShape shape, Limits limits) {
         long budget = limits.maxInputTokens() == null
-                ? defaultBudget
-                : fromWindow(defaultBudget, otherTokens, uses, limits.maxInputTokens());
+                ? shape.defaultBudget()
+                : fromWindow(shape, limits.maxInputTokens());
         if (limits.diffTokenCap() != null) {
-            budget = Math.min(budget, Math.max(limits.diffTokenCap(), defaultBudget));
+            budget = Math.min(budget, Math.max(limits.diffTokenCap(), shape.defaultBudget()));
         }
         return (int) Math.min(Integer.MAX_VALUE, budget);
     }
 
-    private static long fromWindow(int defaultBudget, int otherTokens, int uses, int maxInputTokens) {
-        long room = ((long) Math.floor(maxInputTokens * MARGIN) - otherTokens) / uses;
+    private static long fromWindow(PromptShape shape, int maxInputTokens) {
+        long room = ((long) Math.floor(maxInputTokens * MARGIN) - shape.otherTokens()) / shape.uses();
         if (room <= 0) {
-            throw new NoRoomForDiff(maxInputTokens, otherTokens);
+            throw new NoRoomForDiff(maxInputTokens, shape.otherTokens());
         }
-        long full = ((long) maxInputTokens - otherTokens) / uses;
-        return Math.max(room, Math.min(defaultBudget, full));
+        long full = ((long) maxInputTokens - shape.otherTokens()) / shape.uses();
+        return Math.max(room, Math.min(shape.defaultBudget(), full));
     }
 
     /**
-     * The estimate of a prompt rendered with an empty diff: the system message (persona, locked suffix, rules) and
-     * the user message with every other variable at its own clipped size.
+     * The estimate of everything but the diff: the prompt rendered with an empty diff (the system message, and the
+     * user message with every other variable at its own clipped size), plus the fence a non-empty diff is wrapped in,
+     * once per use. An empty value renders without its fence, so the render alone would leave the fences out.
      */
     public static int otherTokens(PromptTemplate template, Map<String, String> values) {
         Map<String, String> withoutDiff = new HashMap<>(values);
         withoutDiff.put(DIFF, "");
         Prompt prompt = PromptRenderer.render(template, withoutDiff).prompt();
-        return TokenBudget.estimateTokens(prompt.system()) + TokenBudget.estimateTokens(prompt.user());
+        int fences = PromptRenderer.uses(template, DIFF) * PromptRenderer.fenceTokens();
+        return TokenBudget.estimateTokens(prompt.system()) + TokenBudget.estimateTokens(prompt.user()) + fences;
     }
 
     /**
@@ -104,14 +117,17 @@ public final class DiffBudget {
      * @param diff   the diff value handed to the renderer
      * @param budget the per-use budget the renderer clips it to
      */
-    public static boolean isLarge(String diff, int budget, PromptKind kind) {
-        return Math.min(TokenBudget.estimateTokens(diff), budget) > defaultFor(kind);
+    public static PromptSize sizeOf(String diff, int budget, PromptKind kind) {
+        return Math.min(TokenBudget.estimateTokens(diff), budget) > defaultFor(kind)
+                ? PromptSize.LARGE
+                : PromptSize.WITHIN_DEFAULT;
     }
 
     /** The diff budget for a template and the values of its other variables. */
     static int forTemplate(PromptTemplate template, Map<String, String> otherValues, Limits limits) {
-        return tokens(defaultFor(template.kind()), otherTokens(template, otherValues),
-                PromptRenderer.uses(template, DIFF), limits);
+        PromptShape shape = new PromptShape(defaultFor(template.kind()), otherTokens(template, otherValues),
+                PromptRenderer.uses(template, DIFF));
+        return tokens(shape, limits);
     }
 
     /** No call is made: the prompt without its diff already fills the share of the window it may use. */

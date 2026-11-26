@@ -23,6 +23,14 @@ public final class PromptRenderer {
 
     private static final Pattern TOKEN = Pattern.compile("\\{\\{\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*}}");
 
+    /** What every non-empty fenced value is wrapped in; an empty value renders as nothing, fence included. */
+    static final String FENCE_OPEN = "BEGIN_UNTRUSTED_DATA\n";
+    static final String FENCE_CLOSE = "\nEND_UNTRUSTED_DATA";
+
+    /** A fenced variable and the token budget it is clipped to in this render. */
+    private record Slot(PromptVariable variable, int budget) {
+    }
+
     private PromptRenderer() {
     }
 
@@ -69,8 +77,8 @@ public final class PromptRenderer {
             String raw = values.getOrDefault(name, "");
             String rendered = "";
             if (variable != null) {
-                int budget = budgetOverrides.getOrDefault(name, variable.maxTokens());
-                rendered = renderValue(variable, budget, raw, clipped);
+                Slot slot = new Slot(variable, budgetOverrides.getOrDefault(name, variable.maxTokens()));
+                rendered = renderValue(slot, raw, clipped);
             }
             matcher.appendReplacement(user, Matcher.quoteReplacement(rendered));
         }
@@ -95,19 +103,27 @@ public final class PromptRenderer {
         return count;
     }
 
-    private static String renderValue(PromptVariable variable, int budget, String raw, Set<String> clipped) {
+    /**
+     * The estimate of the fence around one non-empty fenced value. A prompt rendered with an empty diff has no fence
+     * there, so the diff budget reserves this once per use of {@code {{diff}}}.
+     */
+    static int fenceTokens() {
+        return TokenBudget.estimateTokens(FENCE_OPEN + FENCE_CLOSE);
+    }
+
+    private static String renderValue(Slot slot, String raw, Set<String> clipped) {
         if (raw == null || raw.isEmpty()) {
             return "";
         }
-        if (!variable.fenced()) {
+        if (!slot.variable().fenced()) {
             return raw; // engine-computed literal (diff_kind)
         }
         String kept = raw;
-        if (budget > 0 && TokenBudget.estimateTokens(raw) > budget) {
-            clipped.add(variable.name());
-            kept = TokenBudget.clip(raw, budget);
+        if (slot.budget() > 0 && TokenBudget.estimateTokens(raw) > slot.budget()) {
+            clipped.add(slot.variable().name());
+            kept = TokenBudget.clip(raw, slot.budget());
         }
-        return "BEGIN_UNTRUSTED_DATA\n" + neutralizeSentinels(kept) + "\nEND_UNTRUSTED_DATA";
+        return FENCE_OPEN + neutralizeSentinels(kept) + FENCE_CLOSE;
     }
 
     /**

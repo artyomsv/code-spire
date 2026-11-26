@@ -14,7 +14,7 @@ final class InlineRecovery {
 
     /** Claim slots that are not posted inline comments, by exact key. */
     private static final Set<String> NON_INLINE_KEYS = Set.of(ReviewWorker.SUMMARY_KEY, NativeReviewPost.REVIEW_KEY,
-            ReviewWorker.LLM_KEY, ReviewWorker.RECONCILE_KEY, VerdictLabels.CLAIM_KEY);
+            ReviewWorker.LLM_KEY, ReconcileCall.RECONCILE_KEY, VerdictLabels.CLAIM_KEY);
     /** Claim slots that are not posted inline comments, by prefix. */
     private static final List<String> NON_INLINE_PREFIXES = List.of("reply:", "resolve:", HarnessReviewWorker.CLAIM_PREFIX);
 
