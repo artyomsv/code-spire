@@ -102,9 +102,15 @@ public final class DiffBudget {
      * once per use. An empty value renders without its fence, so the render alone would leave the fences out.
      */
     public static int otherTokens(PromptTemplate template, Map<String, String> values) {
+        return otherTokens(template, values, Map.of());
+    }
+
+    /** The same, with the other variables clipped to {@code backgroundBudgets} where it names them. */
+    static int otherTokens(PromptTemplate template, Map<String, String> values,
+                           Map<String, Integer> backgroundBudgets) {
         Map<String, String> withoutDiff = new HashMap<>(values);
         withoutDiff.put(DIFF, "");
-        Prompt prompt = PromptRenderer.render(template, withoutDiff).prompt();
+        Prompt prompt = PromptRenderer.render(template, withoutDiff, backgroundBudgets).prompt();
         int fences = PromptRenderer.uses(template, DIFF) * PromptRenderer.fenceTokens();
         return TokenBudget.estimateTokens(prompt.system()) + TokenBudget.estimateTokens(prompt.user()) + fences;
     }
@@ -123,10 +129,14 @@ public final class DiffBudget {
                 : PromptSize.WITHIN_DEFAULT;
     }
 
-    /** The diff budget for a template and the values of its other variables. */
+    /**
+     * The diff budget for a template and the values of its other variables, each clipped to its own budget: the one
+     * {@link InputBudgets#forWindow} gives for the kind and the limits, as the render does.
+     */
     static int forTemplate(PromptTemplate template, Map<String, String> otherValues, Limits limits) {
-        PromptShape shape = new PromptShape(defaultFor(template.kind()), otherTokens(template, otherValues),
-                PromptRenderer.uses(template, DIFF));
+        Map<String, Integer> background = InputBudgets.forWindow(template.kind(), limits);
+        PromptShape shape = new PromptShape(defaultFor(template.kind()),
+                otherTokens(template, otherValues, background), PromptRenderer.uses(template, DIFF));
         return tokens(shape, limits);
     }
 

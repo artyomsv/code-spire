@@ -9,15 +9,16 @@ import java.util.Set;
 
 /**
  * What was cut from a review's two calls, carried onto its result (review input limit design, 2026-11-26), so a partial
- * review is marked on the dashboard, names the files the model did not fully see in the posted summary, and is never
- * posted as an approval (the orchestrator holds a clipped review's verdict, PR 456).
+ * review is marked on the dashboard, says in the posted summary what the model did not see, and is never posted as an
+ * approval when the diff was cut (the orchestrator holds it, PR 456; a cut context alone does not, context cut design
+ * 2026-11-27).
  */
 final class ReviewClipping {
 
     private ReviewClipping() {
     }
 
-    /** The parsed result, marked partial and naming the omitted files when the review or its reconcile was clipped. */
+    /** The parsed result, marked partial and naming what was cut when the review or its reconcile was clipped. */
     static ReviewResult apply(ReviewResult parsed, ReviewPromptBuilder.Built review,
                               ReconcileCall.ReconcileOutcome reconcile) {
         boolean reconcileClipped = reconcile != null && reconcile.truncated();
@@ -25,9 +26,23 @@ final class ReviewClipping {
             return parsed;
         }
         Set<String> omitted = new LinkedHashSet<>(review.omittedFiles());
-        if (reconcile != null) {
+        Set<String> clipped = new LinkedHashSet<>(review.clippedInputs());
+        if (reconcileClipped) {
             omitted.addAll(reconcile.omittedFiles());
+            clipped.addAll(reconcileInputs(reconcile));
         }
-        return parsed.withTruncated(true).withOmittedFiles(List.copyOf(omitted));
+        return parsed.withTruncated(true).withOmittedFiles(List.copyOf(omitted))
+                .withClippedInputs(List.copyOf(clipped));
+    }
+
+    /**
+     * What the reconcile cut. A blob replayed from before the inputs were named says only that something was cut, and
+     * its omitted files say whether that was the diff; with none, the cut is read as the diff, the worst case.
+     */
+    private static List<String> reconcileInputs(ReconcileCall.ReconcileOutcome reconcile) {
+        if (!reconcile.clippedInputs().isEmpty()) {
+            return reconcile.clippedInputs();
+        }
+        return List.of(ReviewResult.DIFF_INPUT);
     }
 }

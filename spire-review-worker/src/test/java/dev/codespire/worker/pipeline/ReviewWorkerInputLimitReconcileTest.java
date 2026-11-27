@@ -3,10 +3,16 @@ package dev.codespire.worker.pipeline;
 import dev.codespire.contract.command.ActionCommand.PostComments;
 import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
 import dev.codespire.contract.review.FindingVerdict;
+import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
+import dev.codespire.contract.review.ReviewResult;
+import dev.codespire.contract.review.Severity;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** A clipped reconcile never resolves a finding it did not see, on the first run or on a replay (PR 456). */
@@ -40,6 +46,34 @@ class ReviewWorkerInputLimitReconcileTest extends ReviewWorkerInputLimitFixture 
 
         assertTrue(lastReviewGenerated().result().omittedFiles().contains("src/Demo.java"),
                 "the persisted reconcile outcome still names the cut file");
+        assertTrue(lastReviewGenerated().result().clippedInputs().contains(ReviewResult.DIFF_INPUT),
+                "and still names the diff as cut, so the review is not approved");
+    }
+
+    /** Context cut: a reconcile outcome stored before the cut inputs were named is read as a cut diff, so it holds. */
+    @Test
+    void aReplayedLegacyClippedReconcileIsReadAsACutDiff() {
+        idempotency.markPosted(REVIEW_ID, COMMIT, ReconcileCall.RECONCILE_KEY, """
+                {"verdicts":[],"usage":null,"truncated":true,"omittedFiles":[]}""");
+
+        worker.generateReview(followUp(priorAtDemo5()));
+
+        ReviewResult result = lastReviewGenerated().result();
+        assertEquals(List.of(ReviewResult.DIFF_INPUT), result.clippedInputs());
+        assertTrue(result.diffNotWhole(), "what an older worker cut is unknown, so the approval is held");
+    }
+
+    /** Context cut: a re-review that cut only its prior-findings list names it and does not hold the approval. */
+    @Test
+    void aReReviewThatCutOnlyItsPriorFindingsLeavesTheDiffWhole() {
+        PriorRun prior = new PriorRun("aaa111", "sum-1",
+                List.of(new PriorFinding("src/Demo.java", 5, Severity.MAJOR, "TEST ".repeat(5_000), "t-1")));
+
+        worker.generateReview(followUp(prior));
+
+        ReviewResult result = lastReviewGenerated().result();
+        assertEquals(List.of("prior_findings"), result.clippedInputs(), "over today's 4,000-token budget");
+        assertFalse(result.diffNotWhole(), "every changed line was still reviewed");
     }
 
     /**

@@ -9,9 +9,12 @@ import dev.codespire.contract.scm.ThreadMessage;
 import dev.codespire.contract.scm.ThreadTranscript;
 import dev.codespire.diff.TokenBudget;
 
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Prompt for the reconcile call (ADR-019): prior findings + their thread
@@ -52,12 +55,22 @@ public final class ReconcilePrompt {
     /**
      * The built reconcile prompt and what was cut to fit it.
      *
-     * @param truncated any fenced input was clipped
-     * @param coverage  which files of the diff the model saw whole; a finding on any other file is never judged from
-     *                  this call
-     * @param size      whether more diff was sent than today's fixed budget allowed, so a timeout must not re-send it
+     * @param clippedInputs the fenced inputs cut to their budget ({@code diff}, {@code prior_findings})
+     * @param coverage      which files of the diff the model saw whole; a finding on any other file is never judged
+     *                      from this call
+     * @param size          whether more diff was sent than today's fixed budget allowed, so a timeout must not re-send
+     *                      it
      */
-    public record Built(Prompt prompt, boolean truncated, DiffCoverage coverage, PromptSize size) {
+    public record Built(Prompt prompt, Set<String> clippedInputs, DiffCoverage coverage, PromptSize size) {
+
+        public Built {
+            clippedInputs = Collections.unmodifiableSet(new LinkedHashSet<>(clippedInputs));
+        }
+
+        /** Whether any fenced input was clipped. */
+        public boolean truncated() {
+            return !clippedInputs.isEmpty();
+        }
 
         /** The files of the diff the model did not see whole, for the posted note. */
         public List<String> omittedFiles() {
@@ -78,14 +91,16 @@ public final class ReconcilePrompt {
         Map<String, String> values = new HashMap<>();
         values.put("prior_findings", numberedFindings(input.findings(), input.transcripts()));
         values.put("diff_kind", input.basis() == DiffBasis.INCREMENTAL ? INCREMENTAL_DIFF_KIND : FULL_DIFF_KIND);
+        Map<String, Integer> background = InputBudgets.forWindow(PromptKind.RECONCILE, limits);
         int budget = DiffBudget.forTemplate(effective, values, limits);
         String diff = input.diffText() == null ? "" : input.diffText();
         DiffCoverage coverage = TokenBudget.estimateTokens(diff) > budget
                 ? DiffCoverage.clipped(diff, TokenBudget.clip(diff, budget))
                 : DiffCoverage.whole();
         values.put(DiffBudget.DIFF, diff);
-        PromptRenderer.Rendered rendered = PromptRenderer.render(effective, values, Map.of(DiffBudget.DIFF, budget));
-        return new Built(rendered.prompt(), rendered.truncated(), coverage,
+        PromptRenderer.Rendered rendered = PromptRenderer.render(effective, values,
+                InputBudgets.withDiff(background, budget));
+        return new Built(rendered.prompt(), rendered.clippedVariables(), coverage,
                 DiffBudget.sizeOf(diff, budget, PromptKind.RECONCILE));
     }
 

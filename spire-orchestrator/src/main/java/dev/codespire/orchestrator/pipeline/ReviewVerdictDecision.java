@@ -95,9 +95,9 @@ public final class ReviewVerdictDecision {
 
     /**
      * A review that did not see its whole diff never approves (review input limit, PR 456): files were skipped or cut
-     * ({@code omittedFiles}), or some input was clipped ({@code truncated}, all an older result says). An approving
-     * assessment is posted as a Comment; a blocking one still requests changes, since a partial review can only
-     * understate what blocks. The assessment is kept, as for the CI holds.
+     * ({@code omittedFiles}), the diff was clipped, or an older result says only that something was clipped. An
+     * approving assessment is posted as a Comment; a blocking one still requests changes, since a partial review can
+     * only understate what blocks. The assessment is kept, as for the CI holds.
      */
     public static Decision holdForPartialReview(Decision decision) {
         if (decision.assessment() != ReviewVerdict.APPROVE) {
@@ -107,9 +107,13 @@ public final class ReviewVerdictDecision {
         return new Decision(decision.assessment(), ReviewVerdict.COMMENT, false, reason);
     }
 
-    /** Whether the review saw less than its whole input: the rule {@link #holdForPartialReview} applies to. */
+    /**
+     * Whether the review may not have seen every changed line: the rule {@link #holdForPartialReview} applies to. A cut
+     * context, code context or prior-findings list alone does not hold an approval (context cut design, 2026-11-27):
+     * every changed line was still reviewed, and the posted note says what was cut.
+     */
     public static boolean isPartial(ReviewResult result) {
-        return result.truncated() || !result.omittedFiles().isEmpty();
+        return result.diffNotWhole();
     }
 
     /** Why the bot may not change merge state here; null when it may. */
