@@ -26,8 +26,8 @@ class ChecksFailedLabelTest {
 
     private static final int ROUND = 3;
     /** An obviously synthetic full commit id: the head check compares full SHAs only. */
-    private static final String SHA = "0".repeat(39) + "1";
-    private static final String OTHER_SHA = "0".repeat(39) + "2";
+    private static final String SHA = "abcdef" + "0".repeat(33) + "1"; // letters, so the uppercase case differs
+    private static final String OTHER_SHA = "abcdef" + "0".repeat(33) + "2";
     private static final LabelChecksFailed COMMAND = new LabelChecksFailed(REVIEW_ID, REPO, 9L, SHA, ROUND,
             "TEST-cred");
 
