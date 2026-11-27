@@ -108,14 +108,15 @@ final class VerdictLabels {
         return recorded != null && recorded.startsWith(FAILED) ? recorded.substring(FAILED.length()) : null;
     }
 
-    private static String reason(RuntimeException e) {
+    /** A failure's reason as stored for a person to read; {@link ChecksFailedLabel} words its failures the same way. */
+    static String reason(RuntimeException e) {
         Throwable cause = WorkerFailures.unwrap(e);
         String message = cause.getMessage() == null || cause.getMessage().isBlank()
                 ? cause.getClass().getSimpleName() : cause.getMessage();
         return bounded(message);
     }
 
-    private static String bounded(String message) {
+    static String bounded(String message) {
         return message.length() <= MAX_REASON ? message : message.substring(0, MAX_REASON);
     }
 }

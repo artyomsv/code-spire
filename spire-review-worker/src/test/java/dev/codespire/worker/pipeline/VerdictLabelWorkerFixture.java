@@ -72,6 +72,26 @@ final class VerdictLabelWorkerFixture {
         return worker;
     }
 
+    /** A skipped run's ci-failed label, wired to the same sink, claim store, results and pull request. */
+    ChecksFailedLabel checksFailedLabel() {
+        ChecksFailedLabel label = new ChecksFailedLabel();
+        label.idempotency = idempotency;
+        label.results = new ResultsEmitter() {
+            @Override
+            public void emit(IntegrationEvent event) {
+                emitted.add(event);
+            }
+        };
+        DiffSource diffs = new PullRequestAtHead();
+        label.scm = new WorkerScmClients() {
+            @Override
+            public Clients forCommand(ActionCommand command) {
+                return new Clients(diffs, sink);
+            }
+        };
+        return label;
+    }
+
     /** Labels on, posted as the verdict it decided. */
     static PostComments labelled(ReviewVerdict assessment) {
         return unlabelledCommand().withVerdict(assessment, assessment, true).withVerdictLabels(true);
