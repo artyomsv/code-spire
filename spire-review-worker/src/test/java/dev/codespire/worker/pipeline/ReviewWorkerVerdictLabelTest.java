@@ -125,6 +125,28 @@ class ReviewWorkerVerdictLabelTest {
     }
 
     /**
+     * A response body that echoes a credential never reaches the published failure, the log or the stored receipt
+     * (review of PR #458, M-1 and qa/L-1).
+     */
+    @Test
+    void aForgeResponseBodyNeverReachesTheFailureTheLogOrTheReceipt() {
+        fx.sink.labelFailure = new GitHubApiException(401, "POST", "/TEST/labels", "TEST-SECRET-token-echo");
+        List<String> logged;
+        try (LogCapture log = LogCapture.of(VerdictLabels.class)) {
+            worker.postComments(labelled(ReviewVerdict.APPROVE));
+            logged = log.lines();
+        }
+        String failure = posted().labelFailure();
+        assertTrue(failure.contains("HTTP 401"), failure);
+        assertFalse(failure.contains("TEST-SECRET"), failure);
+        assertFalse(logged.isEmpty(), "the failure must be logged at all");
+        assertTrue(logged.stream().noneMatch(line -> line.contains("TEST-SECRET")), String.join("\n", logged));
+        String receipt = fx.idempotency.postedFor(REVIEW_ID, COMMIT).get(VerdictLabels.CLAIM_KEY);
+        assertTrue(receipt.startsWith("failed:") && receipt.contains("HTTP 401"), receipt);
+        assertFalse(receipt.contains("TEST-SECRET"), receipt);
+    }
+
+    /**
      * Review of PR #444, M-1: another reviewer requests changes after this run labelled approved, then this run's
      * PostComments is redelivered. The recovered review reports what the run already did and leaves the newer label.
      */
