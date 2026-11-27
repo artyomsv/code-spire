@@ -14,6 +14,7 @@ import dev.codespire.diff.UnifiedDiffParser;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -187,6 +188,31 @@ class ReviewPromptBuilderTest {
 
         assertTrue(built.truncated(), "a clipped context still makes the review partial");
         assertTrue(built.omittedFiles().isEmpty(), "but every changed file was seen");
+        assertEquals(Set.of("context"), built.clippedInputs(), "the context is named, and the diff is not");
+    }
+
+    // ---- context cut (design 2026-11-27) ----
+
+    /** About 9,400 estimated tokens: over today's 4,000 context budget, under a 1,000,000-token window's. */
+    private static final ContextItem MEDIUM_TICKET = new ContextItem("JIRA_TICKET", "TEST-1", "TEST ".repeat(6_000), null);
+
+    @Test
+    void aLargeWindowSendsAContextTodaysBudgetWouldCut() {
+        ReviewPromptBuilder.ReviewInput input = new ReviewPromptBuilder.ReviewInput(PR, UnifiedDiffParser.parse(DIFF),
+                List.of(MEDIUM_TICKET), List.of());
+
+        ReviewPromptBuilder.Built large = ReviewPromptBuilder.build(input, null, new DiffBudget.Limits(983_616, null));
+        ReviewPromptBuilder.Built unknown = ReviewPromptBuilder.build(input, null, DiffBudget.Limits.UNKNOWN);
+
+        assertEquals(Set.of(), large.clippedInputs(), "the larger window's context budget holds the ticket");
+        assertEquals(Set.of("context"), unknown.clippedInputs(), "today's budget still cuts it");
+    }
+
+    @Test
+    void aSkippedFileNamesTheDiffAsCut() {
+        ReviewPromptBuilder.Built built = ReviewPromptBuilder.build(PR, UnifiedDiffParser.parse(LARGE_DIFF), List.of());
+
+        assertTrue(built.clippedInputs().contains("diff"), "a file left out is a cut diff, even if no file was clipped");
     }
 
     @Test

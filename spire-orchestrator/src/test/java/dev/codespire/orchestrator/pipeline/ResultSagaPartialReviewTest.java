@@ -77,6 +77,25 @@ class ResultSagaPartialReviewTest {
         assertEquals(Boolean.FALSE, post.verdictLabels());
     }
 
+    /** Context cut design, 2026-11-27: the prod review of code-spire #458 posted a Comment for a cut prior-findings list. */
+    @Test
+    void aReviewThatCutOnlyItsContextStillApprovesAndLabels() {
+        PostComments post = postFor(firstReview(clean().withTruncated(true)
+                .withClippedInputs(List.of("context", "code_context", "prior_findings"))));
+
+        assertEquals(ReviewVerdict.APPROVE, post.verdict(), "every changed line was reviewed");
+        assertEquals(Boolean.TRUE, post.verdictLabels(), "review: approved applies");
+    }
+
+    @Test
+    void aReviewThatNamesItsDiffAsCutPostsAComment() {
+        PostComments post = postFor(firstReview(clean().withTruncated(true)
+                .withClippedInputs(List.of("context", ReviewResult.DIFF_INPUT))));
+
+        assertEquals(ReviewVerdict.COMMENT, post.verdict());
+        assertEquals(Boolean.FALSE, post.verdictLabels());
+    }
+
     @Test
     void aPartialReviewWithBlockersStillRequestsChanges() {
         fx.openBlockers = 1;

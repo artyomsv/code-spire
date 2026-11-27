@@ -67,10 +67,40 @@ class ResultSagaNoteTest {
     }
 
     @Test
-    void aClippedDiffKeepsItsOwnNote() {
+    void anOlderClippedResultKeepsAPartialNote() {
         String note = ResultSaga.noteFor(clean().withTruncated(true));
         assertNotNull(note);
-        assertTrue(note.contains("Diff exceeded"), note);
+        assertTrue(note.contains("partial review"), note);
+        assertFalse(note.contains("Diff exceeded"), "what was cut is unknown, so the diff is not blamed: " + note);
+    }
+
+    /** Context cut design, 2026-11-27: a cut context is named, and the note says the verdict was not held. */
+    @Test
+    void aCutContextIsNamedAndNotCalledADiffOverflow() {
+        String note = ResultSaga.noteFor(clean().withTruncated(true)
+                .withClippedInputs(List.of("prior_findings")));
+
+        assertTrue(note.contains("the list of earlier findings"), note);
+        assertTrue(note.contains("Every changed line was reviewed"), note);
+        assertFalse(note.contains("Diff exceeded"), note);
+        assertFalse(note.contains("partial review"), note);
+    }
+
+    @Test
+    void aCutDiffAndContextNameBoth() {
+        String note = ResultSaga.noteFor(clean().withTruncated(true).withOmittedFiles(List.of("src/TEST-a.lock"))
+                .withClippedInputs(List.of(ReviewResult.DIFF_INPUT, "context")));
+
+        assertTrue(note.contains("1 file: src/TEST-a.lock."), note);
+        assertTrue(note.contains("Also cut to fit: the linked issues and documents"), note);
+    }
+
+    @Test
+    void aDiffCutWithNoFileNamedSaysTheEndWasCut() {
+        String note = ResultSaga.noteFor(clean().withTruncated(true)
+                .withClippedInputs(List.of(ReviewResult.DIFF_INPUT)));
+
+        assertTrue(note.contains("Diff exceeded the review input limit and its end was cut"), note);
     }
 
     @Test

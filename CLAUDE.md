@@ -276,7 +276,7 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   Review diff limit (Settings → General, `review.diff-limit-tokens`) caps it; skipped files are named in the posted
   note (`ReviewResult.omittedFiles`), and a finding on a file a clipped reconcile missed stays UNCHANGED. Worker
   defaults: LLM timeout 600 s, ack age 1,800,000 ms; the client library retries nothing (`SDK_MAX_RETRIES` 0) and a
-  timed-out large call is not retried; a partial review never approves or labels approved. Long-context price tiers
+  timed-out large call is not retried; a review whose diff was cut never approves or labels approved; a cut context, code context or prior-findings list only adds a note, and those budgets grow with the window up to 5x (context cut, 2026-11-27). Long-context price tiers
   are not charged (docs/UNVERIFIED.md).
 
 **Limits that remain:**

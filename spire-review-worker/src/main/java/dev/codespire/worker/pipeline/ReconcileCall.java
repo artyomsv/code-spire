@@ -43,18 +43,21 @@ final class ReconcileCall {
     /**
      * Persisted under RECONCILE_KEY so redelivery replays verdicts without a second spend. {@code truncated} and
      * {@code omittedFiles} carry a clipped reconcile diff to the posted note, also on a replay; a blob written before
-     * they existed reads as not clipped. The verdicts are stored after the unseen-file rule ran, so a replay never
-     * resolves what the first run could not see.
+     * they existed reads as not clipped. {@code clippedInputs} names what was cut ({@code diff},
+     * {@code prior_findings}); a blob written before it reads as empty, which with {@code truncated} the result reads
+     * as the worst case. The verdicts are stored after the unseen-file rule ran, so a replay never resolves what the
+     * first run could not see.
      */
     record ReconcileOutcome(List<FindingVerdict> verdicts, ModelUsage usage, boolean truncated,
-                            List<String> omittedFiles) {
+                            List<String> omittedFiles, List<String> clippedInputs) {
 
         ReconcileOutcome {
             omittedFiles = omittedFiles == null ? List.of() : List.copyOf(omittedFiles);
+            clippedInputs = clippedInputs == null ? List.of() : List.copyOf(clippedInputs);
         }
 
         ReconcileOutcome(List<FindingVerdict> verdicts, ModelUsage usage) {
-            this(verdicts, usage, false, List.of());
+            this(verdicts, usage, false, List.of(), List.of());
         }
     }
 
@@ -101,7 +104,7 @@ final class ReconcileCall {
         List<FindingVerdict> verdicts = ReconcileSteps.unchangedWhereUnseen(
                 ReconcileSteps.judge(completion.text(), basis.remapped(), basis.incrementalDiff()), built.coverage());
         ReconcileOutcome outcome = new ReconcileOutcome(verdicts, completion.usage(), built.truncated(),
-                built.omittedFiles());
+                built.omittedFiles(), List.copyOf(built.clippedInputs()));
         ports.idempotency().markPosted(command.reviewId(), command.commit(), RECONCILE_KEY, writeOutcome(outcome));
         return new Reconciliation(basis.remapped(), outcome);
     }

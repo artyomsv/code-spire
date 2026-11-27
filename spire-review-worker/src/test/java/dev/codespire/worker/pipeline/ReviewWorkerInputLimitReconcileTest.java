@@ -4,6 +4,7 @@ import dev.codespire.contract.command.ActionCommand.PostComments;
 import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
 import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.PriorRun;
+import dev.codespire.contract.review.ReviewResult;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -40,6 +41,8 @@ class ReviewWorkerInputLimitReconcileTest extends ReviewWorkerInputLimitFixture 
 
         assertTrue(lastReviewGenerated().result().omittedFiles().contains("src/Demo.java"),
                 "the persisted reconcile outcome still names the cut file");
+        assertTrue(lastReviewGenerated().result().clippedInputs().contains(ReviewResult.DIFF_INPUT),
+                "and still names the diff as cut, so the review is not approved");
     }
 
     /**

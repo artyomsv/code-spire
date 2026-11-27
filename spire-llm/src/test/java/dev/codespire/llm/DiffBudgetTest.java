@@ -158,7 +158,7 @@ class DiffBudgetTest {
     private static void assertRendersInsideTheWindow(PromptTemplate template) {
         Map<String, String> values = Map.of("pr_title", "TEST title");
         DiffBudget.Limits limits = new DiffBudget.Limits(SMALL_WINDOW, null);
-        int budget = DiffBudget.forTemplate(template, values, limits);
+        int budget = DiffBudget.forTemplate(template, values, Map.of(), limits);
         assertTrue(budget < REVIEW_DEFAULT, "the full-window branch, where the margin does not absorb the fence");
         String diff = textOfAtMost(budget);
         assertTrue(TokenBudget.estimateTokens(diff) >= budget - 1, "the diff fills its budget");

@@ -9,9 +9,12 @@ import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.FilePatch;
 
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Builds the review prompt. Prompt-injection posture (SECURITY.md):
@@ -36,14 +39,20 @@ public final class ReviewPromptBuilder {
     /**
      * The built prompt and what was cut to fit it.
      *
-     * @param truncated    any fenced input was clipped (the diff, the context, the prior findings)
-     * @param omittedFiles the changed files the model will not fully see; empty when the whole diff went in
-     * @param size         whether more diff was sent than today's fixed budget allowed, so a timeout must not re-send it
+     * @param omittedFiles  the changed files the model will not fully see; empty when the whole diff went in
+     * @param clippedInputs the fenced inputs cut to their budget ({@code diff} whenever a file was omitted)
+     * @param size          whether more diff was sent than today's fixed budget allowed, so a timeout must not re-send it
      */
-    public record Built(Prompt prompt, boolean truncated, List<String> omittedFiles, PromptSize size) {
+    public record Built(Prompt prompt, List<String> omittedFiles, Set<String> clippedInputs, PromptSize size) {
 
         public Built {
             omittedFiles = List.copyOf(omittedFiles);
+            clippedInputs = Collections.unmodifiableSet(new LinkedHashSet<>(clippedInputs));
+        }
+
+        /** Whether any fenced input was clipped (the diff, the context, the prior findings). */
+        public boolean truncated() {
+            return !clippedInputs.isEmpty();
         }
     }
 
@@ -77,12 +86,17 @@ public final class ReviewPromptBuilder {
         values.put("context", renderContext(input.context(), false));
         values.put("code_context", renderContext(input.context(), true));
         values.put("prior_findings", renderAlreadyReported(input.alreadyReported()));
-        int budget = DiffBudget.forTemplate(effective, values, limits);
+        Map<String, Integer> background = InputBudgets.forWindow(PromptKind.REVIEW, limits);
+        int budget = DiffBudget.forTemplate(effective, values, background, limits);
         DiffSelection selection = DiffSelection.byFile(input.patches(), budget);
         values.put(DiffBudget.DIFF, selection.text());
-        PromptRenderer.Rendered rendered = PromptRenderer.render(effective, values, Map.of(DiffBudget.DIFF, budget));
-        boolean truncated = rendered.truncated() || !selection.omittedFiles().isEmpty();
-        return new Built(rendered.prompt(), truncated, selection.omittedFiles(),
+        PromptRenderer.Rendered rendered = PromptRenderer.render(effective, values,
+                InputBudgets.withDiff(background, budget));
+        Set<String> clipped = new LinkedHashSet<>(rendered.clippedVariables());
+        if (!selection.omittedFiles().isEmpty()) {
+            clipped.add(DiffBudget.DIFF);
+        }
+        return new Built(rendered.prompt(), selection.omittedFiles(), clipped,
                 DiffBudget.sizeOf(selection.text(), budget, PromptKind.REVIEW));
     }
 

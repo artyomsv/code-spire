@@ -2840,3 +2840,21 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   label command reaching an older worker is logged as a poison record and dropped (no label, nothing else lost), and a
   new worker never answers before it gets a command. Rolling back: an older orchestrator never sends the command; an
   outstanding answer reaching it is dropped the same way.
+
+- **Only a cut diff holds an approval (2026-11-27, branch `feat/context-cut`, Part of #391).** The production review of
+  code-spire #458 (a re-review after seven threads) cut its prior-findings list at 4,000 tokens, the diff whole, and
+  the PR 456 rule "any truncation never approves" posted a Comment with "Verdict: approve", no `review: approved`
+  label, and a dashboard note that blamed the diff. Three changes. (1) `ReviewResult` gains `clippedInputs` (with a
+  wither): the names of the prompt inputs cut to their budget (`diff`, `context`, `code_context`, `prior_findings`;
+  `diff` whenever a file was left out). `ReviewResult.diffNotWhole()` is the hold: files left out, `diff` named, or an
+  older result that names nothing (read as the worst case). A cut context, code context or prior-findings list alone
+  now approves and labels. (2) Background budgets grow with the model's window (`InputBudgets`): the palette budgets
+  stay up to a 200,000-token window and scale with it up to 5x (a 1,000,000-token window: context 20,000, code context
+  30,000, prior findings 20,000; the reconcile's prior findings too). The diff budget subtracts what they take, as
+  before. (3) The posted note and the dashboard note say what was cut, in words (`ClippedInputs`): a cut background
+  input is a "Note" that ends "Every changed line was reviewed."; a cut diff stays a "Partial review" and adds "Also
+  cut to fit: …"; an older result keeps the general note, which no longer blames the diff on the dashboard. The
+  reconcile's stored outcome gains `clippedInputs`; a blob without it is read as a cut diff.
+
+  **Upgrading.** No migration. `ReviewResult.clippedInputs` is ignored by an older reader and read as empty by a newer
+  one, so roll in any order: an older worker's clipped result still holds an approval, as before.

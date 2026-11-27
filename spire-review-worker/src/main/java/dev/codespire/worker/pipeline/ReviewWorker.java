@@ -609,9 +609,7 @@ public class ReviewWorker {
                                  List<Finding> failed, String commit, int suppressedCount) {
         StringBuilder sb = new StringBuilder();
         sb.append("### Code Spire review (`").append(commit).append("`)\n\n");
-        if (review.truncated()) {
-            sb.append(PartialReviewNote.markdown(review.omittedFiles()));
-        }
+        sb.append(PartialReviewNote.markdown(review));
         sb.append(review.summary() == null ? "" : review.summary()).append('\n');
         if (!review.findings().isEmpty()) {
             sb.append("\n**Findings:** ").append(review.findings().size()).append('\n');
