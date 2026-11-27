@@ -667,6 +667,17 @@ a posted review, so a late or replayed one can stand beside a newer run's verdic
 order or converge it (per-run receipts with an undo, then a desired label converged by every command) each left a
 window or overwrote a person's label. It will come back as its own change with a simpler design.
 
+**Amended 2026-11-27 — a red build sets `review: ci-failed`
+([the CI wait design](superpowers/specs/2026-11-24-review-waits-for-ci-design.md), item 6).** It is back, with two
+guards in place of ordering or converging labels. With "After checks finish" and Verdict labels on, the call that
+ends the skipped run sends one `LabelChecksFailed` (a recovered skip sends none); the worker claims the run once
+(`LABEL_CI_FAILED#<round>`, a redelivery reports the recorded outcome with no forge call) and reads the pull request's
+head right before writing, writing nothing when it is no longer the skipped commit. The label is set through
+`setVerdictLabel`, so other `review: ` labels go and a later review's verdict label replaces it. The outcome
+(`ChecksFailedLabelled`) records a failure as `label_failure` for that run's `run_round` only, raising
+`REVIEW_LABEL_FAILED`. The window accepted: a dashboard Re-run on the same commit while a ci-failed write is in
+flight can land the label after the new verdict label (docs/UNVERIFIED.md).
+
 ---
 
 ## ADR-046 — Verify runs the operator's checks on a clean copy of the checkpoint

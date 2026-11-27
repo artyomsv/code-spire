@@ -177,6 +177,23 @@ class ChecksWaitRaceTest extends ChecksWaitFixture {
         assertEquals(Stage.SKIPPED, waits.rowOf(REVIEW_ID).stage());
     }
 
+    /**
+     * Verdict labels on, a crash after the run ended and its label was sent: the sweep's recovered skip finds the run
+     * already ended and sends no second label (the worker's per-run receipt would also refuse it).
+     */
+    @Test
+    void aRecoveredSkipSendsNoSecondLabel() {
+        verdictLabels = true;
+        ChecksWait wait = waiting(0);
+        verdict = red("TEST-build");
+        waits.duringFinish = lostAck();
+        assertThrows(IllegalStateException.class, () -> resolver().resolve(wait));
+        assertEquals(1, labels().size());
+        sweep().sweep();
+        assertEquals(Stage.SKIPPED, waits.rowOf(REVIEW_ID).stage());
+        assertEquals(1, labels().size(), "one label command per skipped run");
+    }
+
     /** A push lands while a start's send fails: the new head's wait is kept, never overwritten, and still starts. */
     @Test
     void aPushDuringAFailedSendKeepsTheNewHeadsWait() {

@@ -2817,3 +2817,26 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   `review_status.answering_comment` column, or the `review_answering` table with the
   `review_answering_cleared` trigger and function) and delete V122's row from `flyway_schema_history` so the new
   V122 runs, or recreate the database. V122 also adds the nullable `review_event.comment_id`.
+
+- **A red build sets `review: ci-failed` (2026-11-27, branch `feat/ci-failed-label`, Part of #391).** The label removed
+  from "Review waits for CI" before release comes back with a simpler design (operator decision, 2026-11-27). With
+  "Start review" on "After checks finish" and "Verdict labels" on, the call that ends a run skipped for failed checks
+  (`ChecksWaitOutcomes.endRunAndMark`, under the round lock) also sends `ActionCommand.LabelChecksFailed` (the skipped
+  head and the run's round); a recovered skip that finds its run already ended sends none, and a repository switched to
+  "Immediately" while the run waited gets none. The worker (`ChecksFailedLabel`) claims the run once under
+  `LABEL_CI_FAILED#<round>`, reads the pull request's head right before writing and writes nothing when it moved
+  (outcome `STALE`); otherwise it sets the label through the verdict label's port (`setVerdictLabel`, so every other
+  `review: ` label is removed and a missing label created). A redelivered command reports the recorded outcome without
+  a forge call. The answer is the new `IntegrationEvent.ChecksFailedLabelled` (`LABELLED`, `STALE` or `FAILED` with a
+  reason): the orchestrator writes a history line and, for a set or failed label only, `review_status.label_failure`
+  guarded by the head and by `run_round`, so a failure raises the existing `REVIEW_LABEL_FAILED` row and a late report
+  never speaks for a re-run. A later review's verdict label replaces it as any verdict label does. "Immediately", the
+  60-minute timeout start and a CI re-run to green on the same commit are unchanged (the label stays until a new commit
+  or a Re-run is reviewed). The repository settings' Verdict labels and Start review texts say so. Built, not
+  live-proven (docs/UNVERIFIED.md).
+
+  **Upgrading.** No migration. Two new wire types, `ActionCommand.LabelChecksFailed` and
+  `IntegrationEvent.ChecksFailedLabelled`. Roll the review worker first, then the orchestrator: a new orchestrator's
+  label command reaching an older worker is logged as a poison record and dropped (no label, nothing else lost), and a
+  new worker never answers before it gets a command. Rolling back: an older orchestrator never sends the command; an
+  outstanding answer reaching it is dropped the same way.

@@ -264,10 +264,10 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   may set "Start review" to "After checks finish" ("Immediately" stays the default and behaves as before). A review of
   a new head waits as `waiting_for_checks`; a `check_suite` or `status` webhook wakes it and a 5-minute sweep is the
   fallback. Green starts it, no checks start it after a 60 s grace read, red skips it (`skipped`, no review, no charge,
-  no label; a new commit or a Re-run reviews it again), and checks pending after 60 minutes start a review that never
+  with Verdict labels on `review: ci-failed`; a new commit or a Re-run reviews it again), and checks pending after 60 minutes start a review that never
   approves. A failed check read raises `REVIEW_CHECKS_UNREADABLE`. Each run's header is written once per round
-  (`review_status.run_round`). The `review: ci-failed` label was removed by operator decision and comes back on its
-  own. Roll the orchestrator before the gateway (docs/HISTORY.md); interleavings are proven against fakes and two-connection
+  (`review_status.run_round`). The `review: ci-failed` label (branch `feat/ci-failed-label`, built, not live-proven) is
+  written only while the head is the skipped commit, once per run. Roll the orchestrator before the gateway (docs/HISTORY.md); interleavings are proven against fakes and two-connection
   database tests only (docs/UNVERIFIED.md).
 
 - **Review input limit** (PR #456; live-proven 2026-11-26 on `spire-test` #111/#112 for a first review and a re-review). An API review and its reconcile

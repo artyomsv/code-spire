@@ -86,15 +86,11 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.attention.LabelFailures labelFailures;
     @Inject dev.codespire.orchestrator.review.checks.ChecksWaitStore checksWaits; // a review started before CI finished
+    @Inject dev.codespire.orchestrator.review.checks.ChecksFailedLabelOutcomes checksFailedLabels; // a skip's label (V121)
 
-    @Inject
-    dev.codespire.orchestrator.readmodel.FindingProjection findings;
-
-    @Inject
-    dev.codespire.orchestrator.memory.PreferenceFilter preferenceFilter;
-
-    @Inject
-    dev.codespire.orchestrator.readmodel.ReviewThreadView threads;
+    @Inject dev.codespire.orchestrator.readmodel.FindingProjection findings;
+    @Inject dev.codespire.orchestrator.memory.PreferenceFilter preferenceFilter;
+    @Inject dev.codespire.orchestrator.readmodel.ReviewThreadView threads;
 
     @Inject
     dev.codespire.orchestrator.provider.WorkerCredentials workerCredentials;
@@ -393,23 +389,12 @@ public class ResultSaga {
             }
             case FollowUpDeclined e -> followUpEndings.declined(e);
             case TurnCapNotified e -> followUpEndings.capped(e);
-            case ArchivedNotified e -> {
-                // Filed under the conversation root when the notice replied inside a thread, so it sits
-                // with the rest of that conversation. threadRef is null whenever the notice went to the
-                // top-level PR comment — the /review and PR-update paths, i.e. the common case — and
-                // rootOf binds it into a statement, so a null would throw an NPE inside a try whose
-                // catch (SQLException) cannot see it.
-                String threadRef = e.threadRef() == null
-                        ? null : threads.rootOf(e.reviewId(), e.threadRef()).value();
-                projection.appendEvent(e.reviewId(), "result", "ArchivedNotified",
-                        "told the pull request this review is archived", threadRef);
-                // No bumpTurn: a notice that answers nothing must not consume one of the thread's turns.
-            }
+            case ArchivedNotified e -> onArchivedNotified(e);
             case FindingConfirmed e -> {
                 // e.threadRef() is null only from a hand-built record (e.g. a DLQ replay) -- both
                 // emitters guarantee non-null today. rootOf binds it into a statement, so a null
                 // would throw an NPE inside a try whose catch (SQLException) cannot see it, the same
-                // hazard the ArchivedNotified handler above is already guarded for.
+                // hazard onArchivedNotified is already guarded for.
                 ThreadRef root = e.threadRef() == null ? null : threads.rootOf(e.reviewId(), e.threadRef());
                 projection.appendEvent(e.reviewId(), "result", "FindingConfirmed",
                         "confirmed a finding filed from this conversation", root == null ? null : root.value());
@@ -455,9 +440,22 @@ public class ResultSaga {
             case HarnessReviewFailed e -> harnessResults.acceptFailed(e);
             // No commit guard and no round lock: a reply answers a thread, not a round (harness reviews, step 7).
             case HarnessReplyPrepared e -> harnessReplies.launch(e);
+            case IntegrationEvent.ChecksFailedLabelled e -> checksFailedLabels.record(e); // round-guarded inside
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());
         }
+    }
+
+    /**
+     * Filed under the conversation root when the notice replied inside a thread. threadRef is null whenever the notice
+     * went to the top-level PR comment (the /review and PR-update paths, the common case), and rootOf binds it into a
+     * statement, so a null would throw an NPE inside a try whose catch (SQLException) cannot see it. No bumpTurn: a
+     * notice that answers nothing must not consume one of the thread's turns.
+     */
+    private void onArchivedNotified(ArchivedNotified e) {
+        String threadRef = e.threadRef() == null ? null : threads.rootOf(e.reviewId(), e.threadRef()).value();
+        projection.appendEvent(e.reviewId(), "result", "ArchivedNotified",
+                "told the pull request this review is archived", threadRef);
     }
 
     /**
@@ -914,6 +912,7 @@ public class ResultSaga {
             case HarnessReviewGenerated e -> e.reviewId();
             case HarnessReviewFailed e -> e.reviewId();
             case HarnessReplyPrepared e -> e.reviewId();
+            case IntegrationEvent.ChecksFailedLabelled e -> e.reviewId();
             default -> "";
         };
     }

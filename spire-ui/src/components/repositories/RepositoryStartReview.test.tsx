@@ -36,6 +36,7 @@ describe('Start review', () => {
     expect(setting).toHaveValue('IMMEDIATELY');
     fireEvent.focus(screen.getByRole('button', { name: 'About start review — repository' }));
     expect(screen.getByRole('tooltip')).toHaveTextContent(START_REVIEW_HINT);
+    expect(START_REVIEW_HINT).toContain('with Verdict labels on it sets review: ci-failed');
     expect(screen.queryByText(/a red build gets no review/, { selector: 'p' })).not.toBeInTheDocument();
     fireEvent.change(setting, { target: { value: 'AFTER_CHECKS' } });
     expect(onChange).toHaveBeenCalledWith({ startReview: 'AFTER_CHECKS' });

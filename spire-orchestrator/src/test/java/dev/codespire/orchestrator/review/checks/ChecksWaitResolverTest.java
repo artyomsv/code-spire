@@ -97,10 +97,39 @@ class ChecksWaitResolverTest extends ChecksWaitFixture {
         assertTrue(fetches().isEmpty(), "no review runs, so nothing is charged");
         assertEquals(new RecordCommand.SkipReview(HEAD, round(), ChecksWaitStatus.CHECKS_FAILED), recorded.getLast());
         assertEquals(ReviewState.Status.CANCELLED, state.status());
-        assertTrue(emitted.isEmpty(), "no label either: the ci-failed label is deferred");
+        assertTrue(emitted.isEmpty(), "Verdict labels off: no label command either");
         assertTrue(notes.getLast().contains("TEST-build, TEST-lint"), notes.toString());
         assertEquals(List.of("ChecksFailed"), history);
         assertEquals(ChecksWait.Stage.SKIPPED, waits.rowOf(REVIEW_ID).stage());
+    }
+
+    /** Verdict labels on: the skip asks the worker for review: ci-failed on the skipped head, for this run, once. */
+    @Test
+    void redWithVerdictLabelsOnSendsOneLabelCommandForItsRun() {
+        verdictLabels = true;
+        waiting();
+        verdict = red("TEST-build");
+        wake(HEAD);
+        ActionCommand.LabelChecksFailed label = labels().getFirst();
+        assertEquals(List.of(label), emitted, "only the label: no review runs");
+        assertEquals(HEAD, label.commit());
+        assertEquals(round(), label.round());
+        assertEquals(7L, label.prId());
+        assertEquals("TEST-packed-at-start", label.scmCredential());
+        wake(HEAD);
+        assertEquals(1, labels().size(), "a repeated wake-up finds no wait and sends nothing");
+    }
+
+    /** "Start review" changed to Immediately while the run waited: the skip stands, but no ci-failed label. */
+    @Test
+    void redAfterStartReviewTurnedImmediatelySendsNoLabel() {
+        verdictLabels = true;
+        waiting();
+        setting = dev.codespire.orchestrator.repository.StartReview.IMMEDIATELY;
+        verdict = red("TEST-build");
+        wake(HEAD);
+        assertEquals(ReviewState.Status.CANCELLED, state.status());
+        assertTrue(emitted.isEmpty(), emitted.toString());
     }
 
     /** After a red skip, a new commit is a new run that waits for its own checks. */

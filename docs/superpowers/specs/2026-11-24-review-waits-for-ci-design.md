@@ -29,11 +29,14 @@ finished green; a red build gets no review until a new commit (operator decision
    late).
 5. **Green.** Nothing pending and nothing failed: the review starts as today.
 6. **Red.** Nothing pending and at least one check failed: no review runs and nothing is charged. The review is
-   recorded as `skipped: checks failed` with the failed check names (dashboard). No comment is posted and no label is
-   set. A new commit starts a new wait; re-running CI to green on the same commit starts nothing, so a skipped head is
-   reviewed only after a new commit or a dashboard Re-run. (A `review: ci-failed` label was built and removed by operator decision on
-   2026-11-25: a skipped run's label has no posted review to tie it to, so a late one could stand beside a newer run's
-   verdict. It comes back as its own change with a simpler design; ADR-047.)
+   recorded as `skipped: checks failed` with the failed check names (dashboard). No comment is posted. With Verdict
+   labels on, the pull request is labelled `review: ci-failed` (other `review: ` labels removed). A new commit starts
+   a new wait; re-running CI to green on the same commit starts nothing, so a skipped head is reviewed only after a new
+   commit or a dashboard Re-run, and the label stays until then. (The label was built and removed on 2026-11-25: a
+   skipped run's label has no posted review to tie it to, so a late one could stand beside a newer run's verdict. It
+   came back on 2026-11-27 with two guards: the worker reads the pull request's head right before writing and writes
+   nothing when it moved past the skipped commit, and labels at most once per skipped run, by a receipt keyed by its
+   round. The window left, a Re-run on the same commit racing an in-flight write, is in docs/UNVERIFIED.md; ADR-047.)
 7. **Superseded / closed.** A new commit while waiting replaces the wait for the old head (existing supersede rule);
    a closed pull request ends the wait.
 8. **Timeout.** Checks still pending after 60 minutes: the review starts anyway, never approves (posted as a Comment),
@@ -74,7 +77,8 @@ webhooks (`check_suite` only for `completed`, which is the one needed).
 ## Tests (CI only)
 
 Wait then start on green; webhook wake-up starts it without waiting for the sweep; sweep starts it when no webhook
-arrives; immediate start with no checks; red skips the review, charges nothing and sets no label; a new
+arrives; immediate start with no checks; red skips the review, charges nothing and sets `review: ci-failed` only with
+Verdict labels on, once per run and only while the head is the skipped commit; a new
 commit after red waits again; supersede and close end the wait; timeout starts a non-approving review; `immediately`
 behaves exactly as today; an event for a head with no waiting review does nothing. Live proof on spired.dev with
 code-spire.

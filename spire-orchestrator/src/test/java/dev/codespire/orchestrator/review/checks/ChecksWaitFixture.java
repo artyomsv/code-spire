@@ -12,6 +12,7 @@ import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.pipeline.CommandsEmitter;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
+import dev.codespire.orchestrator.repository.RepositoryRegistry;
 import dev.codespire.orchestrator.repository.StartReview;
 import dev.codespire.orchestrator.review.run.ReviewRoundLock;
 
@@ -49,6 +50,8 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
     StartReview setting = StartReview.AFTER_CHECKS;
     boolean checksReadable = true;
     ChecksVerdict verdict = ChecksVerdict.PENDING;
+    /** The repository's "Verdict labels" (V120), which a red skip reads. */
+    boolean verdictLabels;
     /** Runs once inside the next read, before it answers. */
     Runnable duringRead;
     /** Runs once inside the next send, before it is acknowledged; it may throw, as a lost broker ack would. */
@@ -91,12 +94,7 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
     ReviewStartGate gate() {
         ReviewStartGate gate = new ReviewStartGate();
         gate.projection = projection();
-        gate.setting = new StartReviewSetting() {
-            @Override
-            public StartReview of(UUID repositoryId) {
-                return setting;
-            }
-        };
+        gate.setting = startReviewSetting();
         gate.reader = reader();
         gate.waits = waits;
         gate.commands = commands();
@@ -141,7 +139,25 @@ abstract class ChecksWaitFixture extends ChecksWaitFakes {
             }
         };
         outcomes.rounds = roundLock();
+        outcomes.setting = startReviewSetting();
+        // The real registry opens a database; a skip reaches only this read.
+        outcomes.repositories = new RepositoryRegistry() {
+            @Override
+            public Optional<Boolean> verdictLabels(UUID repositoryId) {
+                return Optional.of(verdictLabels);
+            }
+        };
         return outcomes;
+    }
+
+    /** The repository's "Start review" now: the gate reads it at admission, a skip again before it labels. */
+    private StartReviewSetting startReviewSetting() {
+        return new StartReviewSetting() {
+            @Override
+            public StartReview of(UUID repositoryId) {
+                return setting;
+            }
+        };
     }
 
     private ReviewRoundLock roundLock() {

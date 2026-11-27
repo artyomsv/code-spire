@@ -25,6 +25,11 @@ abstract class ChecksWaitFakes {
                 .map(ActionCommand.FetchDiff.class::cast).toList();
     }
 
+    List<ActionCommand.LabelChecksFailed> labels() {
+        return emitted.stream().filter(ActionCommand.LabelChecksFailed.class::isInstance)
+                .map(ActionCommand.LabelChecksFailed.class::cast).toList();
+    }
+
     long skips() {
         return recorded.stream().filter(RecordCommand.SkipReview.class::isInstance).count();
     }

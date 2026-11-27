@@ -56,7 +56,8 @@ import java.util.Set;
         @JsonSubTypes.Type(value = IntegrationEvent.HarnessReviewPrepared.class, name = "HarnessReviewPrepared"),
         @JsonSubTypes.Type(value = IntegrationEvent.HarnessReviewGenerated.class, name = "HarnessReviewGenerated"),
         @JsonSubTypes.Type(value = IntegrationEvent.HarnessReviewFailed.class, name = "HarnessReviewFailed"),
-        @JsonSubTypes.Type(value = IntegrationEvent.HarnessReplyPrepared.class, name = "HarnessReplyPrepared")
+        @JsonSubTypes.Type(value = IntegrationEvent.HarnessReplyPrepared.class, name = "HarnessReplyPrepared"),
+        @JsonSubTypes.Type(value = IntegrationEvent.ChecksFailedLabelled.class, name = "ChecksFailedLabelled")
 })
 public sealed interface IntegrationEvent {
 
@@ -140,9 +141,7 @@ public sealed interface IntegrationEvent {
                                  Author author, ThreadRef threadRef, ThreadLocation location,
                                  String commentId) implements IntegrationEvent {
 
-        // Without thread context — a top-level command. Kept so every existing call site and every
-        // record already on the wire keeps working (the same additive treatment AuthorReplied took
-        // when it grew mentions, then location).
+        // Without thread context: a top-level command, as every call site and record from before /finding.
         public ManualCommandReceived(RepoRef repo, long prId, String command, String args, Author author) {
             this(repo, prId, command, args, author, null, null, null);
         }
@@ -151,24 +150,12 @@ public sealed interface IntegrationEvent {
     /**
      * A human's reply on a review conversation.
      *
-     * <p>{@code topLevel} marks a plain PR (issue) comment — answered in the review's summary comment
-     * as its conversation "thread", since no SCM threading exists for it. {@code false} (the shorter
-     * ctors' default) is an inline review-comment reply, threaded on its own.
-     *
-     * <p>{@code mentions} is who the comment @-mentioned, already extracted by the ingress that
-     * parsed it. It is a list of identities, not text: an SCM renders a mention in its own syntax
-     * (a login, or an account id in braces), and only the adapter that knows the payload can read
-     * it. Callers ask "is the bot in here?" and never learn how any provider writes it.
-     *
-     * <p>{@code location} is where in the diff the thread sits, when the provider says — each ingress
-     * reads it from its own payload (GitHub's {@code path}/{@code line}, GitLab's {@code position},
-     * Bitbucket's {@code inline}). Null for a summary or top-level comment, and for any provider that
-     * does not report one.
-     *
-     * <p>Without it the core cannot tell an inline thread from a general one: such threads had no
-     * {@code (path, line)} in the read model, so the UI filed a comment demonstrably attached to a
-     * line under "General discussion", and a reply on a line the bot had flagged could not be
-     * recognised as being about that finding.
+     * <p>{@code topLevel} marks a plain PR (issue) comment, answered in the review's summary comment as its
+     * conversation "thread"; {@code false} (the shorter ctors' default) is an inline review-comment reply.
+     * {@code mentions} is who the comment @-mentioned, as identities the ingress extracted: each SCM writes a mention
+     * in its own syntax, and callers never learn which. {@code location} is where in the diff the thread sits, when
+     * the provider says (null for a summary or top-level comment); without it an inline thread cannot be told from a
+     * general one, and a reply on a flagged line cannot be tied to its finding.
      */
     record AuthorReplied(RepoRef repo, long prId, String reviewId, ThreadRef threadRef,
                          String commentId, String text, Author author,
@@ -297,6 +284,18 @@ public sealed interface IntegrationEvent {
         public ReviewGenerated(String reviewId, long prId, String commit, ReviewResult result) {
             this(reviewId, prId, commit, result, List.of(), null);
         }
+    }
+
+    /**
+     * What the worker did with a {@code LabelChecksFailed} (review waits for CI, V121): {@code LABELLED} left
+     * {@code review: ci-failed} as the pull request's only {@code review: } label, {@code STALE} wrote nothing because
+     * its head had moved past {@code commit}, {@code FAILED} did not label it, for {@code labelFailure}'s reason. Once
+     * per skipped run ({@code round}); a redelivered command reports the recorded outcome again.
+     */
+    record ChecksFailedLabelled(String reviewId, String commit, int round, Outcome outcome, String labelFailure)
+            implements IntegrationEvent {
+
+        public enum Outcome { LABELLED, STALE, FAILED }
     }
 
     /**
