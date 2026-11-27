@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from
 import { Bot, CheckCircle2, ChevronDown, MessageCircle, MessagesSquare } from 'lucide-react';
 import { fetchThreadMessages, type ReviewEvent, type ThreadMessage } from '../api';
 import { formatEventTime } from '../format';
+import { DeclinedNote, hasPendingReply, withoutDeclines } from './ConversationDecline';
 import { MessageText } from './MessageText';
 
 interface FindingConversationProps {
@@ -9,7 +10,9 @@ interface FindingConversationProps {
   slug: string;
   pr: number;
   threadRef: string;
-  previewTurns: ReviewEvent[]; // stored events for this thread — count the toggle and supply timestamps
+  // Stored events for this thread — count the toggle and supply timestamps. A FollowUpDeclined among them is not a
+  // message: it is left out of the count and the pairing, and only ends the pending reply and says why.
+  previewTurns: ReviewEvent[];
   previewBody: ReactNode; // the ≤160-char preview exchanges, shown until (or unless) the full thread loads
   resolved?: boolean; // re-review reconciliation says this thread's finding was closed out
   // The thread's opening message is already rendered above the panel (general discussion shows the
@@ -47,10 +50,10 @@ export async function refreshThread(
   return { loadedAtCount: replyCount, messages };
 }
 
-/** The thread is "awaiting the bot's answer" when the last stored turn is a human reply the bot
- *  hasn't answered yet — a completed exchange always ends with a FollowUpGenerated (bot) turn. */
-export function isAwaitingReply(previewTurns: ReviewEvent[]): boolean {
-  return previewTurns.length > 0 && previewTurns[previewTurns.length - 1].type === 'AuthorReplied';
+/** The thread is "awaiting the bot's answer" while a human reply has no answer (FollowUpGenerated) or decline
+ *  (FollowUpDeclined) of its own, matched by comment id; rows without an id are matched by their order. */
+export function isAwaitingReply(threadEvents: ReviewEvent[]): boolean {
+  return hasPendingReply(threadEvents);
 }
 
 /**
@@ -68,7 +71,7 @@ export function FindingConversation({
   slug,
   pr,
   threadRef,
-  previewTurns,
+  previewTurns: threadEvents,
   previewBody,
   resolved,
   rootShownAbove,
@@ -77,8 +80,9 @@ export function FindingConversation({
   const [state, setState] = useState<LoadState>({ status: 'idle' });
   const [open, setOpen] = useState(false);
   const loadedAtCount = useRef<number | null>(null);
+  const previewTurns = withoutDeclines(threadEvents);
   const replyCount = previewTurns.length;
-  const awaitingReply = isAwaitingReply(previewTurns);
+  const awaitingReply = isAwaitingReply(threadEvents);
 
   useEffect(() => {
     if (!needsFetch(open, loadedAtCount.current, replyCount)) return;
@@ -107,34 +111,38 @@ export function FindingConversation({
     setOpen(e.currentTarget.open);
   }
 
+  // The decline note sits after the panel, not in it: the panel starts closed, and the note says why no answer came.
   return (
-    <details className={`finding-convo${resolved ? ' convo-resolved' : ''}`} onToggle={handleToggle}>
-      <summary>
-        {resolved ? (
-          <CheckCircle2 size={14} className="finding-convo-icon" aria-hidden="true" />
+    <>
+      <details className={`finding-convo${resolved ? ' convo-resolved' : ''}`} onToggle={handleToggle}>
+        <summary>
+          {resolved ? (
+            <CheckCircle2 size={14} className="finding-convo-icon" aria-hidden="true" />
+          ) : (
+            <MessagesSquare size={14} className="finding-convo-icon" aria-hidden="true" />
+          )}
+          {/* With no stored conversation turn the thread still holds the bot's reconciliation reply on
+              the SCM, so offer to open it rather than claiming "0 replies". */}
+          <span>{replyCount > 0 ? `${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}` : 'View thread'}</span>
+          {awaitingReply && (
+            <span className="responding" title="Awaiting the bot's reply">
+              <MessageCircle size={11} aria-hidden="true" />
+              responding…
+            </span>
+          )}
+          <ChevronDown size={14} className="finding-convo-chevron" aria-hidden="true" />
+        </summary>
+        {state.status === 'loaded' ? (
+          <ThreadMessages messages={state.messages} previewTurns={previewTurns} rootShownAbove={rootShownAbove}
+            openerPreview={openerPreview} />
+        ) : state.status === 'loading' ? (
+          <div className="convo-note">Loading full conversation…</div>
         ) : (
-          <MessagesSquare size={14} className="finding-convo-icon" aria-hidden="true" />
+          previewBody
         )}
-        {/* With no stored conversation turn the thread still holds the bot's reconciliation reply on
-            the SCM, so offer to open it rather than claiming "0 replies". */}
-        <span>{replyCount > 0 ? `${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}` : 'View thread'}</span>
-        {awaitingReply && (
-          <span className="responding" title="Awaiting the bot's reply">
-            <MessageCircle size={11} aria-hidden="true" />
-            responding…
-          </span>
-        )}
-        <ChevronDown size={14} className="finding-convo-chevron" aria-hidden="true" />
-      </summary>
-      {state.status === 'loaded' ? (
-        <ThreadMessages messages={state.messages} previewTurns={previewTurns} rootShownAbove={rootShownAbove}
-          openerPreview={openerPreview} />
-      ) : state.status === 'loading' ? (
-        <div className="convo-note">Loading full conversation…</div>
-      ) : (
-        previewBody
-      )}
-    </details>
+      </details>
+      <DeclinedNote threadEvents={threadEvents} />
+    </>
   );
 }
 

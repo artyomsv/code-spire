@@ -14,6 +14,8 @@ import dev.codespire.orchestrator.factory.FactoryRunProjection;
 import dev.codespire.orchestrator.factory.FixTargets;
 import dev.codespire.orchestrator.llm.CallRefs;
 import dev.codespire.orchestrator.prompt.WorkerPromptTemplates;
+import dev.codespire.orchestrator.readmodel.AnsweringMarks;
+import dev.codespire.orchestrator.readmodel.ReplyKey;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
 import dev.codespire.orchestrator.repository.ReviewHarness;
@@ -59,7 +61,11 @@ class HarnessReplyLaunchTest {
     private final Map<String, String> rowsBySlot = new HashMap<>();
     private final List<String> events = new ArrayList<>();
     private final List<String> timelineTypes = new ArrayList<>();
-    private final List<Boolean> answering = new ArrayList<>();
+    /**
+     * Each reply a refusal ended through {@code finishAndBroadcast}, by its triggering comment. That call's one
+     * broadcast is counted on the real class in {@code ReplyEndingBroadcastsIT}, not here.
+     */
+    private final List<String> endedAndBroadcast = new ArrayList<>();
 
     private static HarnessReplyPrepared prepared(String head, String comment) {
         return new HarnessReplyPrepared(REVIEW_ID, PR, head, THREAD, comment, 2, INPUTS);
@@ -121,7 +127,7 @@ class HarnessReplyLaunchTest {
 
         assertEquals(List.of("FollowUpRefused@TEST-thread-1: harness reply refused: TEST-harness: "
                 + "subscription_unavailable"), events);
-        assertEquals(List.of(false), answering, "the responding pill clears");
+        assertEquals(List.of("TEST-comment-5"), endedAndBroadcast, "ends the reply through finishAndBroadcast");
     }
 
     @Test
@@ -131,7 +137,7 @@ class HarnessReplyLaunchTest {
         launch().launch(prepared(HEAD, "TEST-comment-5"));
 
         assertEquals(List.of("FollowUpRefused@TEST-thread-1: pull request closed"), events);
-        assertEquals(List.of(false), answering);
+        assertEquals(List.of("TEST-comment-5"), endedAndBroadcast, "ends the reply through finishAndBroadcast");
         assertTrue(timelineTypes.contains("dropped:HarnessReplyPrepared"), timelineTypes.toString());
     }
 
@@ -144,7 +150,7 @@ class HarnessReplyLaunchTest {
         assertTrue(dispatched.isEmpty());
         assertEquals(List.of("FollowUpRefused@TEST-thread-1: harness reply refused: no harness: "
                 + "review_harness_removed"), events);
-        assertEquals(List.of(false), answering);
+        assertEquals(List.of("TEST-comment-5"), endedAndBroadcast, "ends the reply through finishAndBroadcast");
     }
 
     @Test
@@ -195,6 +201,7 @@ class HarnessReplyLaunchTest {
             }
         };
         launch.projection = projection();
+        launch.answering = marks();
         launch.targets = targets();
         launch.dispatch = dispatch();
         launch.runRows = runRows();
@@ -221,13 +228,32 @@ class HarnessReplyLaunchTest {
             }
 
             @Override
-            public void appendEvent(String reviewId, String lane, String type, String detail, String threadRef) {
-                events.add(type + "@" + threadRef + ": " + detail);
+            public void appendEvent(dev.codespire.orchestrator.readmodel.EventLine line) {
+                events.add(line.type() + "@" + line.threadRef() + ": " + line.detail());
             }
 
             @Override
             public void setAnswering(String reviewId, boolean value) {
-                answering.add(value);
+                throw new AssertionError("a reply clears only its own comment's mark (V122)");
+            }
+
+            @Override
+            public void touch(String reviewId) {
+                throw new AssertionError("a refusal broadcasts through finishAndBroadcast, never a touch of its own");
+            }
+        };
+    }
+
+    private AnsweringMarks marks() {
+        return new AnsweringMarks() {
+            @Override
+            public void finish(ReplyKey reply) {
+                throw new AssertionError("a refusal recorded a line, so it ends through finishAndBroadcast");
+            }
+
+            @Override
+            public void finishAndBroadcast(ReplyKey reply) {
+                endedAndBroadcast.add(reply.commentId());
             }
         };
     }

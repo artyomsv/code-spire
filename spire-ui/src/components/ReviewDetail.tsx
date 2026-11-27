@@ -3,11 +3,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { invalidateLive } from '../liveCache';
 import { BLOCK_APPROVAL_AT_LABEL, fetchReviewDetail, reviewDetailKey, type PostedVerdict, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
-import { archivedBadge, CONTEXT_STAGE, findingsCard, generalDiscussionCard, metaCard, prStateBadge, stageLabel, STATUS_LABEL, statusCell, stepper } from '../render';
+import { archivedBadge, CONTEXT_STAGE, findingsCard, generalDiscussionCard, metaCard, stageLabel, STATUS_LABEL, statusCell, stepper } from '../render';
 import EventStream from './EventStream';
 import ContextCard from './ContextCard';
 import ReviewActions from './ReviewActions';
 import ReviewCostCard from './ReviewCostCard';
+import { PrStateIcon } from './ReviewIcons';
 import HarnessRunLink from './HarnessRunLink';
 
 interface Props {
@@ -125,9 +126,9 @@ export default function ReviewDetail({ reviews }: Props) {
               blockerCount: r.openBlocking ?? r.openBlockers,
               answering: r.answering,
               degraded: r.degraded,
-            })}
+            }, 0)}
             {blockingCount(r)}
-            {prStateBadge(r.prState)}
+            <PrStateIcon prState={r.prState} tabIndex={0} />
             {archivedBadge(r.archivedAt)}
             <span className="sep">·</span>
             <span>@{r.author}</span>

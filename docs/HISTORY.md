@@ -2758,3 +2758,62 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   General (blank clears it); `SELECT value FROM app_setting WHERE key = 'review.diff-limit-tokens';` shows it. A
   failed read of that row caps the review at 24,000 too, with a WARN `app_setting review.diff-limit-tokens could not
   be read` in the orchestrator log and no attention row.
+
+- **A "responding" mark that never cleared, and a compact reviews list (2026-11-26, branch `feat/compact-review-list`,
+  Part of #391).** On production PR #456 a third person replied in a review thread without mentioning the bot. The
+  orchestrator had set `review_status.answering` when it sent `AnswerFollowUp`; the worker stayed quiet ("smart
+  1:1") and reported nothing, so the dashboard said "responding…" for good. Every quiet exit of the API reply
+  (`FollowUpWorker`) and of the harness reply's prepare (`HarnessReplyWorker`) now emits the new integration event
+  `FollowUpDeclined` with its reason (`NO_THREAD_SOURCE`, `MULTI_PARTY_NO_MENTION`, `ALREADY_ANSWERED`) on
+  `cs.results`; the orchestrator (`FollowUpEndings`) files "reply not answered: …" under the conversation root,
+  clears `answering` and counts no turn. A pull request close or merge clears `answering` too, as a safety net. The
+  harness post's "already done" exit sends nothing new on purpose: its two events already went out and cleared the
+  flag. A reply that dead-letters still keeps the mark until the next review run.
+  Review of PR #457: `answering` is one flag per review, so reply A's decline cleared the mark while reply B was being
+  answered. V122 adds the table `review_answering`, one row per reply being answered: the ask adds its row
+  (`AnsweringMarks.start`, via `ReplyDispatch`), and a result removes only its own (`FollowUpDeclined`, a harness
+  reply's refusal or failure, and `FollowUpPosted`, which now carries `triggeringCommentId`). `answering` stays up
+  while any row is left; both are written in one transaction under the review row's lock. A turn-cap notice never
+  set the mark and no longer clears it. A new run, an archive, a close and a `FollowUpPosted` from before the field
+  clear the flag, and a trigger drops the review's rows in that statement. `ALREADY_ANSWERED` (a redelivery of a
+  comment the bot did answer) ends its reply and records no event. The finding and general-discussion conversations end their pending reply at a `FollowUpDeclined`
+  and show "Not answered: <why>"; the worker's three quiet exits are one `ReplyGate` for both reply paths. A list
+  row's marks stay out of the tab order (the row's accessible name carries their words, and on keyboard focus the row
+  shows them in one line, `RowFocusSummary`); the detail header's marks
+  are tab stops whose tooltips open on focus.
+  The next review round found that a redelivered or late decline still filed its line, and that a reply ending while
+  another kept the mark up was never broadcast. `AnsweringMarks.finish` now takes a `ReplyKey` and the ending to
+  record: the line is written only by the finish that removed the reply's row, and every write that changed a row or
+  the flag (and every cap notice) bumps the review, so an open detail hears it (`ReplyEndingsIT`). A conversation
+  stays pending while a reply since the bot's last answer has no decline of its own, so the first reply's late
+  decline no longer hides the second one's "responding…". The round after that found two more. The dashboard still
+  paired replies and declines by count, so an older reply's late decline after another answer and a newer ask ended
+  the newer one: V122 also adds `review_event.comment_id`, which `AuthorReplied`, `FollowUpGenerated` and
+  `FollowUpDeclined` carry, and a conversation now waits while a reply has no answer or decline with its own id
+  (rows without one fall back to the order rule). And the decline's line was written after the row's removal had
+  committed, on another connection, so a failed insert lost it for good: `AnsweringMarks.finish` now inserts the line
+  in the removal's transaction (`EventLines`) and broadcasts after the commit, and a failed insert leaves the reply
+  outstanding for the redelivery (`ReplyEndingsIT`). The reviews list test now reads the focus line's rules from the
+  parsed index.css and its computed style while the row has focus, so a clipping or `sr-only` change fails it. The severity badges' numbers are the body text colour on
+  the severity tint (at least 9.9:1 in both themes; `sevbadge.contract.test.ts` computes it from the tokens); the
+  severity colour in the text measured 3.6 to 4.4:1.
+  The operator also found the reviews list's badges too wide. The Status column is one coloured icon per outcome (its
+  word in the tooltip and the accessible name; the review header keeps the word badge), with a pulsing icon
+  for "responding"; PR state and provider are icons (lucide state icons, the forges' logos from `react-icons`, already
+  a dependency); the Pipeline column draws segments only, each naming its step and state on hover (and in its `aria-label`), and the
+  strip's accessible name carries the state its dropped word said; Findings is one small badge per severity with open
+  findings (the findings card's colours, most severe first, at most three then `+N`), with every severity and the
+  new and carried split in words in the tooltip, in screen-reader text and in the row's focus line. The list row
+  carries `openBySeverity` (`SeverityCounts`: critical, warning, suggestion, nit), counted on read from the same open
+  set as `findings`, carried findings included, with no migration; the detail payload does not carry it. A row
+  without it, or whose counts do not sum to `findings`, keeps the bare number. The review header uses the same status cell and PR state icon. The
+  widgets are `ReviewIcons` and `ReviewRowCells` (WIDGETS.md). Analytics keeps its text platform badge.
+  **Upgrading.** A new wire event: roll the orchestrator before the review worker, or a worker's
+  `FollowUpDeclined` reaches an orchestrator that cannot read it and is logged as a poison record (the mark then
+  stays up exactly as before). V122 adds a table (`review_answering`) and a trigger on
+  `review_status`, additive: an older orchestrator neither reads nor writes the table, and its clears still drop the
+  rows through the trigger. `FollowUpPosted` gains a nullable `triggeringCommentId`; an older orchestrator ignores it.
+  A dev database that ran an earlier V122 has a different checksum: drop what it made (the
+  `review_status.answering_comment` column, or the `review_answering` table with the
+  `review_answering_cleared` trigger and function) and delete V122's row from `flyway_schema_history` so the new
+  V122 runs, or recreate the database. V122 also adds the nullable `review_event.comment_id`.

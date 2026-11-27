@@ -25,7 +25,10 @@ import dev.codespire.orchestrator.llm.WorkerLlmCredentials;
 import dev.codespire.orchestrator.memory.PreferenceFilter;
 import dev.codespire.orchestrator.prompt.WorkerPromptTemplates;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
+import dev.codespire.orchestrator.readmodel.AnsweringMarks;
+import dev.codespire.orchestrator.readmodel.ReplyKey;
 import dev.codespire.orchestrator.readmodel.FindingProjection;
+import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
 import dev.codespire.orchestrator.readmodel.SuppressionBatch;
 import dev.codespire.orchestrator.repository.RepositoryAccounts;
@@ -48,6 +51,8 @@ final class HarnessSagaFakes {
     static final long PR = 7L;
     static final String REVIEW_ID = ReviewIds.reviewId(REPO, PR);
     static final String COMMIT = "0123456789abcdef0123456789abcdef01234567";
+    /** Marks an ending {@link #endings} saw arrive through {@code finishAndBroadcast}. */
+    static final String THROUGH_BROADCAST = " via finishAndBroadcast";
 
     static final PreferenceFilter NO_PREFERENCES = new PreferenceFilter() {
         @Override
@@ -111,6 +116,35 @@ final class HarnessSagaFakes {
                 types.add(type);
             }
         };
+    }
+
+    /**
+     * The reply endings over {@code projection}, with a stand-in for the per-reply marks (they open a database): each
+     * reply a result ends lands in {@code ended} as {@code reviewId:commentId}, with {@link #THROUGH_BROADCAST} when it
+     * ended through {@code finishAndBroadcast}. That call's one broadcast is counted on the real class in
+     * {@code ReplyEndingBroadcastsIT}; this stand-in broadcasts nothing.
+     */
+    static FollowUpEndings endings(ReviewProjection projection, List<String> ended) {
+        FollowUpEndings endings = new FollowUpEndings();
+        endings.projection = projection;
+        endings.answering = new AnsweringMarks() {
+            @Override
+            public void finish(ReplyKey reply) {
+                ended.add(reply.reviewId() + ":" + reply.commentId());
+            }
+
+            @Override
+            public void finishAndBroadcast(ReplyKey reply) {
+                ended.add(reply.reviewId() + ":" + reply.commentId() + THROUGH_BROADCAST);
+            }
+
+            @Override
+            public void finish(ReplyKey reply, dev.codespire.orchestrator.readmodel.EventLine ending) {
+                finish(reply);
+                projection.appendEvent(ending);
+            }
+        };
+        return endings;
     }
 
     static ReviewThreadView silentThreads() {

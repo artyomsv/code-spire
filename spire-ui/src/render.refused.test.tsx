@@ -8,7 +8,8 @@ import ReviewsList from './components/ReviewsList';
 import ReviewDetail from './components/ReviewDetail';
 import { matchesChip, needsAttention } from './components/ReviewsFilters';
 import type { ChipFilter } from './components/ReviewsFilters';
-import { findCell, findingsCard, miniPipeline, outcomeBadge, STATUS_LABEL } from './render';
+import { findCell, miniPipeline } from './components/ReviewRowCells';
+import { findingsCard, outcomeBadge, STATUS_LABEL } from './render';
 import { renderWithQuery } from './test/queryWrapper';
 
 /**
@@ -78,7 +79,7 @@ describe('a refused review in the reviews list', () => {
     renderList([summary({ status: 'refused', stage: 3 })]);
 
     const row = rowFor(1);
-    expect(within(row).getByText('Refused')).toBeInTheDocument();
+    expect(within(row).getByRole('img', { name: 'Refused' })).toBeInTheDocument();
     expect(within(row).queryByText('done')).not.toBeInTheDocument();
     expect(row.querySelectorAll('.seg.done')).toHaveLength(0);
   });
@@ -105,12 +106,11 @@ describe('the refused status vocabulary', () => {
     expect(badge).toContain('pill refused');
   });
 
-  it('renders no progress bar at all', () => {
+  it('renders no progress, only the refusal', () => { // its own colour: how far a cap let it get is not progress
     const markup = renderToStaticMarkup(<>{miniPipeline('refused', 3)}</>);
 
-    expect(markup).toContain('refused');
-    expect(markup).not.toContain('done');
-    expect(markup).not.toContain('seg');
+    expect(markup).toMatch(/Pipeline: refused.*seg st-refused/);
+    expect(markup).not.toMatch(/seg done|: done/);
   });
 
   it('wants an operator, unlike the two Closed statuses', () => {
@@ -249,7 +249,7 @@ describe("a refused review's detail page", () => {
 
 describe('the findings count of a review that was never sent to a model', () => {
   it('is a placeholder, not 0', () => {
-    const refused = renderToStaticMarkup(<>{findCell('refused', 0)}</>);
+    const refused = renderToStaticMarkup(<>{findCell({ status: 'refused', findings: 0 })}</>);
 
     expect(refused).toContain('—');
     // `0` renders in the `findcount zero` span — the class is what distinguishes "counted, none
@@ -258,7 +258,7 @@ describe('the findings count of a review that was never sent to a model', () => 
 
     // The two statuses that already read as "no count applies", so the assertion above cannot pass
     // by the placeholder having become universal.
-    expect(renderToStaticMarkup(<>{findCell('failed', 0)}</>)).toContain('—');
-    expect(renderToStaticMarkup(<>{findCell('completed', 0)}</>)).toContain('findcount');
+    expect(renderToStaticMarkup(<>{findCell({ status: 'failed', findings: 0 })}</>)).toContain('—');
+    expect(renderToStaticMarkup(<>{findCell({ status: 'completed', findings: 0 })}</>)).toContain('findcount');
   });
 });

@@ -3,6 +3,7 @@ package dev.codespire.worker.pipeline;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.ReplyRetry;
 import dev.codespire.contract.event.IntegrationEvent;
+import dev.codespire.contract.event.FollowUpDeclineReason;
 import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.ThreadSource;
@@ -73,8 +74,10 @@ class HarnessReplyWorkerPrepareTest extends HarnessReplyWorkerFixture {
                 new ThreadMessage("TEST-human-2", "TEST-TWO", false)));
 
         worker.prepare(prepare(false, 1));
-        assertEquals(List.of(), emitted);
+        assertEquals(List.of(declined(FollowUpDeclineReason.MULTI_PARTY_NO_MENTION)), emitted,
+                "staying quiet is reported, so the orchestrator clears \"answering\"");
 
+        emitted.clear();
         worker.prepare(prepare(true, 1));
         assertInstanceOf(IntegrationEvent.HarnessReplyPrepared.class, emitted.getFirst(), "a mention engages");
     }
@@ -86,7 +89,7 @@ class HarnessReplyWorkerPrepareTest extends HarnessReplyWorkerFixture {
 
         worker.prepare(prepare(false, 1));
 
-        assertEquals(List.of(), emitted);
+        assertEquals(List.of(declined(FollowUpDeclineReason.ALREADY_ANSWERED)), emitted);
         verify(diffs, never()).fetchPullRequest(any(), anyLong());
     }
 
@@ -96,7 +99,7 @@ class HarnessReplyWorkerPrepareTest extends HarnessReplyWorkerFixture {
 
         noThreads.prepare(prepare(true, 1));
 
-        assertEquals(List.of(), emitted);
+        assertEquals(List.of(declined(FollowUpDeclineReason.NO_THREAD_SOURCE)), emitted);
     }
 
     @Test
@@ -108,5 +111,9 @@ class HarnessReplyWorkerPrepareTest extends HarnessReplyWorkerFixture {
 
         verify((ThreadSource) sink, org.mockito.Mockito.times(2)).fetchThread(REPO, 7, THREAD);
         assertEquals(List.of(), emitted);
+    }
+
+    private static IntegrationEvent declined(FollowUpDeclineReason reason) {
+        return new IntegrationEvent.FollowUpDeclined(REVIEW_ID, THREAD, COMMENT, reason);
     }
 }

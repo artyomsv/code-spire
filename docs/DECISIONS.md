@@ -273,8 +273,27 @@ review behind an hour-long build would wait an hour.
   is answered after a push; a closed pull request cancels and refuses it. Its result is applied with no round check.
 - **No silent ending.** A refused reply writes `FollowUpRefused` under the thread; a run that ends with nothing to post
   (failed, cancelled, over the cap, no reviewer account) writes `FollowUpFailed`; both clear the "responding" flag.
-  The worker's quiet exits at prepare (no thread support, a second human with no mention, a comment already answered)
-  keep the API path's behaviour: the flag stays up until the next review.
+  The worker's quiet exits, on the API reply and at the harness reply's prepare (no thread support, a second human
+  with no mention, a comment already answered), emit `FollowUpDeclined` (PR #457): the orchestrator files "reply not
+  answered: <why>" under the thread (not for a comment already answered) and counts no turn. The flag is kept per
+  reply: V122 adds `review_answering`, one row per reply being answered. The ask adds its row; a decline, a refusal,
+  a failure or a posted answer (`FollowUpPosted` now carries its triggering comment) removes only its own, and the
+  flag stays up while any row is left, in one transaction under the review row's lock. A turn-cap notice never set
+  the flag and no longer clears it. A new run, an archive, a close and a `FollowUpPosted` from before the field clear
+  them all (a trigger drops the rows). Removing the row is how a decline is consumed: only the decline that removed
+  its reply's row files the line, so a redelivered decline, or one after the answer, the close or a newer ask, files
+  nothing. Every ending that changed a row, the flag or the history broadcasts the review, also while another reply
+  keeps the flag up, and so does a cap notice. The line is inserted in the transaction that removes the row, so a
+  failed insert leaves the reply outstanding for the redelivery, and the broadcast follows the commit. The reply, its
+  answer and its decline carry the reply's comment id (V122, `review_event.comment_id`), and the dashboard ends each
+  reply only with its own ending. Limits that remain, not live-proven (docs/UNVERIFIED.md): a harness reply's refusal
+  or failure still files its line on every delivery. The broadcast is a best-effort push, with two delivery limits:
+  it reaches only the dashboards connected to the orchestrator instance that committed the ending (another replica
+  is not told), and a crash between the commit and the push loses that frame. Neither loses data, but recovery is
+  narrower than a reconnect: a reconnecting socket replaces only the live review summaries, and an open review detail
+  page re-reads its history only when the summary's updated_at changes, which the lost push would have done. That page
+  shows the committed state on its next REST read (opening or reloading it) or on a later update that changes
+  updated_at. docs/UNVERIFIED.md, entry A declined reply clears "responding", names what the tests prove.
 - **The answer mentions the person it answers.** On the live proof the bot named the author as plain text, which
   notifies nobody, because the reply prompt forbids hand-written mentions (the syntax differs per forge, and a wrong
   one fails to link or notifies the wrong account). Code Spire now opens every reply, API and harness, with the

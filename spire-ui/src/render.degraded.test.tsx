@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { findCell, findingsCard, outcomeBadge } from './render';
+import { findCell } from './components/ReviewRowCells';
+import { findingsCard, outcomeBadge } from './render';
 import { matchesChip, needsAttention, type ChipFilter } from './components/ReviewsFilters';
 import type { ReviewDetail, ReviewStatus } from './api';
 
@@ -17,7 +18,7 @@ describe('a degraded review is distinguishable on the list', () => {
   it('shows no finding count at all, the way a failed run does', () => {
     // A count for a review that produced nothing is not a count. The outcome badge carries the
     // state instead, exactly as it does for failed, cancelled and refused.
-    render(<>{findCell('completed', 0, 0, true)}</>);
+    render(<>{findCell({ status: 'completed', findings: 0, degraded: true })}</>);
     expect(screen.getByText('—')).toBeInTheDocument();
     expect(screen.queryByText('0')).not.toBeInTheDocument();
   });
@@ -40,13 +41,13 @@ describe('a degraded review is distinguishable on the list', () => {
 
   it('leaves an ordinary clean review passing, with its zero', () => {
     // The discriminator. Without it every completed review would be relabelled.
-    render(<>{findCell('completed', 0, 0, false)}{outcomeBadge('completed', 0, 0, false)}</>);
+    render(<>{findCell({ status: 'completed', findings: 0, degraded: false })}{outcomeBadge('completed', 0, 0, false)}</>);
     expect(screen.getByText('0')).toBeInTheDocument();
     expect(screen.getByText('Passed')).toBeInTheDocument();
   });
 
   it('still shows a real finding count when the run was not degraded', () => {
-    render(<>{findCell('completed', 3, 0, false)}</>);
+    render(<>{findCell({ status: 'completed', findings: 3, degraded: false })}</>);
     expect(screen.getByText('3')).toBeInTheDocument();
   });
 

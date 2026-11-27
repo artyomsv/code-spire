@@ -18,7 +18,6 @@ import dev.codespire.contract.llm.PromptTemplate;
 import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.LlmProvider;
-import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.Severity;
@@ -40,6 +39,7 @@ import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Answers a reviewer's follow-up in a review thread (spec §4-§5): claim per-triggering-comment
@@ -89,31 +89,19 @@ public class FollowUpWorker {
 
     private void doAnswer(AnswerFollowUp command) {
         WorkerScmClients.Clients clients = scm.forCommand(command);
-        if (!(clients.comments() instanceof ThreadSource threadSource)) {
-            LOG.debugf("No ThreadSource for %s — conversational replies unsupported for this provider",
-                    command.reviewId());
-            return;
-        }
-        // Re-fetch the thread first (ADR-011): its participants decide whether to engage, BEFORE any paid
-        // work. Scope "smart 1:1": auto-answer while it's the bot + one human; once a second human joins,
-        // stay quiet unless the triggering comment @-mentioned the bot.
-        ThreadTranscript transcript =
-                threadSource.fetchThread(command.repo(), command.prId(), command.threadRef());
-        if (!shouldAnswer(transcript, command.mentioned())) {
-            LOG.debugf("Staying quiet on %s — multi-party thread with no @-mention", command.reviewId());
-            return;
-        }
         // Idempotency per triggering comment: threadRef is the "commit" slot. A redelivered reply for the
         // same comment never double-posts or double-pays the LLM.
         String key = "followup:" + command.triggeringCommentId();
-        if (idempotency.claim(command.reviewId(), command.threadRef().value(), key)
-                instanceof CommentIdempotencyStore.Claim.AlreadyPosted) {
-            LOG.debugf("Skipping already-answered %s for %s", key, command.reviewId());
+        Optional<ThreadTranscript> transcript = new ReplyGate(results, () -> idempotency.claim(command.reviewId(),
+                command.threadRef().value(), key) instanceof CommentIdempotencyStore.Claim.AlreadyPosted)
+                .engage(clients.comments(), ReplyGate.Ask.of(command));
+        if (transcript.isEmpty()) {
             return;
         }
         WorkerLlmProvider.LlmClient client = llm.forCommand(command);
-        FollowUpResult result = answer(new AnswerCall(command.repo(), command.prId(), command.threadRef(), transcript,
-                        command.followUpPrompt(), command.otherFindings(), command.replyAuthor()),
+        FollowUpResult result = answer(new AnswerCall(command.repo(), command.prId(), command.threadRef(),
+                        transcript.orElseThrow(), command.followUpPrompt(), command.otherFindings(),
+                        command.replyAuthor()),
                 new AnswerPorts(clients.diff(), promptLog.tap("follow-up", client.provider()), client.params(),
                         clients.comments()));
         idempotency.markPosted(command.reviewId(), command.threadRef().value(), key, result.postedCommentId());
@@ -121,7 +109,8 @@ public class FollowUpWorker {
         // orchestrator's ledger identity cannot tell turn 2 of this thread from a redelivery of turn 1.
         results.emit(new FollowUpGenerated(command.reviewId(), command.threadRef(), result.answerText(),
                 result.usage(), command.triggeringCommentId()));
-        results.emit(new FollowUpPosted(command.reviewId(), command.threadRef(), result.postedCommentId(), true));
+        results.emit(new FollowUpPosted(command.reviewId(), command.threadRef(), result.postedCommentId(), true,
+                command.triggeringCommentId()));
     }
 
     /**

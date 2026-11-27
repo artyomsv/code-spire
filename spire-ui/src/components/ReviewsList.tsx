@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import type { ReviewSummary } from '../api';
-import { ago, archivedBadge, CopyableValue, findCell, llmIcon, miniPipeline, prStateBadge, providerBadge, shortSha, statusCell } from '../render';
+import { ago, archivedBadge, CopyableValue, llmIcon, providerLabel, shortSha } from '../render';
+import { PrStateIcon, ProviderIcon } from './ReviewIcons';
+import { findCell, miniPipeline } from './ReviewRowCells';
+import { listStatusCell } from './ReviewStatusIcon';
+import RowFocusSummary from './RowFocusSummary';
 import { formatCost } from '../money';
 import ReviewsFilters, { matchesChip, needsAttention as wantsAttention, type ChipFilter } from './ReviewsFilters';
 
@@ -168,6 +172,9 @@ export default function ReviewsList({ reviews, loading, error, showArchived, onS
             rows.map((r) => {
               const cost = costCell(r);
               return (
+                // The row is the one keyboard stop: its marks are not. Its accessible name (from its content, the
+                // marks' and the pipeline's labels included) carries the words they dropped, and on keyboard focus
+                // RowFocusSummary shows them in one line. Enter opens the detail (WIDGETS.md, "Compact review marks").
                 <div
                   key={r.id}
                   className={`row ${r.status === 'superseded' || r.archivedAt ? 'faded' : ''}`}
@@ -180,13 +187,13 @@ export default function ReviewsList({ reviews, loading, error, showArchived, onS
                   }}
                 >
                   <div className="status-cell">
-                    {statusCell(r)}
+                    {listStatusCell(r)}
                   </div>
                   <div className="state-cell">
-                    {prStateBadge(r.prState)}
+                    <PrStateIcon prState={r.prState} />
                   </div>
                   <div className="prov-cell">
-                    {providerBadge(r) ?? <span className="prov-none">—</span>}
+                    <ProviderIcon provider={providerLabel(r)} />
                   </div>
                   <div style={{ minWidth: 0 }}>
                     <div className="repo">
@@ -209,7 +216,7 @@ export default function ReviewsList({ reviews, loading, error, showArchived, onS
                     <CopyableValue text={r.sha} display={shortSha(r.sha)} mono copyTitle="Copy commit hash" />
                   </div>
                   <div className="cell-mini">{miniPipeline(r.status, r.stage)}</div>
-                  <div className="cell-r">{findCell(r.status, r.findings, r.carriedOverFindings, r.degraded)}</div>
+                  <div className="cell-r">{findCell(r)}</div>
                   <div className="model-cell">{llmIcon(r.model, r.llmType)}</div>
                   <div className="cell-r">
                     <span className="mono" title={cost.title}>{cost.text}</span>
@@ -217,6 +224,7 @@ export default function ReviewsList({ reviews, loading, error, showArchived, onS
                   <div className="cell-r">
                     <span className="time">{ago(r.updatedAt)}</span>
                   </div>
+                  <RowFocusSummary review={r} />
                 </div>
               );
             })

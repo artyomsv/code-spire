@@ -5,7 +5,6 @@ import dev.codespire.contract.command.ActionCommand.PrepareHarnessReply;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReplyPrepared;
-import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.ThreadTranscript;
 import dev.codespire.llm.FollowUpAnswer;
@@ -16,6 +15,7 @@ import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * The review worker's half of a reply on a harness (harness reviews, step 7). {@link #prepare} does what the API path
@@ -82,20 +82,11 @@ public class HarnessReplyWorker {
 
     private void doPrepare(PrepareHarnessReply command) {
         WorkerScmClients.Clients clients = scm.forCommand(command);
-        if (!(clients.comments() instanceof ThreadSource threadSource)) {
-            LOG.debugf("No ThreadSource for %s — conversational replies unsupported for this provider",
-                    command.reviewId());
-            return;
-        }
-        ThreadTranscript transcript = threadSource.fetchThread(command.repo(), command.prId(), command.threadRef());
-        if (!FollowUpWorker.shouldAnswer(transcript, command.mentioned())) {
-            LOG.debugf("Staying quiet on %s — multi-party thread with no @-mention", command.reviewId());
-            return;
-        }
-        if (idempotency.claim(command.reviewId(), command.threadRef().value(),
-                claimKey(command.triggeringCommentId())) instanceof CommentIdempotencyStore.Claim.AlreadyPosted) {
-            LOG.debugf("Skipping already-answered comment %s for %s", command.triggeringCommentId(),
-                    command.reviewId());
+        Optional<ThreadTranscript> transcript = new ReplyGate(results, () -> idempotency.claim(command.reviewId(),
+                command.threadRef().value(), claimKey(command.triggeringCommentId()))
+                instanceof CommentIdempotencyStore.Claim.AlreadyPosted)
+                .engage(clients.comments(), ReplyGate.Ask.of(command));
+        if (transcript.isEmpty()) {
             return;
         }
         rememberMention(command, clients.comments().mention(command.replyAuthor()).orElse(null));
@@ -103,7 +94,7 @@ public class HarnessReplyWorker {
         String head = clients.diff().fetchPullRequest(command.repo(), command.prId()).headCommit();
         results.emit(new HarnessReplyPrepared(command.reviewId(), command.prId(), head, command.threadRef(),
                 command.triggeringCommentId(), command.round(),
-                HarnessReviewInputFiles.reply(command.prId(), transcript, command.otherFindings())));
+                HarnessReviewInputFiles.reply(command.prId(), transcript.orElseThrow(), command.otherFindings())));
     }
 
     /**
@@ -131,7 +122,8 @@ public class HarnessReplyWorker {
                 ? already.postedRef() : postAndMark(command, key, text);
         results.emit(new FollowUpGenerated(command.reviewId(), command.threadRef(), text, null,
                 command.triggeringCommentId()));
-        results.emit(new FollowUpPosted(command.reviewId(), command.threadRef(), commentId, true));
+        results.emit(new FollowUpPosted(command.reviewId(), command.threadRef(), commentId, true,
+                command.triggeringCommentId()));
         String done = doneKey(command.triggeringCommentId());
         idempotency.claim(command.reviewId(), thread, done);
         idempotency.markPosted(command.reviewId(), thread, done, commentId);

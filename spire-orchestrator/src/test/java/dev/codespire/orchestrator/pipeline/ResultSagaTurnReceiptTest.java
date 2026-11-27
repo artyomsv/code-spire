@@ -25,19 +25,23 @@ class ResultSagaTurnReceiptTest {
 
     private final List<String> counted = new ArrayList<>();
     private final List<String> filed = new ArrayList<>();
+    private final List<String> ended = new ArrayList<>();
 
     @Test
     void anAnswerPostedSinceTheReceiptsExistIsCountedOnItsRoot() {
-        saga().on(new FollowUpPosted(HarnessSagaFakes.REVIEW_ID, new ThreadRef("TEST-reply"), "TEST-answer-new", true));
+        saga().on(new FollowUpPosted(HarnessSagaFakes.REVIEW_ID, new ThreadRef("TEST-reply"), "TEST-answer-new", true,
+                "TEST-comment-new"));
 
         assertEquals(List.of("TEST-root/TEST-answer-new"), counted);
         assertTrue(filed.isEmpty(), "a counted answer is not filed a second time");
+        assertEquals(List.of(HarnessSagaFakes.REVIEW_ID + ":TEST-comment-new" + HarnessSagaFakes.THROUGH_BROADCAST),
+                ended, "only the answered reply ends (V122), through finishAndBroadcast");
     }
 
     @Test
     void anAnswerFromBeforeTheReceiptsIsFiledAndNeverCounted() {
         saga().on(new FollowUpPosted(HarnessSagaFakes.REVIEW_ID, new ThreadRef("TEST-reply"), "TEST-answer-old",
-                false));
+                false, null));
 
         assertEquals(List.of("TEST-root/TEST-answer-old"), filed, "filed under the root, as a counted answer is");
         assertTrue(counted.isEmpty(), "an old answer may already be in the count; it never counts again");
@@ -59,7 +63,13 @@ class ResultSagaTurnReceiptTest {
             @Override
             public void setAnswering(String reviewId, boolean answering) {
             }
+
+            // A posted answer always broadcasts the review (PR #457); the real touch opens a database.
+            @Override
+            public void touch(String reviewId) {
+            }
         };
+        saga.followUpEndings = HarnessSagaFakes.endings(saga.projection, ended);
         return saga;
     }
 

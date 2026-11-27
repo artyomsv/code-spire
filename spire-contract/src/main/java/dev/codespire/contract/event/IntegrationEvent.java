@@ -48,6 +48,7 @@ import java.util.Set;
         @JsonSubTypes.Type(value = IntegrationEvent.CommentsPosted.class, name = "CommentsPosted"),
         @JsonSubTypes.Type(value = IntegrationEvent.FollowUpGenerated.class, name = "FollowUpGenerated"),
         @JsonSubTypes.Type(value = IntegrationEvent.FollowUpPosted.class, name = "FollowUpPosted"),
+        @JsonSubTypes.Type(value = IntegrationEvent.FollowUpDeclined.class, name = "FollowUpDeclined"),
         @JsonSubTypes.Type(value = IntegrationEvent.TurnCapNotified.class, name = "TurnCapNotified"),
         @JsonSubTypes.Type(value = IntegrationEvent.ArchivedNotified.class, name = "ArchivedNotified"),
         @JsonSubTypes.Type(value = IntegrationEvent.FindingConfirmed.class, name = "FindingConfirmed"),
@@ -98,6 +99,8 @@ public sealed interface IntegrationEvent {
      *     <p>Each provider spells it differently (two repository names on GitHub and Bitbucket, two
      *     numeric project ids on GitLab), which is the shape that has diverged here before — so the
      *     gateway asserts all three agree rather than trusting each adapter's own test.
+     *     <p>Null is unknown provenance (a manual registration, or a record that predates the component): downstream
+     *     treats it as untrusted, and it never overwrites a value a webhook recorded.
      */
     record PullRequestEventReceived(RepoRef repo, long prId, PrAction action,
                                     String title, String description,
@@ -106,15 +109,10 @@ public sealed interface IntegrationEvent {
                                     String htmlUrl, String providerType, Boolean fromFork)
             implements IntegrationEvent {
 
-        // fromFork is nullable: null is "unknown provenance" (a manual registration, or a record that predates the
-        // component and has no such member on the wire). Downstream treats it as untrusted, and it never overwrites a
-        // value a webhook recorded.
-
         /**
-         * The wither that rebuilds the record with another provenance. Adding a component to a wire record silently drops it at every rebuild site, because any
-         * convenience constructor stays valid and everything still compiles. Enumerating the
-         * components once, here, is what this repository does instead — the same reason
-         * {@code RunFinished} has {@code withTruncated} and {@code withFindings}.
+         * The wither that rebuilds the record with another provenance. A component added to a wire record is silently
+         * dropped at every rebuild site, since convenience constructors stay valid; it is enumerated once, here, as
+         * {@code RunFinished} does in {@code withTruncated} and {@code withFindings}.
          */
         public PullRequestEventReceived withFromFork(Boolean fromFork) {
             return new PullRequestEventReceived(repo, prId, action, title, description, sourceBranch,
@@ -279,7 +277,6 @@ public sealed interface IntegrationEvent {
 
     record ContextAssembled(String reviewId, long prId, String commit, String contextRef,
                             Set<String> contributingSources, Set<String> missingSources) implements IntegrationEvent {
-
         public ContextAssembled {
             contributingSources = contributingSources == null ? null : Set.copyOf(contributingSources);
             missingSources = missingSources == null ? null : Set.copyOf(missingSources);
@@ -287,9 +284,8 @@ public sealed interface IntegrationEvent {
     }
 
     /**
-     * Findings ride INLINE (ADR-011); may quote source — bus at-rest posture per ADR-014.
-     * verdicts + reconcileUsage are set only by the follow-up reconcile flow (ADR-019);
-     * both empty/null on a first review.
+     * Findings ride INLINE (ADR-011); may quote source — bus at-rest posture per ADR-014. verdicts + reconcileUsage
+     * are set only by the follow-up reconcile flow (ADR-019); both empty/null on a first review.
      */
     record ReviewGenerated(String reviewId, long prId, String commit, ReviewResult result,
                            List<FindingVerdict> verdicts, ModelUsage reconcileUsage) implements IntegrationEvent {
@@ -304,9 +300,8 @@ public sealed interface IntegrationEvent {
     }
 
     /**
-     * @param credentialRejected the provider refused the credential (not a transient fault), so
-     *                           the orchestrator can flag it for the operator instead of leaving
-     *                           a dead token to be inferred from repeated failures
+     * @param credentialRejected the provider refused the credential (not a transient fault), so the orchestrator can
+     *                           flag it for the operator instead of leaving a dead token inferred from repeated failures
      */
     record ReviewFailed(String reviewId, String commit, String phase, String error,
                         boolean retryable, int attempt, boolean credentialRejected)
@@ -402,17 +397,22 @@ public sealed interface IntegrationEvent {
     }
 
     /**
-     * The bot's answer {@code commentId} was posted in {@code threadRef}.
+     * The bot's answer {@code commentId} to {@code triggeringCommentId} was posted in {@code threadRef}, so that
+     * reply's "responding" mark ends (V122); an event from before that component names none and ends every mark.
      *
      * <p>{@code countsTurn} is true on every event a worker emits since the turn receipts (V110) exist, and the
-     * orchestrator then counts the answer as a turn once, whatever resends or replays follow. It is absent, so false,
-     * on an event recorded before them: whether such an answer was counted is named by nothing durable, and its
-     * replay can come back by any path in any order, so the orchestrator files it and counts nothing (review of PR
-     * #371, code-quality/M-1). A legacy answer never counted leaves its thread one answer before its cap, never one
-     * short. No shorter constructor: a site that forgets the flag must not compile into an uncounted answer.
+     * orchestrator then counts the answer as a turn once, whatever replays follow. It is absent, so false, on an event
+     * from before them: nothing durable says whether it was counted, and its replay can come back in any order, so the
+     * orchestrator files it and counts nothing (review of PR #371, code-quality/M-1). No shorter constructor: a site
+     * that forgets the flag must not compile into an uncounted answer.
      */
-    record FollowUpPosted(String reviewId, ThreadRef threadRef, String commentId, boolean countsTurn)
-            implements IntegrationEvent {
+    record FollowUpPosted(String reviewId, ThreadRef threadRef, String commentId, boolean countsTurn,
+                          String triggeringCommentId) implements IntegrationEvent {
+    }
+
+    /** The worker stayed quiet on a reply in {@code threadRef}: see {@link FollowUpDeclineReason}. */
+    record FollowUpDeclined(String reviewId, ThreadRef threadRef, String triggeringCommentId,
+                            FollowUpDeclineReason reason) implements IntegrationEvent {
     }
 
     /**

@@ -2,7 +2,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { ReviewStatus } from './api';
 import { matchesChip, needsAttention } from './components/ReviewsFilters';
-import { findCell, miniPipeline, outcomeBadge, STATUS_LABEL } from './render';
+import { findCell, miniPipeline } from './components/ReviewRowCells';
+import { outcomeBadge, STATUS_LABEL } from './render';
 
 /**
  * Review waits for CI (V121): "Waiting for checks" and "Skipped: checks failed". `ReviewStatus` is a compile-time
@@ -18,15 +19,15 @@ describe('review statuses of "Start review: after checks finish"', () => {
     expect(renderToStaticMarkup(outcomeBadge('skipped', 0, 0))).toContain('Skipped: checks failed');
   });
 
-  it.each(NEW_STATUSES)('draws %s as a label, never as finished segments', status => {
+  it.each(NEW_STATUSES)('draws %s in its own colour and name, never as finished segments', status => {
     const cell = renderToStaticMarkup(miniPipeline(status, 0));
     expect(cell).not.toContain('seg done');
-    expect(cell).not.toContain('done</span>');
-    expect(cell).toContain(status === 'skipped' ? 'skipped: checks failed' : 'waiting for checks');
+    expect(cell).toContain(`seg st-${status}`);
+    expect(cell).toContain(status === 'skipped' ? 'Pipeline: skipped — checks failed' : 'Pipeline: waiting for checks');
   });
 
   it.each(NEW_STATUSES)('shows no findings count for %s: no model saw the diff', status => {
-    expect(renderToStaticMarkup(findCell(status, 0))).toContain('—');
+    expect(renderToStaticMarkup(findCell({ status, findings: 0 }))).toContain('—');
   });
 
   it('puts a waiting review under Reviewing and a skipped one under Closed, neither under Needs attention', () => {

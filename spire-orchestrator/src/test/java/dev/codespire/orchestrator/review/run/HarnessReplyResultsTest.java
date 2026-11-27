@@ -13,6 +13,8 @@ import dev.codespire.orchestrator.llm.CallRefs;
 import dev.codespire.orchestrator.pipeline.CommandsEmitter;
 import dev.codespire.orchestrator.provider.ConversationLevels;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
+import dev.codespire.orchestrator.readmodel.AnsweringMarks;
+import dev.codespire.orchestrator.readmodel.ReplyKey;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import org.junit.jupiter.api.Test;
@@ -44,7 +46,8 @@ class HarnessReplyResultsTest {
     private final List<ActionCommand> emitted = new ArrayList<>();
     private final List<String> events = new ArrayList<>();
     private final List<String> timelineDetails = new ArrayList<>();
-    private final List<Boolean> answering = new ArrayList<>();
+    /** Each reply a failure or refusal ended through {@code finishAndBroadcast} (counted in ReplyEndingBroadcastsIT). */
+    private final List<String> endedAndBroadcast = new ArrayList<>();
 
     private static RunReviewArtifact answer(String text) {
         return new RunReviewArtifact(RUN_ID, REPLY, text, false, Map.of("INPUT", 1200L, "OUTPUT", 340L), 4, List.of());
@@ -61,7 +64,7 @@ class HarnessReplyResultsTest {
         assertEquals(List.of(new ActionCommand.PostHarnessReply(REVIEW_ID, REPO, 7, new ThreadRef(THREAD), "987654",
                 "TEST-REPLY-TEXT", "TEST-packed-scm", new ReplyRetry(3, 100, 2.0))), emitted);
         assertTrue(events.isEmpty(), events.toString());
-        assertTrue(answering.isEmpty(), "the pill clears when the posted reply's FollowUpPosted arrives");
+        assertTrue(endedAndBroadcast.isEmpty(),"the pill clears when the posted reply's FollowUpPosted arrives");
     }
 
     @Test
@@ -101,7 +104,7 @@ class HarnessReplyResultsTest {
                 false, null, List.of()), REPLY);
 
         assertEquals(List.of("FollowUpRefused@" + THREAD + ": harness reply refused: TEST-harness: fork_requires_credential_proxy"), events);
-        assertEquals(List.of(false), answering, "the responding pill clears");
+        assertEquals(List.of("987654"), endedAndBroadcast, "ends the reply through finishAndBroadcast");
         assertTrue(emitted.isEmpty(), emitted.toString());
     }
 
@@ -149,7 +152,7 @@ class HarnessReplyResultsTest {
 
     private void assertFailed(String why) {
         assertEquals(List.of("FollowUpFailed@" + THREAD + ": " + why), events);
-        assertEquals(List.of(false), answering, "the responding pill clears");
+        assertEquals(List.of("987654"), endedAndBroadcast, "ends the reply through finishAndBroadcast");
         assertTrue(emitted.isEmpty(), emitted.toString());
     }
 
@@ -161,11 +164,7 @@ class HarnessReplyResultsTest {
                 return reviewerCredential;
             }
         };
-        results.levels = new ConversationLevels() {
-            @Override public int maxAttempts() { return 3; }
-            @Override public long backoffBaseMs() { return 100L; }
-            @Override public double backoffFactor() { return 2.0; }
-        };
+        results.levels = levels();
         results.commands = new CommandsEmitter() {
             @Override
             public void emit(ActionCommand command) {
@@ -179,6 +178,7 @@ class HarnessReplyResultsTest {
             }
         };
         results.projection = projection();
+        results.answering = marks();
         results.runRows = new FactoryRunProjection() {
             @Override public Optional<String> harnessOf(String runId) { return Optional.of("TEST-harness"); }
             @Override protected void push(String runId) { /* nothing: no live feed from a unit test */ }
@@ -186,17 +186,45 @@ class HarnessReplyResultsTest {
         return results;
     }
 
+    private static ConversationLevels levels() {
+        return new ConversationLevels() {
+            @Override public int maxAttempts() { return 3; }
+            @Override public long backoffBaseMs() { return 100L; }
+            @Override public double backoffFactor() { return 2.0; }
+        };
+    }
+
+    /** Each reply a failure or refusal ended lands in {@link #endedAndBroadcast} by its triggering comment. */
+    private AnsweringMarks marks() {
+        return new AnsweringMarks() {
+            @Override
+            public void finish(ReplyKey reply) {
+                throw new AssertionError("an ending that recorded a line ends through finishAndBroadcast");
+            }
+
+            @Override
+            public void finishAndBroadcast(ReplyKey reply) {
+                endedAndBroadcast.add(reply.commentId());
+            }
+        };
+    }
+
     /** The real one writes review_status and the history; this one records both. */
     private ReviewProjection projection() {
         return new ReviewProjection() {
             @Override
-            public void appendEvent(String reviewId, String lane, String type, String detail, String threadRef) {
-                events.add(type + "@" + threadRef + ": " + detail);
+            public void appendEvent(dev.codespire.orchestrator.readmodel.EventLine line) {
+                events.add(line.type() + "@" + line.threadRef() + ": " + line.detail());
             }
 
             @Override
             public void setAnswering(String reviewId, boolean value) {
-                answering.add(value);
+                throw new AssertionError("a reply clears only its own comment's mark (V122)");
+            }
+
+            @Override
+            public void touch(String reviewId) {
+                throw new AssertionError("an ending broadcasts through finishAndBroadcast, never a touch of its own");
             }
         };
     }

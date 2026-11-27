@@ -349,6 +349,16 @@ Built by consuming `cs.events` / `cs.results`; **no FK to the event store** (dec
 `review_thread` (per conversation): `thread_id` TEXT PK (a `ThreadRef` value), `review_id` TEXT, `pr_id` BIGINT,
 `status` TEXT, `last_comment_id` TEXT, `updated_at`.
 
+`review_answering` (**V122**, review of PR #457): `review_id` (FK to `review_status`, ON DELETE CASCADE), `comment_id`
+TEXT, `started_at` TIMESTAMPTZ, PK the first two. One row per human reply the bot is answering; several can be
+outstanding at once. `review_status.answering` (V21) stays the flag the dashboard reads, true while any row is left:
+`AnsweringMarks` adds a reply's row and sets the flag, or removes its own row and sets the flag to whether any is
+left, in one transaction under the `review_status` row lock. Removing the row consumes the reply: only the finish
+that removed it records the reply's ending (a decline's history line), inserted in that same transaction, and any
+write that changed a row or the flag broadcasts the review after the commit. A clear that names no comment (a new run, an archive, a
+closed pull request, a `FollowUpPosted` from before V122) sets the flag false, and the `review_answering_cleared`
+trigger drops the review's rows in the same statement.
+
 `review_thread_turn` (**V110**, harness reviews step 7): `review_id` TEXT, `thread_ref` TEXT, `comment_id` TEXT,
 `counted_at` TIMESTAMPTZ, PK all three. One row per bot answer counted as a turn, written in the same statement that
 raises `review_thread.turn_count`, so a resent or replayed `FollowUpPosted` (A, B, A) never counts an answer twice.
@@ -396,7 +406,9 @@ proved the account by signing in (never an email address), null for a link made 
 data only; `author_id` stays the key.
 
 `review_event` (flattened timeline for the dashboard): `id` BIGINT PK, `review_id`, `type`,
-`at`, `summary` — non-sensitive projection of the log for the UI (no payloads).
+`at`, `summary` — non-sensitive projection of the log for the UI (no payloads). `comment_id` TEXT (**V122**,
+nullable): the person's reply a conversation event belongs to (`AuthorReplied`, and the `FollowUpGenerated` or
+`FollowUpDeclined` that ends it), so the dashboard pairs each reply with its own ending; NULL on older rows.
 
 Infra tables (per consuming service):
 - `projection_checkpoint(name PK, last_position BIGINT)` — projector/dispatcher progress.

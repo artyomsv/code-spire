@@ -159,8 +159,11 @@ public record ReviewDetail(
      * a conversation by matching {@code threadRef} against the threads a FINDING owns, so a
      * human-started thread on a line had nowhere to go and rendered as though it had no location at
      * all — even once the read model knew exactly where it was.
+     *
+     * <p>{@code commentId} (V122) is the person's reply a conversation event belongs to, so the dashboard ends each
+     * pending reply with its own answer or decline; null on other events and on rows stored before V122.
      */
     public record EventView(String ts, String at, String lane, String type, String det,
-                            String threadRef, String threadKind, String loc) {
+                            String threadRef, String threadKind, String loc, String commentId) {
     }
 }
