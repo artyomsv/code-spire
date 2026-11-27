@@ -7,27 +7,37 @@ import dev.codespire.contract.scm.VerdictLabel;
 import dev.codespire.scm.github.GitHubApiException;
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
-import static dev.codespire.worker.pipeline.VerdictLabelWorkerFixture.COMMIT;
 import static dev.codespire.worker.pipeline.VerdictLabelWorkerFixture.REPO;
 import static dev.codespire.worker.pipeline.VerdictLabelWorkerFixture.REVIEW_ID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * A skipped run's {@code review: ci-failed} (review waits for CI, Verdict labels on): set only while the pull
- * request's head is still the skipped commit, at most once per run, nothing posted, and every outcome reported.
+ * request's head is exactly the skipped commit, at most once per run, nothing posted, and every outcome reported.
  */
 class ChecksFailedLabelTest {
 
     private static final int ROUND = 3;
-    private static final LabelChecksFailed COMMAND = new LabelChecksFailed(REVIEW_ID, REPO, 9L, COMMIT, ROUND,
+    /** An obviously synthetic full commit id: the head check compares full SHAs only. */
+    private static final String SHA = "0".repeat(39) + "1";
+    private static final String OTHER_SHA = "0".repeat(39) + "2";
+    private static final LabelChecksFailed COMMAND = new LabelChecksFailed(REVIEW_ID, REPO, 9L, SHA, ROUND,
             "TEST-cred");
 
-    private final VerdictLabelWorkerFixture fx = new VerdictLabelWorkerFixture();
+    private final VerdictLabelWorkerFixture fx = atSkippedHead();
+
+    private static VerdictLabelWorkerFixture atSkippedHead() {
+        VerdictLabelWorkerFixture fixture = new VerdictLabelWorkerFixture();
+        fixture.head = SHA;
+        return fixture;
+    }
 
     private ChecksFailedLabelled reported() {
         return assertInstanceOf(ChecksFailedLabelled.class, fx.emitted.getLast());
@@ -40,18 +50,34 @@ class ChecksFailedLabelTest {
         assertEquals(List.of(VerdictLabel.CI_FAILED.name()), fx.sink.labelCalls);
         assertEquals(Set.of("TEST-unrelated", "review: ci-failed"), fx.sink.labels);
         assertEquals(List.of("label"), fx.sink.calls, "no comment and no review: the label is the only mark");
-        assertEquals(new ChecksFailedLabelled(REVIEW_ID, COMMIT, ROUND, Outcome.LABELLED, null), reported());
+        assertEquals(new ChecksFailedLabelled(REVIEW_ID, SHA, ROUND, Outcome.LABELLED, null), reported());
     }
 
     /** A push after the skip: the skipped commit is no longer the head, so nothing is written. */
     @Test
     void aMovedHeadWritesNothingAndReportsStale() {
         fx.sink.labels.add("review: requested");
-        fx.head = "TEST-newer-commit";
+        fx.head = OTHER_SHA;
         fx.checksFailedLabel().apply(COMMAND);
         assertTrue(fx.sink.labelCalls.isEmpty(), fx.sink.labelCalls.toString());
         assertEquals(Set.of("review: requested"), fx.sink.labels);
         assertEquals(Outcome.STALE, reported().outcome());
+    }
+
+    /**
+     * A head that cannot be established (absent, blank, or only a prefix of the skipped commit) is not taken as a match:
+     * the write fails closed, unlike the permissive {@code Commits.matches} (review of PR #458, code-quality/M-1).
+     */
+    @Test
+    void aHeadThatIsMissingBlankOrShortWritesNothing() {
+        for (String head : Arrays.asList(null, "", "  ", SHA.substring(0, 12), SHA.toUpperCase(java.util.Locale.ROOT))) {
+            VerdictLabelWorkerFixture fixture = atSkippedHead();
+            fixture.head = head;
+            fixture.checksFailedLabel().apply(COMMAND);
+            assertTrue(fixture.sink.labelCalls.isEmpty(), "head " + head + ": " + fixture.sink.labelCalls);
+            ChecksFailedLabelled outcome = assertInstanceOf(ChecksFailedLabelled.class, fixture.emitted.getLast());
+            assertEquals(Outcome.STALE, outcome.outcome(), "head " + head);
+        }
     }
 
     /** A redelivered command of the same run reports the recorded outcome and never calls the forge again. */
@@ -70,9 +96,9 @@ class ChecksFailedLabelTest {
     /** A stale first attempt stays stale on redelivery, even once the head is back on the skipped commit. */
     @Test
     void aRecordedStaleOutcomeIsReportedAgainWithoutAForgeCall() {
-        fx.head = "TEST-newer-commit";
+        fx.head = OTHER_SHA;
         fx.checksFailedLabel().apply(COMMAND);
-        fx.head = COMMIT;
+        fx.head = SHA;
         fx.checksFailedLabel().apply(COMMAND);
         assertTrue(fx.sink.labelCalls.isEmpty(), fx.sink.labelCalls.toString());
         assertEquals(Outcome.STALE, reported().outcome());
@@ -82,7 +108,7 @@ class ChecksFailedLabelTest {
     @Test
     void anotherRunOfTheSameHeadLabelsAgain() {
         fx.checksFailedLabel().apply(COMMAND);
-        fx.checksFailedLabel().apply(new LabelChecksFailed(REVIEW_ID, REPO, 9L, COMMIT, ROUND + 1, "TEST-cred"));
+        fx.checksFailedLabel().apply(new LabelChecksFailed(REVIEW_ID, REPO, 9L, SHA, ROUND + 1, "TEST-cred"));
         assertEquals(2, fx.sink.labelCalls.size());
     }
 
@@ -98,6 +124,16 @@ class ChecksFailedLabelTest {
         fx.checksFailedLabel().apply(COMMAND);
         assertEquals(1, fx.sink.labelCalls.size());
         assertEquals(failed, reported());
+    }
+
+    /** A response body that echoes a credential never reaches the published failure (review of PR #458, M-1). */
+    @Test
+    void aForgeResponseBodyNeverReachesTheReportedFailure() {
+        fx.sink.labelFailure = new GitHubApiException(401, "POST", "/TEST/labels", "TEST-SECRET-token-echo");
+        fx.checksFailedLabel().apply(COMMAND);
+        String failure = reported().labelFailure();
+        assertTrue(failure.contains("HTTP 401"), failure);
+        assertFalse(failure.contains("TEST-SECRET"), failure);
     }
 
     /** The claim slot is never a posted inline comment, so a later PostComments does not recover it as one. */

@@ -31,7 +31,7 @@ final class VerdictLabels {
     static final String CLAIM_KEY = "LABEL";
     private static final String APPLIED = "applied";
     private static final String FAILED = "failed:";
-    /** The stored reason is for a person to read; a forge error body past this adds nothing. */
+    /** The stored reason is for a person to read; joined reasons past this add nothing. */
     private static final int MAX_REASON = 300;
     private static final Logger LOG = Logger.getLogger(VerdictLabels.class);
 
@@ -98,8 +98,9 @@ final class VerdictLabels {
                     command.repo().full(), command.prId(), outcome);
             return null;
         } catch (RuntimeException e) {
-            LOG.warnf(e, "review %s: could not set the verdict label %s; the review stays posted",
-                    command.reviewId(), label.name());
+            // No throwable: a forge failure's message carries its response body (LabelFailureReason).
+            LOG.warnf("review %s: could not set the verdict label %s; the review stays posted: %s",
+                    command.reviewId(), label.name(), LabelFailureReason.of(e));
             return reason(e);
         }
     }
@@ -108,12 +109,9 @@ final class VerdictLabels {
         return recorded != null && recorded.startsWith(FAILED) ? recorded.substring(FAILED.length()) : null;
     }
 
-    /** A failure's reason as stored for a person to read; {@link ChecksFailedLabel} words its failures the same way. */
+    /** A failure's reason as stored for a person to read, never a response body; shared with {@link ChecksFailedLabel}. */
     static String reason(RuntimeException e) {
-        Throwable cause = WorkerFailures.unwrap(e);
-        String message = cause.getMessage() == null || cause.getMessage().isBlank()
-                ? cause.getClass().getSimpleName() : cause.getMessage();
-        return bounded(message);
+        return bounded(LabelFailureReason.of(e));
     }
 
     static String bounded(String message) {

@@ -1,7 +1,12 @@
 package dev.codespire.worker.pipeline;
 
+import java.util.regex.Pattern;
+
 /** Commit-identifier comparison across short (webhook, 12-char) and full (REST) hashes. */
 final class Commits {
+
+    /** A full SHA-1 or SHA-256 commit id, as a forge's REST API reports a head. */
+    private static final Pattern FULL_SHA = Pattern.compile("[0-9a-f]{40}|[0-9a-f]{64}");
 
     private Commits() {
     }
@@ -17,5 +22,13 @@ final class Commits {
             return true;
         }
         return head.startsWith(commit) || commit.startsWith(head);
+    }
+
+    /**
+     * True only when {@code head} is a full commit id equal to {@code commit}. Fail closed, for a write that must never
+     * land on a newer head: unlike {@link #matches}, a missing, blank or short head is no match.
+     */
+    static boolean isSameFullSha(String head, String commit) {
+        return head != null && FULL_SHA.matcher(head).matches() && head.equals(commit);
     }
 }
