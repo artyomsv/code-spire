@@ -1395,19 +1395,18 @@ public class ReviewProjection {
     }
 
     /**
-     * Delete ALL worker-owned per-review state (separate service, {@code worker} schema): its
-     * idempotency claims (cached LLM result + posted-comment slots) AND its assembled-context blobs.
-     * Each guarded independently because the worker schema — or a given table within it — may be absent
-     * (worker never started / migrated). Used by {@link #clearWorkerIdempotency} (re-run), which must
-     * leave no worker orphans behind. Archiving deliberately does NOT call it: an archived review keeps
-     * everything, including the cached result and the assembled context.
-     *
-     * <p>The context blob is deleted by {@code review_id}, so it catches every blob a review owns,
-     * including ones superseded across re-runs — content and reference vanish together (no orphaned blob).
+     * Delete the worker-owned per-review state (separate service, {@code worker} schema): its idempotency claims
+     * (cached LLM result + posted-comment slots) AND its assembled-context blobs. Each guarded independently because
+     * the worker schema — or a given table within it — may be absent (worker never started / migrated). Used by
+     * {@link #clearWorkerIdempotency} (re-run), which must leave no worker orphans behind; archiving does NOT call it.
+     * Kept: a skipped run's ci-failed receipts, keyed by run round, so a replayed old command never labels over a
+     * re-run's verdict (PR #458). The context blob is deleted by {@code review_id}, so it catches every blob a review
+     * owns, including ones superseded across re-runs — content and reference vanish together (no orphaned blob).
      */
     private void deleteWorkerClaims(Connection c, String reviewId) throws SQLException {
         if (tableExists(c, "worker.comment_idempotency")) {
-            deleteBy(c, "DELETE FROM worker.comment_idempotency WHERE review_id = ?", reviewId);
+            deleteBy(c, "DELETE FROM worker.comment_idempotency WHERE review_id = ? AND NOT starts_with(anchor_key, '"
+                    + dev.codespire.contract.command.ActionCommand.LabelChecksFailed.RECEIPT_PREFIX + "')", reviewId);
         }
         if (tableExists(c, "worker.context_blob")) {
             deleteBy(c, "DELETE FROM worker.context_blob WHERE review_id = ?", reviewId);

@@ -342,17 +342,17 @@ public sealed interface ActionCommand {
     }
 
     /**
-     * Review waits for CI with Verdict labels on: the checks on {@code commit} failed, so run {@code round} was skipped.
-     * The worker labels the pull request {@code review: ci-failed} only while its head is still {@code commit}, at most
-     * once per run, and answers {@code ChecksFailedLabelled}.
+     * Review waits for CI with Verdict labels on: run {@code round} on {@code commit} was skipped on failed checks. The
+     * worker labels {@code review: ci-failed} only while the head is exactly {@code commit}, once per run (a receipt
+     * under {@link #RECEIPT_PREFIX} that a dashboard Re-run keeps), and answers {@code ChecksFailedLabelled}.
      */
     record LabelChecksFailed(String reviewId, RepoRef repo, long prId, String commit, int round, String scmCredential)
             implements ActionCommand {
+        public static final String RECEIPT_PREFIX = "LABEL_CI_FAILED#";
     }
 
     /**
-     * Confirm in-thread that a {@code /finding} was filed, naming the severity and anchor it was
-     * filed at.
+     * Confirm in-thread that a {@code /finding} was filed, naming the severity and anchor it was filed at.
      *
      * <p>Carries no LLM credential — the notice is fixed text, so filing a finding costs no tokens,
      * exactly as the turn-cap and archived notices do.

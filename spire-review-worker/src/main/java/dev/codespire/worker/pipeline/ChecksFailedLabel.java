@@ -15,11 +15,13 @@ import org.jboss.logging.Logger;
  * docs/superpowers/specs/2026-11-24-review-waits-for-ci-design.md, item 6). Nothing is posted: the label is set through
  * the verdict label's port, so it replaces every other {@code review: } label and is created when missing.
  *
- * <p><b>Two guards against a stale label.</b> Right before writing, the pull request's head is read; when it is no
- * longer the skipped commit, nothing is written and the outcome is {@code STALE}. And the attempt is claimed once per
- * run, under {@code LABEL_CI_FAILED#<round>}, with its outcome recorded there: a redelivered command reports the recorded
- * outcome and never calls the forge again, so it cannot put the label back over one set since. A later review's
- * verdict label replaces it as any verdict label does.
+ * <p><b>Two guards against a stale label.</b> Right before writing, the pull request's head is read; unless it is
+ * exactly the skipped commit's full SHA (a missing or short head counts as unknown), nothing is written and the
+ * outcome is {@code STALE}. And the attempt is claimed once per run, under {@code LABEL_CI_FAILED#<round>}, with its
+ * outcome recorded there: a redelivered command reports the recorded outcome and never calls the forge again, so it
+ * cannot put the label back over one set since. A dashboard Re-run keeps these receipts (it clears the other claims).
+ * A later review's verdict label replaces it as any verdict label does. Failures are reported and logged without the
+ * forge's response body ({@link LabelFailureReason}).
  *
  * <p>Best effort, like the verdict label: a failure is answered as {@code FAILED} with its reason, for the attention
  * row, and never retried. The window left: a dashboard Re-run on the same commit while this write is in flight can see
@@ -29,7 +31,7 @@ import org.jboss.logging.Logger;
 public class ChecksFailedLabel {
 
     /** The claim slot of one run's attempt, beside the review's own; never a posted inline comment. */
-    static final String CLAIM_PREFIX = "LABEL_CI_FAILED#";
+    static final String CLAIM_PREFIX = LabelChecksFailed.RECEIPT_PREFIX;
     private static final String STORED_APPLIED = "applied";
     private static final String STORED_STALE = "stale";
     private static final String STORED_FAILED = "failed:";
@@ -69,8 +71,8 @@ public class ChecksFailedLabel {
         try {
             WorkerScmClients.Clients clients = scm.forCommand(command);
             String head = clients.diff().fetchPullRequest(command.repo(), command.prId()).headCommit();
-            if (!Commits.matches(head, command.commit())) {
-                LOG.infof("review %s: no %s for run %d: the pull request moved past %s to %s", command.reviewId(),
+            if (!Commits.isSameFullSha(head, command.commit())) {
+                LOG.infof("review %s: no %s for run %d: the head is not %s but %s", command.reviewId(),
                         VerdictLabel.CI_FAILED.name(), command.round(), command.commit(), head);
                 return outcome(command, Outcome.STALE, null);
             }
@@ -82,8 +84,9 @@ public class ChecksFailedLabel {
             return outcome == LabelOutcome.UNSUPPORTED ? failed(command, "this forge sets no labels")
                     : outcome(command, Outcome.LABELLED, null);
         } catch (RuntimeException e) {
-            LOG.warnf(e, "review %s: could not set %s for run %d", command.reviewId(), VerdictLabel.CI_FAILED.name(),
-                    command.round());
+            // No throwable: a forge failure's message carries its response body (LabelFailureReason).
+            LOG.warnf("review %s: could not set %s for run %d: %s", command.reviewId(), VerdictLabel.CI_FAILED.name(),
+                    command.round(), LabelFailureReason.of(e));
             return failed(command, VerdictLabels.reason(e));
         }
     }
