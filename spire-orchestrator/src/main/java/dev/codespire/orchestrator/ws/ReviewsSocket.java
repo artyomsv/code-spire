@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import io.quarkus.websockets.next.OnOpen;
 import io.quarkus.websockets.next.WebSocket;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 
 /**
@@ -13,6 +14,7 @@ import jakarta.inject.Inject;
  * as reviews change. Read-side transport only.
  */
 @WebSocket(path = "/api/ws/reviews")
+@RolesAllowed({"spire-viewer", "spire-admin"})
 public class ReviewsSocket {
 
     @Inject

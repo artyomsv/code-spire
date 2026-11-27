@@ -8,6 +8,7 @@ import io.quarkus.websockets.next.CloseReason;
 import io.quarkus.websockets.next.OnOpen;
 import io.quarkus.websockets.next.WebSocket;
 import io.quarkus.websockets.next.WebSocketConnection;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 
 import java.net.URLDecoder;
@@ -35,6 +36,7 @@ import java.util.List;
  * every push a no-op. A named constant removes the guess from both sides.
  */
 @WebSocket(path = RunTranscriptSocket.PATH, endpointId = RunTranscriptSocket.ENDPOINT_ID)
+@RolesAllowed({"spire-viewer", "spire-admin"})
 public class RunTranscriptSocket {
 
     public static final String PATH = "/api/ws/runs/transcript";

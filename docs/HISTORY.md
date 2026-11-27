@@ -2858,3 +2858,10 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
 
   **Upgrading.** No migration. `ReviewResult.clippedInputs` is ignored by an older reader and read as empty by a newer
   one, so roll in any order: an older worker's clipped result still holds an approval, as before.
+
+- **Every dashboard socket asks for a role (2026-11-27, branch `fix/reviews-socket-role`, Part of #391).** Found
+  during PR #457: `/api/ws/reviews` answered any signed-in identity, while `GET /api/reviews` asks for `spire-viewer`
+  or `spire-admin`. The same gap was on `/api/ws/runs`, `/api/ws/attention`, `/api/ws/timeline` and
+  `/api/ws/runs/transcript`; only `/api/ws/work-items` had the check. All five now carry
+  `@RolesAllowed({"spire-viewer", "spire-admin"})`, the roles of their REST reads, so an identity with neither role
+  is refused at the handshake (`SocketRolesTest`). No migration, no UI change: the dashboard's users hold a role.

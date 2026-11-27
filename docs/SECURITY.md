@@ -76,7 +76,9 @@ and LAND remain unavailable. [M3 acceptance](factory/M3-ACCEPTANCE.md) and the s
   three — `refresh-expired` is inert without `session-age-extension`, so a half-applied revert reads
   exactly like an applied one. **Not yet observed working on a live stack** — see `docs/UNVERIFIED.md` §B.
 - **RBAC:** two roles — `spire-viewer` (read **reviews**) and `spire-admin` (everything else: manage
-  config, replay, rules). Enforced with `@RolesAllowed`. Roles map from the IdP, read from the
+  config, replay, rules). Enforced with `@RolesAllowed`, on every dashboard WebSocket too (its
+  handshake is refused, since a later REST refusal cannot take back a frame already sent; the
+  `/api/*` policy alone only asks for a signed-in identity). Roles map from the IdP, read from the
   **access** token (Keycloak puts `realm_access` there; reading the ID token yields an operator with
   no roles at all).
 - Three rules decide the matrix, and all three are needed. *Can it spend money or change behaviour*

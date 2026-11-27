@@ -6,10 +6,12 @@ import dev.codespire.orchestrator.factory.FactoryRunProjection;
 import dev.codespire.orchestrator.factory.RunsBroadcaster;
 import io.quarkus.websockets.next.OnOpen;
 import io.quarkus.websockets.next.WebSocket;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 
 /** Snapshot on open, then single-row pushes. Clients filter locally as rows change status. */
 @WebSocket(path = "/api/ws/runs", endpointId = RunsSocket.ENDPOINT_ID)
+@RolesAllowed({"spire-viewer", "spire-admin"})
 public class RunsSocket {
 
     public static final String ENDPOINT_ID = RunsBroadcaster.ENDPOINT_ID;
