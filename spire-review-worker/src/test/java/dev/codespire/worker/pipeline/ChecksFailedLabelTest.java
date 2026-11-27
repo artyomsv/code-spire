@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 import static dev.codespire.worker.pipeline.VerdictLabelWorkerFixture.REPO;
@@ -16,6 +17,7 @@ import static dev.codespire.worker.pipeline.VerdictLabelWorkerFixture.REVIEW_ID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -66,18 +68,35 @@ class ChecksFailedLabelTest {
 
     /**
      * A head that cannot be established (absent, blank, or only a prefix of the skipped commit) is not taken as a match:
-     * the write fails closed, unlike the permissive {@code Commits.matches} (review of PR #458, code-quality/M-1).
+     * the write fails closed, unlike the permissive {@code Commits.matches} (review of PR #458, code-quality/M-1), and
+     * is a failure for the attention row, not a moved head (code-quality/L-1).
      */
     @Test
-    void aHeadThatIsMissingBlankOrShortWritesNothing() {
-        for (String head : Arrays.asList(null, "", "  ", SHA.substring(0, 12), SHA.toUpperCase(java.util.Locale.ROOT))) {
-            VerdictLabelWorkerFixture fixture = atSkippedHead();
-            fixture.head = head;
-            fixture.checksFailedLabel().apply(COMMAND);
-            assertTrue(fixture.sink.labelCalls.isEmpty(), "head " + head + ": " + fixture.sink.labelCalls);
-            ChecksFailedLabelled outcome = assertInstanceOf(ChecksFailedLabelled.class, fixture.emitted.getLast());
-            assertEquals(Outcome.STALE, outcome.outcome(), "head " + head);
+    void aHeadThatIsMissingBlankOrShortWritesNothingAndFails() {
+        for (String head : Arrays.asList(null, "", "  ", SHA.substring(0, 12))) {
+            ChecksFailedLabelled outcome = labelAtHead(head);
+            assertEquals(Outcome.FAILED, outcome.outcome(), "head " + head);
+            assertEquals(ChecksFailedLabel.HEAD_UNKNOWN, outcome.labelFailure(), "head " + head);
         }
+    }
+
+    /** Another full SHA, in either case, names a commit that is not the skipped one: the pull request moved. */
+    @Test
+    void aDifferentFullHeadWritesNothingAndIsStale() {
+        for (String head : List.of(OTHER_SHA, SHA.toUpperCase(Locale.ROOT))) {
+            ChecksFailedLabelled outcome = labelAtHead(head);
+            assertEquals(Outcome.STALE, outcome.outcome(), "head " + head);
+            assertNull(outcome.labelFailure(), "head " + head);
+        }
+    }
+
+    /** One fresh run with the pull request at {@code head}: no label call, and the reported outcome. */
+    private static ChecksFailedLabelled labelAtHead(String head) {
+        VerdictLabelWorkerFixture fixture = atSkippedHead();
+        fixture.head = head;
+        fixture.checksFailedLabel().apply(COMMAND);
+        assertTrue(fixture.sink.labelCalls.isEmpty(), "head " + head + ": " + fixture.sink.labelCalls);
+        return assertInstanceOf(ChecksFailedLabelled.class, fixture.emitted.getLast());
     }
 
     /** A redelivered command of the same run reports the recorded outcome and never calls the forge again. */
@@ -126,14 +145,26 @@ class ChecksFailedLabelTest {
         assertEquals(failed, reported());
     }
 
-    /** A response body that echoes a credential never reaches the published failure (review of PR #458, M-1). */
+    /**
+     * A response body that echoes a credential never reaches the published failure, the log or the stored receipt
+     * (review of PR #458, M-1 and qa/L-1).
+     */
     @Test
     void aForgeResponseBodyNeverReachesTheReportedFailure() {
         fx.sink.labelFailure = new GitHubApiException(401, "POST", "/TEST/labels", "TEST-SECRET-token-echo");
-        fx.checksFailedLabel().apply(COMMAND);
+        List<String> logged;
+        try (LogCapture log = LogCapture.of(ChecksFailedLabel.class)) {
+            fx.checksFailedLabel().apply(COMMAND);
+            logged = log.lines();
+        }
         String failure = reported().labelFailure();
         assertTrue(failure.contains("HTTP 401"), failure);
         assertFalse(failure.contains("TEST-SECRET"), failure);
+        assertFalse(logged.isEmpty(), "the failure must be logged at all");
+        assertTrue(logged.stream().noneMatch(line -> line.contains("TEST-SECRET")), String.join("\n", logged));
+        String receipt = fx.idempotency.postedFor(REVIEW_ID, SHA).get(ChecksFailedLabel.CLAIM_PREFIX + ROUND);
+        assertTrue(receipt.startsWith("failed:") && receipt.contains("HTTP 401"), receipt);
+        assertFalse(receipt.contains("TEST-SECRET"), receipt);
     }
 
     /** The claim slot is never a posted inline comment, so a later PostComments does not recover it as one. */
