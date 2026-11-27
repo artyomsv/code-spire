@@ -6,7 +6,7 @@ import RepositorySwitches from './RepositorySwitches';
 import RepositorySettings from './RepositorySettings';
 import { queryWrapper } from '../../test/queryWrapper';
 
-const HINT = 'Sets review: approved or review: changes-requested after each review and removes other review: labels.';
+const HINT = 'Sets review: approved or review: changes-requested after each review and removes other review: labels. With Start review after checks finish, a red build sets review: ci-failed.';
 
 const fields = (scmType: string): api.RepositoryInput => ({
   scmType, forgeOrigin: 'https://forge.example.test', workspace: 'TEST-owner', slug: 'TEST-repo', enabled: true,

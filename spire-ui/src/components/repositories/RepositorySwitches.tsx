@@ -34,7 +34,7 @@ export default function RepositorySwitches({ fields, onChange }: Props) {
     <p className="prov-sub">Open findings at this level or higher make the review Request changes and hold a factory land. Info and nits never block.</p>
     {LABEL_FORGES.has(fields.scmType) && <>
       <label className="field-check"><input type="checkbox" checked={fields.verdictLabels} onChange={e => onChange({ verdictLabels: e.target.checked })} /><span>Verdict labels</span></label>
-      <p className="prov-sub">Sets review: approved or review: changes-requested after each review and removes other review: labels.</p>
+      <p className="prov-sub">Sets review: approved or review: changes-requested after each review and removes other review: labels. With Start review after checks finish, a red build sets review: ci-failed.</p>
       <RepositoryStartReview fields={fields} onChange={onChange} />
     </>}
   </>;
