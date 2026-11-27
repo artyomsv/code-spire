@@ -136,8 +136,9 @@ ADR-047): off, every review there is posted as a Comment. V115 adds `block_appro
 default `BLOCKER`, checked to `BLOCKER`, `MAJOR` or `MINOR`; ADR-047 as amended 2026-11-14): an open finding at
 or above it makes the review Request changes and holds a factory land. V120 adds `verdict_labels` (boolean, not
 null, default false; ADR-047 as amended 2026-11-24): on, each posted review sets one `review: ` label from its
-decided verdict, and `review_status.label_failure` (text, nullable) holds why the last posted review's label call
-failed. V121 adds `start_review` (text, not null, default `IMMEDIATELY`, checked to `IMMEDIATELY` or
+decided verdict, and `review_status.label_failure` (text, nullable) holds why the last label call failed: the last
+posted review's, or a skipped run's `review: ci-failed` (written for that run's commit and `run_round` only). It is
+the failure's kind and HTTP status, never a forge response body. V121 adds `start_review` (text, not null, default `IMMEDIATELY`, checked to `IMMEDIATELY` or
 `AFTER_CHECKS`; review waits for CI): with `AFTER_CHECKS` a review of a new head waits in `review_checks_wait`
 (one row per review: repository, head, the run's round, fork flag, stage, the wait's start, the sweep's next read,
 a skip's failed checks and why the last read of the checks failed; FK to `review_status` with ON DELETE CASCADE) until its checks finish. The stages are
@@ -146,7 +147,8 @@ finishes after a crash), and the terminal `started`, `skipped` and `timed_out` (
 review started on the 60-minute timeout from approving). The row is the review's latest admitted run of a repository that
 waits for checks, written `admitted` in the round lock that admits it, made `waiting` once the review header is set up,
 and never replaced by an earlier round; a repository that starts reviews at once writes no row. The read model shows `waiting_for_checks` and
-`skipped` (a red build: no review, no charge, no label). V121 also adds `review_status.run_round` (int, nullable): the round
+`skipped` (a red build: no review and no charge; with Verdict labels on, the pull request is labelled `review: ci-failed`
+while its head is still exactly the skipped commit, best effort; docs/UNVERIFIED.md, the ci-failed entry). V121 also adds `review_status.run_round` (int, nullable): the round
 of the run whose header the row holds. Every accepted run's header write sets it (a run started at once, a re-run, a
 waiting run's header and its readying). A run's header is initialised once per round, only while the row holds an
 earlier round, evaluated on the locked row: whichever of a waiting run's caller and its readying comes second keeps
@@ -419,7 +421,12 @@ Operational state (not projections — ADR-013 guards):
   posted_at TIMESTAMPTZ NULL, PRIMARY KEY(review_id, commit, anchor_key))` — owned by
   `spire-review-worker`. Row inserted **before** the external post; `comment_id` filled on success;
   on retry, existing rows (reconciled against the PR's bot comments) are skipped — prevents duplicate
-  comments under at-least-once. `anchor_key` = `SUMMARY` or `path:line:side` for inline.
+  comments under at-least-once. `anchor_key` = `SUMMARY` or `path:line:side` for inline; `LABEL` is a posted review's
+  verdict label attempt and `LABEL_CI_FAILED#<round>` a skipped run's ci-failed label receipt, its outcome (`applied`,
+  `stale` or `failed:<reason>`) in `posted_ref`. A dashboard Re-run deletes the review's rows except the
+  `LABEL_CI_FAILED#` receipts, which live as long as the review: a replayed command of an old run finds its receipt
+  and never labels over a later verdict, while a new skipped run has a new round and labels. The head read and the
+  label write are separate requests, so a push between them can still be labelled.
 - `context_deadline(review_id TEXT PK, expected_sources TEXT[], received_sources TEXT[],
   deadline_at TIMESTAMPTZ)` — owned by `spire-context-worker`. The **DB-backed timeout sweep**: a
   scheduled job emits `ContextAssembled` for rows past `deadline_at`; survives rebalance/restart
