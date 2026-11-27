@@ -3,6 +3,7 @@ package dev.codespire.gateway.attention;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import io.quarkus.websockets.next.OnOpen;
 import io.quarkus.websockets.next.WebSocket;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 
 /**
@@ -13,8 +14,12 @@ import jakarta.inject.Inject;
  * so they must be separable by the dev-server proxy. The UI opens both and merges,
  * exactly as it already did with the two HTTP feeds — neither service reads the other's schema, so
  * there is no aggregating service to hold a single socket.
+ *
+ * <p>The roles of {@code WebhookAttentionResource}: the {@code /gw/*} policy only asks for a signed-in identity, and a
+ * later REST refusal cannot take back a snapshot already sent.
  */
 @WebSocket(path = "/gw/ws/webhook-attention")
+@RolesAllowed({"spire-viewer", "spire-admin"})
 public class WebhookAttentionSocket {
 
     @Inject

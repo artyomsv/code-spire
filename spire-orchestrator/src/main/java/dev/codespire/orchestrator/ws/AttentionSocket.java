@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import dev.codespire.orchestrator.attention.AttentionBroadcaster;
 import io.quarkus.websockets.next.OnOpen;
 import io.quarkus.websockets.next.WebSocket;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 
 /**
@@ -18,6 +19,7 @@ import jakarta.inject.Inject;
  * on its own socket, because neither service reads the other's schema.
  */
 @WebSocket(path = "/api/ws/attention")
+@RolesAllowed({"spire-viewer", "spire-admin"})
 public class AttentionSocket {
 
     @Inject

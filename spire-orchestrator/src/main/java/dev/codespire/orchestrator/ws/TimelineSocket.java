@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import io.quarkus.websockets.next.OnOpen;
 import io.quarkus.websockets.next.WebSocket;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 
 /**
@@ -12,6 +13,7 @@ import jakarta.inject.Inject;
  * dashboard. The domain flow never touches WebSockets.
  */
 @WebSocket(path = "/api/ws/timeline")
+@RolesAllowed({"spire-viewer", "spire-admin"})
 public class TimelineSocket {
 
     @Inject
