@@ -1,11 +1,4 @@
-    /**
-     * Whether the review may not have seen every changed line: the rule {@link #holdForPartialReview} applies to. A
-     * cut context, code context or prior-findings list alone does not hold an approval (context cut design,
-     * 2026-11-27): every changed line was still reviewed, and the posted note says what was cut.
-     */
-    public static boolean isPartial(ReviewResult result) {
-        return result.diffNotWhole();
-    }package dev.codespire.orchestrator.pipeline;
+package dev.codespire.orchestrator.pipeline;
 
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.ReviewVerdict;
