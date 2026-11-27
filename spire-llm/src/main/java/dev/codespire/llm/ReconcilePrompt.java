@@ -92,7 +92,7 @@ public final class ReconcilePrompt {
         values.put("prior_findings", numberedFindings(input.findings(), input.transcripts()));
         values.put("diff_kind", input.basis() == DiffBasis.INCREMENTAL ? INCREMENTAL_DIFF_KIND : FULL_DIFF_KIND);
         Map<String, Integer> background = InputBudgets.forWindow(PromptKind.RECONCILE, limits);
-        int budget = DiffBudget.forTemplate(effective, values, background, limits);
+        int budget = DiffBudget.forTemplate(effective, values, limits);
         String diff = input.diffText() == null ? "" : input.diffText();
         DiffCoverage coverage = TokenBudget.estimateTokens(diff) > budget
                 ? DiffCoverage.clipped(diff, TokenBudget.clip(diff, budget))

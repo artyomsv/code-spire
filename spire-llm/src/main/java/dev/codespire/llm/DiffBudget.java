@@ -130,14 +130,13 @@ public final class DiffBudget {
     }
 
     /**
-     * The diff budget for a template and the values of its other variables, each clipped to its own budget.
-     *
-     * @param backgroundBudgets the other variables' budgets for this render ({@link InputBudgets#forWindow})
+     * The diff budget for a template and the values of its other variables, each clipped to its own budget: the one
+     * {@link InputBudgets#forWindow} gives for the kind and the limits, as the render does.
      */
-    static int forTemplate(PromptTemplate template, Map<String, String> otherValues,
-                           Map<String, Integer> backgroundBudgets, Limits limits) {
+    static int forTemplate(PromptTemplate template, Map<String, String> otherValues, Limits limits) {
+        Map<String, Integer> background = InputBudgets.forWindow(template.kind(), limits);
         PromptShape shape = new PromptShape(defaultFor(template.kind()),
-                otherTokens(template, otherValues, backgroundBudgets), PromptRenderer.uses(template, DIFF));
+                otherTokens(template, otherValues, background), PromptRenderer.uses(template, DIFF));
         return tokens(shape, limits);
     }
 

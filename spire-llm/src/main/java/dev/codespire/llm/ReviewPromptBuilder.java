@@ -87,7 +87,7 @@ public final class ReviewPromptBuilder {
         values.put("code_context", renderContext(input.context(), true));
         values.put("prior_findings", renderAlreadyReported(input.alreadyReported()));
         Map<String, Integer> background = InputBudgets.forWindow(PromptKind.REVIEW, limits);
-        int budget = DiffBudget.forTemplate(effective, values, background, limits);
+        int budget = DiffBudget.forTemplate(effective, values, limits);
         DiffSelection selection = DiffSelection.byFile(input.patches(), budget);
         values.put(DiffBudget.DIFF, selection.text());
         PromptRenderer.Rendered rendered = PromptRenderer.render(effective, values,
