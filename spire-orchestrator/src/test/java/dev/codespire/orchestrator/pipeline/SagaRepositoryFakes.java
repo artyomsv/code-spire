@@ -52,11 +52,15 @@ final class SagaRepositoryFakes {
         };
     }
 
-    /** Every CommentsPosted writes its label outcome; this one writes nothing. */
+    /** Every CommentsPosted and ci-failed label report writes its label outcome; this one writes none. */
     static LabelFailures silentLabelFailures() {
         return new LabelFailures() {
             @Override
             public void record(String reviewId, String commit, String reason) {
+            }
+
+            @Override
+            public void recordForRun(Run run, String reason) {
             }
         };
     }

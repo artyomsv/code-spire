@@ -8,6 +8,8 @@ import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.pipeline.CommandsEmitter;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
+import dev.codespire.orchestrator.repository.RepositoryRegistry;
+import dev.codespire.orchestrator.repository.StartReview;
 import dev.codespire.orchestrator.review.checks.ChecksWait.Stage;
 import dev.codespire.orchestrator.review.run.ReviewRoundLock;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -25,8 +27,9 @@ import java.util.Optional;
  * another resolver started. The claimed row is the recoverable intent: the effects follow, and the row is completed
  * last, so a process that dies in between leaves the claim for the sweep, which finishes it ({@link #dispatch},
  * {@link #finishSkip}). A restart can therefore send a run's FetchDiff twice, never zero times; the stale-run
- * guard and the worker's claims make that idempotent downstream. A skip sets no label: the dashboard shows it as
- * "Skipped: checks failed" with the failed checks' names.
+ * guard and the worker's claims make that idempotent downstream. A skip shows as "Skipped: checks failed" with the
+ * failed checks' names; with Verdict labels on, the call that ends its run also sends one {@code LabelChecksFailed},
+ * and a recovered skip that finds its run already ended sends none (the worker's per-run receipt guards the rest).
  */
 @ApplicationScoped
 public class ChecksWaitOutcomes {
@@ -51,6 +54,16 @@ public class ChecksWaitOutcomes {
 
     @Inject
     ReviewRoundLock rounds;
+
+    /** The repository's "Verdict labels" (V120) and "Start review" (V121), read when a skip ends its run. */
+    @Inject
+    RepositoryRegistry repositories;
+
+    @Inject
+    StartReviewSetting setting;
+
+    /** How {@link #endRun} found the claimed run: ended by this call, ended before (a recovered skip), or not current. */
+    private enum RunEnd { ENDED_NOW, ENDED_BEFORE, NOT_CURRENT }
 
     /** Every check finished green, or the head has none: the review starts as it would have at once. */
     public void start(ChecksWait wait) {
@@ -97,25 +110,43 @@ public class ChecksWaitOutcomes {
         waits.finish(claimed);
     }
 
-    /** Under the round lock: the run's end and its note, so a re-run admitted next is never cancelled. */
+    /** Under the round lock: the run's end, its note and its label, so a re-run admitted next is never cancelled. */
     private boolean endRunAndMark(ChecksWait claimed) {
-        if (!endRun(claimed)) return false;
+        RunEnd end = endRun(claimed);
+        if (end == RunEnd.NOT_CURRENT) return false;
         String names = claimed.failedChecks() == null ? NO_NAMES : claimed.failedChecks();
         projection.setNote(claimed.reviewId(), "Checks failed on " + claimed.head() + ": " + names
                 + ". No review ran and nothing was charged; a new commit waits for its checks again.");
         projection.appendEvent(claimed.reviewId(), "integration", "ChecksFailed",
                 "failed on " + claimed.head() + ": " + names);
         LOG.infof("review %s: checks failed on %s (%s); the review is skipped", claimed.reviewId(), claimed.head(), names);
+        if (end == RunEnd.ENDED_NOW) labelIfAsked(claimed);
         return true;
     }
 
-    /** This run's end, which a restart may find already appended; false when a newer run is the review's. */
-    private boolean endRun(ChecksWait claimed) {
+    /** This run's end, which a restart may find already appended; NOT_CURRENT when a newer run is the review's. */
+    private RunEnd endRun(ChecksWait claimed) {
         ReviewState state = lifecycle.currentState(claimed.reviewId());
-        if (state.round() != claimed.round()) return false;
+        if (state.round() != claimed.round()) return RunEnd.NOT_CURRENT;
         boolean ended = !lifecycle.handle(claimed.reviewId(), new RecordCommand.SkipReview(claimed.head(),
                 claimed.round(), ChecksWaitStatus.CHECKS_FAILED)).isEmpty();
-        return ended || state.status() == ReviewState.Status.CANCELLED && claimed.head().equals(state.currentCommit());
+        if (ended) return RunEnd.ENDED_NOW;
+        boolean endedBefore = state.status() == ReviewState.Status.CANCELLED && claimed.head().equals(state.currentCommit());
+        return endedBefore ? RunEnd.ENDED_BEFORE : RunEnd.NOT_CURRENT;
+    }
+
+    /**
+     * With Verdict labels on and Start review still "After checks finish" (it may have changed while the run waited),
+     * asks the worker to label the skipped head {@code review: ci-failed}; it writes only while the pull request's head
+     * is still that commit, once per run. Skips exist only on a forge with a check read (GitHub), the same forge verdict
+     * labels are offered on.
+     */
+    private void labelIfAsked(ChecksWait claimed) {
+        if (setting.of(claimed.repositoryId()) != StartReview.AFTER_CHECKS) return;
+        if (!repositories.verdictLabels(claimed.repositoryId()).orElse(false)) return;
+        ReviewIds.Parsed review = ReviewIds.parse(claimed.reviewId());
+        credentialFor(claimed).ifPresent(credential -> commands.emit(new ActionCommand.LabelChecksFailed(
+                claimed.reviewId(), review.repo(), review.prId(), claimed.head(), claimed.round(), credential)));
     }
 
     /** Under the round lock: the start is sent only to the run the claim was made for. */

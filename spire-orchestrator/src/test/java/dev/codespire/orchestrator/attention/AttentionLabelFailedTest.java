@@ -71,6 +71,22 @@ class AttentionLabelFailedTest {
         assertTrue(rowsFor(pr).isEmpty());
     }
 
+    /**
+     * A skipped run's ci-failed label report (V121) writes only for the round its header holds: the seeded header has
+     * no round (0), so a report of round 1, as from an earlier run after a re-run, writes nothing, and round 0's does.
+     */
+    @Test
+    void aSkippedRunsReportWritesOnlyForItsOwnRound() {
+        long pr = reviewing();
+        String reviewId = ReviewFixtures.reviewIdFor(pr);
+
+        labelFailures.recordForRun(new LabelFailures.Run(reviewId, head(pr), 1), "TEST-HTTP-403");
+        assertTrue(rowsFor(pr).isEmpty(), "another round's report");
+
+        labelFailures.recordForRun(new LabelFailures.Run(reviewId, head(pr), 0), "TEST-HTTP-403");
+        assertEquals(1, rowsFor(pr).size(), "its own round's report");
+    }
+
     @Test
     void anArchivedReviewRaisesNothing() {
         long pr = reviewing();

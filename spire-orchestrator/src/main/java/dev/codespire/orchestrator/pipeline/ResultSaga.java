@@ -86,15 +86,11 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.attention.LabelFailures labelFailures;
     @Inject dev.codespire.orchestrator.review.checks.ChecksWaitStore checksWaits; // a review started before CI finished
+    @Inject dev.codespire.orchestrator.review.checks.ChecksFailedLabelOutcomes checksFailedLabels; // a skip's label (V121)
 
-    @Inject
-    dev.codespire.orchestrator.readmodel.FindingProjection findings;
-
-    @Inject
-    dev.codespire.orchestrator.memory.PreferenceFilter preferenceFilter;
-
-    @Inject
-    dev.codespire.orchestrator.readmodel.ReviewThreadView threads;
+    @Inject dev.codespire.orchestrator.readmodel.FindingProjection findings;
+    @Inject dev.codespire.orchestrator.memory.PreferenceFilter preferenceFilter;
+    @Inject dev.codespire.orchestrator.readmodel.ReviewThreadView threads;
 
     @Inject
     dev.codespire.orchestrator.provider.WorkerCredentials workerCredentials;
@@ -455,6 +451,7 @@ public class ResultSaga {
             case HarnessReviewFailed e -> harnessResults.acceptFailed(e);
             // No commit guard and no round lock: a reply answers a thread, not a round (harness reviews, step 7).
             case HarnessReplyPrepared e -> harnessReplies.launch(e);
+            case IntegrationEvent.ChecksFailedLabelled e -> checksFailedLabels.record(e); // round-guarded inside
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());
         }
@@ -914,6 +911,7 @@ public class ResultSaga {
             case HarnessReviewGenerated e -> e.reviewId();
             case HarnessReviewFailed e -> e.reviewId();
             case HarnessReplyPrepared e -> e.reviewId();
+            case IntegrationEvent.ChecksFailedLabelled e -> e.reviewId();
             default -> "";
         };
     }
