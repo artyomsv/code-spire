@@ -23,7 +23,20 @@ proxy_pid=$!
 
 # TEMP-DIAGNOSTIC
 sleep 1
-kill -0 "$proxy_pid" 2>/dev/null || { echo "tinyproxy exited early" >&2; id >&2; ls -ln /tmp >&2; cat /tmp/tinyproxy.conf >&2; exit 1; }
+kill -0 "$proxy_pid" 2>/dev/null || {
+    echo "tinyproxy exited early" >&2
+    n=$(wc -l < /tmp/tinyproxy.conf)
+    i=1
+    while [ "$i" -le "$n" ]; do
+        sed "${i}d" /tmp/tinyproxy.conf > /tmp/t$i.conf
+        timeout 2 tinyproxy -d -c /tmp/t$i.conf >/dev/null 2>&1
+        echo "without line $i ($(sed -n "${i}p" /tmp/tinyproxy.conf)): exit $?" >&2
+        i=$((i+1))
+    done
+    timeout 2 tinyproxy -d -c /tmp/tinyproxy.conf; echo "full: exit $?" >&2
+    echo "Port 8889" > /tmp/min.conf; timeout 2 tinyproxy -d -c /tmp/min.conf >/dev/null 2>&1; echo "min: exit $?" >&2
+    exit 1
+}
 
 # The close: one connection ends the wait. nc -l serves a single connection and returns when it ends;
 # timeout ends it at the deadline.
