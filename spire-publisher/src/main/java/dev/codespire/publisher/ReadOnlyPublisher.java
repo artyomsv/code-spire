@@ -82,7 +82,7 @@ final class ReadOnlyPublisher {
     private boolean awaitDoneOrTerm() throws InterruptedException {
         while (!doneExists()) {
             if (term.await(pollMillis, TimeUnit.MILLISECONDS)) {
-                return false;
+                return doneExists();
             }
         }
         return true;
