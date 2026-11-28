@@ -56,7 +56,8 @@ class FetchProxyIT {
         String script = "export http_proxy=http://" + ip + ":" + PROXY_PORT + "; "
                 + "wget -T 20 -O /dev/null http://" + ALLOWED_HOST + "/ || exit 11; "
                 + "wget -T 20 -O /dev/null http://" + DENIED_HOST + "/ && exit 12; "
-                + "nc -w 5 " + ip + " " + CLOSE_PORT + " </dev/null; echo close rc $?; "
+                // The close port opens a moment after the proxy: retry until a connection is accepted.
+                + "for i in $(seq 1 20); do nc -z -w 2 " + ip + " " + CLOSE_PORT + " && break; sleep 1; done; "
                 + "sleep 3; "
                 + "nc -w 3 " + ip + " " + PROXY_PORT + " </dev/null && exit 14; "
                 + "exit 0";
