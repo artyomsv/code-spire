@@ -84,6 +84,7 @@ public final class KubernetesRunRuntime implements RunRuntime {
         }
         for (Secret secret : UnitSecrets.of(spec, config, new OwnerReferenceBuilder().withApiVersion("v1")
                 .withKind("ConfigMap").withName(UnitNames.anchor(runId)).withUid("TEST-mutation").build())) {
+            secret.getMetadata().setOwnerReferences(List.of());
             client.secrets().inNamespace(config.namespace()).resource(secret).create();
         }
         OwnerReference anchor = createAnchor(spec);
