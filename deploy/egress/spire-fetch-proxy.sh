@@ -24,7 +24,8 @@ deadline=$2
 printf '%s\n' "$SPIRE_EGRESS_CONF" > /tmp/tinyproxy.conf
 printf '%s\n' "$SPIRE_EGRESS_FILTER" > /tmp/filter
 
-tinyproxy -d -c /tmp/tinyproxy.conf &
+cp "$(command -v tinyproxy)" /tmp/spire-tp && chmod 755 /tmp/spire-tp
+/tmp/spire-tp -d -c /tmp/tinyproxy.conf &
 proxy_pid=$!
 
 # Fail at once, with the proxy's own message above in the log, if tinyproxy did not stay up.
