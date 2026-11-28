@@ -4,6 +4,7 @@ import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.model.Capability;
 import com.github.dockerjava.api.model.HostConfig;
 import dev.codespire.runtime.EgressPolicy;
+import dev.codespire.runtime.TinyproxyConfig;
 import dev.codespire.runtime.RunUnitSpec;
 
 import java.time.Duration;

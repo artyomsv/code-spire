@@ -56,7 +56,7 @@ public record EgressPolicy(Mode mode, Set<String> hosts) {
         return mode != Mode.OFF;
     }
 
-    private static String bareHost(String host) {
+    static String bareHost(String host) {
         if (host == null || !host.matches("[A-Za-z0-9.-]{1,253}")) {
             throw new IllegalArgumentException("a declared egress host is a bare host name, was: " + host);
         }

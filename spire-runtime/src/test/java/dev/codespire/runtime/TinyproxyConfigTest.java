@@ -1,7 +1,5 @@
-package dev.codespire.runtime.docker;
+package dev.codespire.runtime;
 
-import dev.codespire.runtime.EgressPolicy;
-import dev.codespire.runtime.EnterpriseEnvironment;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -38,6 +36,36 @@ class TinyproxyConfigTest {
         assertTrue(enforce.contains("Filter \"/tmp/filter\""), enforce);
         assertTrue(enforce.contains("FilterDefaultDeny Yes"), enforce);
         assertFalse(report.contains("Upstream"), "no corporate proxy, no upstream: " + report);
+    }
+
+    @Test
+    void aListenerWithNoAllowServesAnyClientOnItsOwnPort() {
+        EgressPolicy enforce = new EgressPolicy(EgressPolicy.Mode.ENFORCE, Set.of("api.openai.com"));
+
+        String config = TinyproxyConfig.configFor(enforce, EnterpriseEnvironment.NONE,
+                new TinyproxyConfig.Listener(8889, null));
+
+        assertTrue(config.contains("Port 8889"), config);
+        assertFalse(config.contains("Allow"), config);
+        assertTrue(config.contains("FilterDefaultDeny Yes"), config);
+    }
+
+    @Test
+    void aListenerWithAnAllowLimitsClients() {
+        String config = TinyproxyConfig.configFor(EgressPolicy.OFF, EnterpriseEnvironment.NONE,
+                new TinyproxyConfig.Listener(8888, "127.0.0.1"));
+
+        assertTrue(config.contains("Port 8888"), config);
+        assertTrue(config.contains("Allow 127.0.0.1"), config);
+    }
+
+    @Test
+    void theSubnetFormIsTheListenerFormOnTheEgressPort() {
+        EgressPolicy report = new EgressPolicy(EgressPolicy.Mode.REPORT, Set.of());
+
+        assertEquals(TinyproxyConfig.configFor(report, EnterpriseEnvironment.NONE,
+                        new TinyproxyConfig.Listener(8888, "172.30.0.0/16")),
+                TinyproxyConfig.configFor(report, EnterpriseEnvironment.NONE, "172.30.0.0/16"));
     }
 
     @Test

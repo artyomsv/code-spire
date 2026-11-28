@@ -2,6 +2,7 @@ package dev.codespire.runtime;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
@@ -66,6 +67,14 @@ public interface RunRuntime {
      */
     default ModelProxyReport modelProxyOf(RunHandle handle) {
         return ModelProxyReport.NONE;
+    }
+
+    /**
+     * Why this runtime cannot run the build lane (build, verify, land), or empty when it can. A runtime that serves
+     * review runs only says so here, so a build is refused at the door and not after a unit fails to start.
+     */
+    default Optional<String> buildLaneRefusal() {
+        return Optional.empty();
     }
 
     /**

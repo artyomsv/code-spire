@@ -34,6 +34,7 @@ import dev.codespire.runtime.PublicationRuntime;
 import dev.codespire.runtime.RunUnitSpec;
 import dev.codespire.runtime.RuntimeCapabilities;
 import dev.codespire.runtime.RuntimeType;
+import dev.codespire.runtime.TinyproxyConfig;
 import dev.codespire.runtime.VerifyRun;
 import dev.codespire.runtime.VerifyUnitSpec;
 

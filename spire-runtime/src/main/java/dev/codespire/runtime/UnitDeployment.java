@@ -11,13 +11,23 @@ import java.util.Map;
 record UnitDeployment(EnterpriseEnvironment enterprise, EgressPolicy egress) {
 
     /** Where a container sits relative to the egress proxy, which decides what the deployment adds to it. */
-    enum Placement { OUTSIDE, BEHIND_EGRESS, TRUST_ONLY }
+    enum Placement { OUTSIDE, BEHIND_EGRESS, TRUST_ONLY, BEHIND_FETCH }
 
     /**
      * What the deployment adds to one container: all of it; its trust alone for the agent beside a model proxy; or
-     * its trust and the egress proxy for the one container behind it.
+     * its trust and the egress proxy for the one container behind it. Init behind a fetch proxy gets its trust and
+     * the fetch proxy, whatever the egress mode: the two proxies are independent.
      */
     Map<String, String> environmentAt(Placement placement) {
+        if (placement == Placement.BEHIND_FETCH) {
+            Map<String, String> applied = new LinkedHashMap<>(enterprise.trustEnvironment());
+            for (String name : List.of("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy")) {
+                applied.put(name, RunUnitSpec.FETCH_PROXY_ADDRESS);
+            }
+            applied.put("NO_PROXY", "");
+            applied.put("no_proxy", "");
+            return applied;
+        }
         if (placement == Placement.OUTSIDE || !egress.proxiesTheAgent()) {
             return enterprise.environment();
         }
@@ -81,6 +91,11 @@ record UnitDeployment(EnterpriseEnvironment enterprise, EgressPolicy egress) {
         if (modelProxy != null) {
             refuseCollision(environmentAt(Placement.BEHIND_EGRESS), modelProxy, "model proxy");
         }
+    }
+
+    /** The same rule for one container at a placement, for a caller that asks for it directly. */
+    void requireNoCollisionAt(Placement placement, ContainerSpec container, String role) {
+        refuseCollision(environmentAt(placement), container, role);
     }
 
     /**

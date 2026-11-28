@@ -1,7 +1,4 @@
-package dev.codespire.runtime.docker;
-
-import dev.codespire.runtime.EgressPolicy;
-import dev.codespire.runtime.EnterpriseEnvironment;
+package dev.codespire.runtime;
 
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -23,7 +20,7 @@ import java.util.regex.Pattern;
  * credential is percent-decoded here, as the corporate transport decodes it, and a value that directive cannot hold
  * is refused, as is an https:// upstream. Neither refusal quotes the credential.
  */
-final class TinyproxyConfig {
+public final class TinyproxyConfig {
 
     /** The settings an operator sets the upstream with, named in every refusal so the message is actionable. */
     private static final String SETTINGS = "SPIRE_RUN_HTTPS_PROXY / SPIRE_RUN_HTTP_PROXY";
@@ -39,17 +36,28 @@ final class TinyproxyConfig {
     private TinyproxyConfig() {
     }
 
-    static String configFor(EgressPolicy egress, EnterpriseEnvironment enterprise, String subnet) {
+    /** Where the proxy listens, and whom it serves: {@code allow} is a tinyproxy Allow value, or null for any client. */
+    public record Listener(int port, String allow) {
+    }
+
+    /** The egress proxy of a Docker unit, which listens on {@link EgressPolicy#PROXY_PORT} for its internal subnet. */
+    public static String configFor(EgressPolicy egress, EnterpriseEnvironment enterprise, String subnet) {
+        return configFor(egress, enterprise, new Listener(EgressPolicy.PROXY_PORT, subnet));
+    }
+
+    public static String configFor(EgressPolicy egress, EnterpriseEnvironment enterprise, Listener listener) {
         List<String> lines = new ArrayList<>(List.of(
-                "Port " + EgressPolicy.PROXY_PORT,
+                "Port " + listener.port(),
                 "Timeout 600",
                 "MaxClients 64",
                 // No LogFile, and that is what sends the log to stdout. tinyproxy opens a named log file through
                 // create_file_safely, which refuses a symlink or anything not a regular file -- so "/dev/stdout"
                 // failed, tinyproxy fell back to syslog, and with no syslog in the container every line was lost.
                 "LogLevel Connect",
-                "DisableViaHeader Yes",
-                "Allow " + subnet));
+                "DisableViaHeader Yes"));
+        if (listener.allow() != null) {
+            lines.add("Allow " + listener.allow());
+        }
         EgressPolicy.PORTS.stream().sorted().forEach(port -> lines.add("ConnectPort " + port));
         if (egress.mode() == EgressPolicy.Mode.ENFORCE) {
             lines.add("Filter \"/tmp/filter\"");
@@ -60,7 +68,7 @@ final class TinyproxyConfig {
     }
 
     /** One anchored pattern per declared host; tinyproxy matches host names case-insensitively. */
-    static String filterFor(EgressPolicy egress) {
+    public static String filterFor(EgressPolicy egress) {
         return String.join("\n", egress.hosts().stream().sorted()
                 .map(host -> "^" + host.replace(".", "\\.") + "$")
                 .toList());
@@ -70,7 +78,7 @@ final class TinyproxyConfig {
      * The corporate proxy to chain to, and the hosts it is not used for; empty when there is none. Also the check the
      * runtime makes before a unit is created, so a proxy the egress proxy cannot chain to fails the run at once.
      */
-    static List<String> upstreamLines(EnterpriseEnvironment enterprise) {
+    public static List<String> upstreamLines(EnterpriseEnvironment enterprise) {
         var upstream = enterprise.upstreamProxy();
         if (upstream.isEmpty()) {
             return List.of();
