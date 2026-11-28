@@ -41,6 +41,12 @@ tasks.test {
     inputs.files(
         fileTree(rootProject.projectDir) {
             include("spire-*/src/main/java/**/*.java")
+            // HarnessAndRuntimeModulesAreSeparateTest reads every module's build file, and
+            // CoreIsProviderNeutralTest scans the Kubernetes arm's test sources and the chart templates.
+            // Undeclared, an edit to one of them would report a cached PASS.
+            include("spire-*/build.gradle.kts")
+            include("spire-runtime-k8s/src/**")
+            include("deploy/helm/spire/templates/**")
             // DockerTestsAreSerialisedTest scans TEST sources, because a module starts driving the
             // daemon by an edit to src/test. Undeclared, that edit changes no input of this task, so
             // Gradle reports UP-TO-DATE or FROM-CACHE — a cached PASS from the very edit the check

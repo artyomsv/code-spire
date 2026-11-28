@@ -1,9 +1,11 @@
-# Fast feedback on every change. Three jobs, split by what each one needs:
+# Fast feedback on every change. Five jobs, split by what each one needs:
 #
 #   fast     - the 13 modules whose tests run on a bare JVM. Budgeted under 3 minutes.
 #   ui       - exactly the three commands spire-ui already has. No linter is added here: the project
 #              has no eslint baseline, and bundling one into CI onboarding would turn "add CI" into
 #              "clean up every lint violation".
+#   kubernetes, kubernetes-open - the Kubernetes arm against a real kind cluster, with and without a
+#              policy-enforcing CNI.
 #   services - the three deployables, whose tests boot Postgres + Kafka Dev Services containers,
 #              plus `assemble`.
 #
@@ -88,3 +90,112 @@ jobs:
       # Dev Services needs a Docker daemon; ubuntu-latest provides one.
       - run: ./gradlew testServices --no-daemon --console=plain
       - run: ./gradlew assemble --no-daemon --console=plain
+
+  # The Kubernetes arm's tests run against a real cluster: kind with Calico, which enforces network policy.
+  # The images the tests start are built here and loaded into the cluster, so no pull is needed.
+  kubernetes:
+    name: kubernetes arm
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Build the test images
+        run: |
+          ./gradlew :spire-publisher:installDist :spire-model-proxy:installDist --no-daemon --console=plain
+          docker build -t spire-publisher:TEST spire-publisher
+          docker build -t spire-model-proxy:TEST spire-model-proxy
+          docker build -t spire-egress-proxy:TEST deploy/egress
+          docker build -t spire-test-unit:TEST spire-runtime-k8s/src/test/docker/unit
+          docker build -t spire-test-stubborn-egress:TEST spire-runtime-k8s/src/test/docker/stubborn-egress
+      # wait: 0s because a cluster with no CNI has no Ready node until the CNI is applied below.
+      - uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          cluster_name: spire-test
+          config: .github/kind/policy.yaml
+          wait: 0s
+          # Pinned so a new kind release or node image cannot change the cluster under the tests: kind v0.33.0 and
+          # its published node image for Kubernetes v1.37.0 (digest from the v0.33.0 release notes).
+          version: v0.33.0
+          node_image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+      - name: Install Calico (policy-enforcing CNI)
+        # Calico v3.31.0, pinned by release tag.
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.0/manifests/calico.yaml
+          kubectl wait --for=condition=Ready nodes --all --timeout=300s
+          kubectl -n kube-system rollout status deployment/coredns --timeout=300s
+      - name: Load the images into the cluster
+        run: |
+          kind load docker-image --name spire-test \
+            spire-publisher:TEST spire-model-proxy:TEST spire-egress-proxy:TEST spire-test-unit:TEST spire-test-stubborn-egress:TEST
+      - run: ./gradlew testKubernetes --no-daemon --console=plain
+      - name: Cluster diagnostics
+        if: failure()
+        run: |
+          kubectl get nodes,pods -A -o wide || true
+          kubectl -n kube-system describe pods -l k8s-app=kube-dns || true
+          kubectl -n kube-system logs -l k8s-app=calico-node --tail=50 --all-containers || true
+
+  # The same arm against a cluster that enforces nothing (flannel): proves the tests that need an open
+  # cluster see one.
+  kubernetes-open:
+    name: kubernetes arm, no policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Build the test images
+        run: |
+          ./gradlew :spire-publisher:installDist :spire-model-proxy:installDist --no-daemon --console=plain
+          docker build -t spire-publisher:TEST spire-publisher
+          docker build -t spire-model-proxy:TEST spire-model-proxy
+          docker build -t spire-egress-proxy:TEST deploy/egress
+          docker build -t spire-test-unit:TEST spire-runtime-k8s/src/test/docker/unit
+      - uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          cluster_name: spire-test
+          config: .github/kind/open.yaml
+          wait: 0s
+          # Pinned so a new kind release or node image cannot change the cluster under the tests: kind v0.33.0 and
+          # its published node image for Kubernetes v1.37.0 (digest from the v0.33.0 release notes).
+          version: v0.33.0
+          node_image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+      # flannel refuses to start without the bridge netfilter sysctls, which the runner kernel only has once
+      # the module is loaded.
+      - name: Load br_netfilter
+        run: sudo modprobe br_netfilter
+      # The kind node image carries no reference CNI plugins once its own CNI is off, and flannel delegates to
+      # "bridge". containernetworking/plugins v1.7.1, pinned by release tag.
+      - name: Install the reference CNI plugins
+        run: |
+          curl -fsSL https://github.com/containernetworking/plugins/releases/download/v1.7.1/cni-plugins-linux-amd64-v1.7.1.tgz \
+            | docker exec -i spire-test-control-plane tar -xz -C /opt/cni/bin
+      - name: Install flannel (no network policy)
+        # flannel v0.27.4, pinned by release tag.
+        run: |
+          kubectl apply -f https://github.com/flannel-io/flannel/releases/download/v0.27.4/kube-flannel.yml
+          kubectl wait --for=condition=Ready nodes --all --timeout=300s
+          kubectl -n kube-system rollout status deployment/coredns --timeout=300s
+      - name: Load the images into the cluster
+        run: |
+          kind load docker-image --name spire-test \
+            spire-publisher:TEST spire-model-proxy:TEST spire-egress-proxy:TEST spire-test-unit:TEST
+      - run: ./gradlew :spire-runtime-k8s:openClusterTest --no-daemon --console=plain
+      - name: Cluster diagnostics
+        if: failure()
+        run: |
+          kubectl get nodes,pods -A -o wide || true
+          kubectl -n kube-system describe pods -l k8s-app=kube-dns || true
+          kubectl -n kube-system logs -l k8s-app=kube-dns --tail=50 || true
+          kubectl -n kube-flannel logs -l app=flannel --tail=50 --all-containers || true
+          kubectl get events -A --sort-by=.lastTimestamp | tail -30 || true
+          docker exec spire-test-control-plane sh -c 'ls /etc/cni/net.d /opt/cni/bin; journalctl -u kubelet --no-pager | tail -40' || true

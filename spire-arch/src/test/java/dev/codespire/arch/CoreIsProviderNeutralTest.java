@@ -240,6 +240,60 @@ class CoreIsProviderNeutralTest {
         return found;
     }
 
+    /**
+     * The names of harnesses and their vendors. Narrower than {@link #HARNESS_NAME}: it leaves out
+     * "kubernetes" and "docker", because the Kubernetes arm and the chart are about Kubernetes.
+     */
+    private static final Pattern HARNESS_OR_VENDOR_NAME =
+            Pattern.compile("(?i)(codex|opencode|claude[-_]?code|anthropic|openai|chatgpt)");
+
+    /**
+     * The Kubernetes arm and the chart place a unit; they must not know what runs in it (M5-FR-40). Unlike
+     * the core scan, comments count here: a vendor name in a comment is the first step to one in code.
+     */
+    @Test
+    void theKubernetesArmAndTheChartNameNoHarnessOrVendor() {
+        List<String> violations = new ArrayList<>();
+        for (Path file : kubernetesArmAndChartFiles()) {
+            String[] lines = read(file).split("\n", -1);
+            for (int i = 0; i < lines.length; i++) {
+                if (HARNESS_OR_VENDOR_NAME.matcher(lines[i]).find()) {
+                    violations.add(relative(file) + ":" + (i + 1) + "\n      " + lines[i].strip());
+                }
+            }
+        }
+        if (!violations.isEmpty()) {
+            fail(violations.size() + " harness or vendor name(s) in spire-runtime-k8s or the chart templates:\n\n  "
+                    + String.join("\n  ", violations)
+                    + "\n\nState the need as a neutral capability instead (M5-FR-40).\n");
+        }
+    }
+
+    /** Guards the guard: a wrong root would scan nothing and pass. */
+    @Test
+    void theKubernetesScanReachesTheModuleAndTheChart() {
+        List<Path> files = kubernetesArmAndChartFiles();
+        assertTrue(files.stream().anyMatch(p -> relative(p).startsWith("spire-runtime-k8s/")),
+                "no spire-runtime-k8s file scanned");
+        assertTrue(files.stream().anyMatch(p -> relative(p).startsWith("deploy/helm/spire/templates/")),
+                "no chart template scanned");
+        assertTrue(HARNESS_OR_VENDOR_NAME.matcher("image: spire-agent-codex").find());
+        assertTrue(HARNESS_OR_VENDOR_NAME.matcher("host: api.openai.com").find());
+        assertFalse(HARNESS_OR_VENDOR_NAME.matcher("name: spire-model-proxy").find());
+    }
+
+    private static List<Path> kubernetesArmAndChartFiles() {
+        List<Path> files = new ArrayList<>();
+        for (String directory : List.of("spire-runtime-k8s/src", "deploy/helm/spire/templates")) {
+            try (Stream<Path> tree = Files.walk(repoRoot().resolve(directory))) {
+                tree.filter(Files::isRegularFile).forEach(files::add);
+            } catch (IOException e) {
+                throw new UncheckedIOException("Cannot walk " + directory, e);
+            }
+        }
+        return files;
+    }
+
     @Test
     void aShortHarnessNameDoesNotMatchTheProjectsOwnName() {
         // "pi" unanchored matches spire, api and pipeline. PROVIDER_NAME is deliberately unanchored,

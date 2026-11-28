@@ -1,0 +1,8 @@
+# kind cluster for the Kubernetes arm's tests that need a CNI enforcing network policy.
+# kind's own CNI does not enforce policy, so it is switched off here and Calico is applied by the job.
+# The pod subnet is the one Calico's manifest expects.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  disableDefaultCNI: true
+  podSubnet: 192.168.0.0/16

@@ -7,6 +7,7 @@ import com.github.dockerjava.api.model.ContainerNetwork;
 import com.github.dockerjava.api.model.Network;
 import dev.codespire.runtime.EgressAttempt;
 import dev.codespire.runtime.EgressPolicy;
+import dev.codespire.runtime.TinyproxyConfig;
 import dev.codespire.runtime.ModelProxyReport;
 import dev.codespire.runtime.RunUnitSpec;
 

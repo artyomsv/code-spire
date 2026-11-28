@@ -68,7 +68,7 @@ public record RunUnitSpec(String runId,
                           ContainerSpec init, ContainerSpec agent, ContainerSpec publisher,
                           EnterpriseEnvironment enterprise, EgressPolicy egress, ContainerSpec modelProxy,
                           long memoryBytes, long nanoCpus, long diskBytes, Duration wallClock,
-                          UnitInputs inputs) {
+                          UnitInputs inputs, Set<String> fetchHosts) {
 
     /** The name the agent of a proxied unit reaches its model proxy by, on the unit's agent network. */
     public static final String MODEL_PROXY_ALIAS = "spire-model";
@@ -79,15 +79,27 @@ public record RunUnitSpec(String runId,
     /** Where a harness adapter points the agent's model provider in a proxied unit. */
     public static final String MODEL_PROXY_ADDRESS = "http://" + MODEL_PROXY_ALIAS + ":" + MODEL_PROXY_PORT;
 
+    /** The name init reaches its fetch proxy by, on the unit's fetch network (harness reviews on Kubernetes). */
+    public static final String FETCH_PROXY_ALIAS = "spire-fetch";
+
+    /** The fetch proxy's listening port for init's CONNECT requests. */
+    public static final int FETCH_PROXY_PORT = 8889;
+
+    /** The port an arm opens on the fetch proxy to tell it that init has finished and it may stop. */
+    public static final int FETCH_CLOSE_PORT = 8890;
+
+    /** Where a placement behind the fetch proxy points init's proxy variables. */
+    public static final String FETCH_PROXY_ADDRESS = "http://" + FETCH_PROXY_ALIAS + ":" + FETCH_PROXY_PORT;
+
     /**
-     * A unit with no inputs and no model proxy: every build unit, and a held build's unit stored before either
+     * A unit with no inputs, no model proxy and no fetch hosts: every build unit, and a held build's unit stored before either
      * existed. {@link #withInputs} and {@link #withModelProxy} add them.
      */
     public RunUnitSpec(String runId, ContainerSpec init, ContainerSpec agent, ContainerSpec publisher,
                        EnterpriseEnvironment enterprise, EgressPolicy egress,
                        long memoryBytes, long nanoCpus, long diskBytes, Duration wallClock) {
         this(runId, init, agent, publisher, enterprise, egress, null, memoryBytes, nanoCpus, diskBytes, wallClock,
-                null);
+                null, null);
     }
 
     public RunUnitSpec {
@@ -103,6 +115,8 @@ public record RunUnitSpec(String runId,
             egress = EgressPolicy.OFF;
         }
         Objects.requireNonNull(wallClock, "wallClock");
+        // A held build's unit stored before the component existed reads back without it, and it had none.
+        fetchHosts = fetchHosts == null ? Set.of() : normalised(fetchHosts);
         requireRealLimits(memoryBytes, nanoCpus, diskBytes);
         if (runId.isBlank()) {
             // Every container and volume is labelled with it, so a blank one makes a unit
@@ -119,6 +133,15 @@ public record RunUnitSpec(String runId,
         deployment.requireNoAgentSideCollision(agent, modelProxy);
         requireHostPathsDoNotShadowVolumes(enterprise, init, agent, publisher);
         if (inputs != null) inputs.requireReachOnlyInitAndAgent(init, agent, publisher);
+    }
+
+    /** Bare, lower-case host names, by the rule {@link EgressPolicy} holds its own hosts to. */
+    private static Set<String> normalised(Set<String> hosts) {
+        Set<String> bare = new LinkedHashSet<>();
+        for (String host : hosts) {
+            bare.add(EgressPolicy.bareHost(host));
+        }
+        return Set.copyOf(bare);
     }
 
     private static void requireRealLimits(long memoryBytes, long nanoCpus, long diskBytes) {
@@ -161,31 +184,54 @@ public record RunUnitSpec(String runId,
     /** Rebuild with another init container, enumerating the components once. */
     public RunUnitSpec withInit(ContainerSpec container) {
         return new RunUnitSpec(runId, container, agent, publisher, enterprise, egress, modelProxy,
-                memoryBytes, nanoCpus, diskBytes, wallClock, inputs);
+                memoryBytes, nanoCpus, diskBytes, wallClock, inputs, fetchHosts);
     }
 
     /** Rebuild with another agent container, enumerating the components once. */
     public RunUnitSpec withAgent(ContainerSpec container) {
         return new RunUnitSpec(runId, init, container, publisher, enterprise, egress, modelProxy,
-                memoryBytes, nanoCpus, diskBytes, wallClock, inputs);
+                memoryBytes, nanoCpus, diskBytes, wallClock, inputs, fetchHosts);
     }
 
     /** Rebuild with another publisher, enumerating the components once. */
     public RunUnitSpec withPublisher(ContainerSpec container) {
         return new RunUnitSpec(runId, init, agent, container, enterprise, egress, modelProxy,
-                memoryBytes, nanoCpus, diskBytes, wallClock, inputs);
+                memoryBytes, nanoCpus, diskBytes, wallClock, inputs, fetchHosts);
     }
 
     /** Rebuild with another model proxy, or none, enumerating the components once. */
     public RunUnitSpec withModelProxy(ContainerSpec container) {
         return new RunUnitSpec(runId, init, agent, publisher, enterprise, egress, container,
-                memoryBytes, nanoCpus, diskBytes, wallClock, inputs);
+                memoryBytes, nanoCpus, diskBytes, wallClock, inputs, fetchHosts);
     }
 
     /** Rebuild with other inputs, enumerating the components once. */
     public RunUnitSpec withInputs(UnitInputs replacement) {
         return new RunUnitSpec(runId, init, agent, publisher, enterprise, egress, modelProxy,
-                memoryBytes, nanoCpus, diskBytes, wallClock, replacement);
+                memoryBytes, nanoCpus, diskBytes, wallClock, replacement, fetchHosts);
+    }
+
+    /**
+     * Rebuild with other fetch hosts, the hosts init may reach through the fetch proxy, enumerating the components
+     * once. Each is a bare host name, kept lower case.
+     */
+    public RunUnitSpec withFetchHosts(Set<String> hosts) {
+        return new RunUnitSpec(runId, init, agent, publisher, enterprise, egress, modelProxy,
+                memoryBytes, nanoCpus, diskBytes, wallClock, inputs, hosts);
+    }
+
+    /**
+     * What init sees when it sits behind the unit's fetch proxy: the deployment's trust, the proxy variables naming
+     * {@link #FETCH_PROXY_ADDRESS} with nothing exempt from it, then the container's own variables. The deployment's
+     * own proxy settings are not passed on; the fetch proxy chains to the corporate proxy itself.
+     */
+    public Map<String, String> environmentBehindFetch(ContainerSpec container) {
+        Objects.requireNonNull(container, "container");
+        UnitDeployment deployment = new UnitDeployment(enterprise, egress);
+        deployment.requireNoCollisionAt(UnitDeployment.Placement.BEHIND_FETCH, container, "fetch-proxied");
+        Map<String, String> merged = new LinkedHashMap<>(container.environment());
+        merged.putAll(deployment.environmentAt(UnitDeployment.Placement.BEHIND_FETCH));
+        return Map.copyOf(merged);
     }
 
     /** The host paths every container of this unit mounts, read-only. */

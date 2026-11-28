@@ -50,7 +50,9 @@ class TestTierCoverageTest {
 
     private static final String E2E_TIER = "e2eTestModules";
 
-    private static final List<String> ALL_TIERS = List.of(FAST_TIER, SERVICE_TIER, E2E_TIER);
+    private static final String KUBERNETES_TIER = "kubernetesTestModules";
+
+    private static final List<String> ALL_TIERS = List.of(FAST_TIER, SERVICE_TIER, E2E_TIER, KUBERNETES_TIER);
 
     private static final Pattern INCLUDE = Pattern.compile("^\\s*include\\(\"([^\"]+)\"\\)", Pattern.MULTILINE);
 
@@ -105,6 +107,7 @@ class TestTierCoverageTest {
     void theDeclarationsWereActuallyFound() throws IOException {
         assertFalse(tierList(FAST_TIER).isEmpty(), FAST_TIER + " parsed to nothing");
         assertFalse(tierList(E2E_TIER).isEmpty(), E2E_TIER + " parsed to nothing");
+        assertFalse(tierList(KUBERNETES_TIER).isEmpty(), KUBERNETES_TIER + " parsed to nothing");
 
         // Asserted by MEMBERSHIP rather than by size. An exact count of three was a change-detector:
         // it froze a number that legitimately grows, so a module correctly joining this tier failed
