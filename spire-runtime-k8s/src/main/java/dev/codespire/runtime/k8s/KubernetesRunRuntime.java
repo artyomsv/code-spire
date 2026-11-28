@@ -17,6 +17,8 @@ import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.dsl.LogWatch;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -177,8 +179,19 @@ public final class KubernetesRunRuntime implements RunRuntime {
         String container = channel == LogChannel.AGENT ? UnitPod.AGENT : UnitPod.PUBLISHER;
         try (LogWatch watch = client.pods().inNamespace(config.namespace())
                 .withName(UnitNames.unitPod(handle.runId())).inContainer(container).watchLog()) {
-            attachments.follow(handle.runId(), watch.getOutput(), watch::close, lines);
+            InputStream output = watch.getOutput();
+            attachments.follow(handle.runId(), output, () -> closeStream(output, watch), lines);
         }
+    }
+
+    /** The watch's own close leaves the response body open, so the body is closed first. */
+    private static void closeStream(InputStream output, LogWatch watch) {
+        try {
+            output.close();
+        } catch (IOException alreadyBroken) {
+            // The read ends either way; the attach has returned already.
+        }
+        watch.close();
     }
 
     /** Both pods and every Secret go; the anchor stays, marked first, so the unit is still discoverable. */

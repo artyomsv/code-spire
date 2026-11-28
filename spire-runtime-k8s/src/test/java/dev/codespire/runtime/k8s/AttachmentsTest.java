@@ -29,9 +29,9 @@ class AttachmentsTest {
     private static final Duration PROMPTLY = Duration.ofSeconds(3);
 
     /** A log stream that blocks every read until it is closed, as a followed log of a running container does. */
-    private static final class BlockingLog extends InputStream {
+    private static class BlockingLog extends InputStream {
 
-        private final CountDownLatch closed = new CountDownLatch(1);
+        final CountDownLatch closed = new CountDownLatch(1);
 
         @Override
         public int read() throws IOException {
@@ -46,6 +46,21 @@ class AttachmentsTest {
 
         @Override
         public void close() {
+            closed.countDown();
+        }
+    }
+
+    /**
+     * A stream whose close does not end a read in progress, as the fabric8 log watch measured on kind. The test
+     * releases it at the end, so its reader thread does not outlive the test.
+     */
+    private static final class DeafLog extends BlockingLog {
+
+        @Override
+        public void close() {
+        }
+
+        void release() {
             closed.countDown();
         }
     }
@@ -120,6 +135,40 @@ class AttachmentsTest {
         assertNull(follower.thrown.get(), "a stream closed on purpose is no read fault");
         assertFalse(follower.interruptedAfter.get());
         assertEquals(0, attachments.openCount(RUN));
+    }
+
+    @Test
+    void aCloseEndsTheFollowEvenWhenTheStreamKeepsReading() throws InterruptedException {
+        Attachments attachments = new Attachments();
+        DeafLog log = new DeafLog();
+        Follower follower = new Follower(attachments, log);
+        try {
+            awaitOpen(attachments);
+
+            attachments.closeAll(RUN);
+
+            assertTrue(follower.endsPromptly(), "the follow waited for a read its close could not end");
+            assertNull(follower.thrown.get());
+        } finally {
+            log.release();
+        }
+    }
+
+    @Test
+    void anInterruptEndsTheFollowEvenWhenTheStreamKeepsReading() throws InterruptedException {
+        Attachments attachments = new Attachments();
+        DeafLog log = new DeafLog();
+        Follower follower = new Follower(attachments, log);
+        try {
+            awaitOpen(attachments);
+
+            follower.thread.interrupt();
+
+            assertTrue(follower.endsPromptly(), "the follow waited for a read its close could not end");
+            assertTrue(follower.interruptedAfter.get(), "the caller's interrupt flag was lost");
+        } finally {
+            log.release();
+        }
     }
 
     @Test
