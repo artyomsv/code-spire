@@ -1,6 +1,6 @@
 # M5: harness reviews on Kubernetes — design
 
-Status: design, 2026-11-28. Slice 0 (the spike) is done. No product code yet.
+Status: approved 2026-11-28 (operator delegated approval after an independent final review; all 15 findings applied). Slice 0 (the spike) is done. No product code yet.
 
 Sources were read from `origin/master` at `18ce9fc9`. Text marked **builder call** or **proposal** is the
 designer's own; the operator has not ruled on it. Text marked **not verified** was not checked.
@@ -101,9 +101,10 @@ Pod U  "unit"    unit-<d>-unit         role=unit
   init       seal          (publisher image; proves U reaches P and nothing else)
              fetch         (publisher image; reviewer token; clones through spire-fetch:8889; then closes it)
              fetch-closed  (publisher image; proves :8889 no longer answers)
-             publisher     (native sidecar, restartPolicy Always; spire-publish-none)
+             publisher     (native sidecar, restartPolicy Always; spire-publish-none in Kubernetes mode)
   container  agent         (placeholders only; calls http://spire-model:8080)
-  volumes    workspace, handoff: emptyDir medium Memory with sizeLimit; inputs: Secret, agent only, read-only
+  volumes    workspace, handoff: emptyDir on node disk with sizeLimit; agent /tmp: emptyDir medium Memory;
+             inputs: Secret, agent only, read-only
   hostAliases spire-model, spire-fetch -> Pod P's IP
 ```
 
@@ -137,7 +138,8 @@ A standard policy cannot say "the same label value on both sides", so the pairin
 That pairing is the point: unit A's agent must not reach unit B's model proxy and spend B's credential.
 
 "Public addresses" is `ipBlock` `0.0.0.0/0` with `except` `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
-`169.254.0.0/16`, `100.64.0.0/10`, `127.0.0.0/8`, as the spike used. DNS is UDP and TCP 53 to pods labelled
+`169.254.0.0/16`, `100.64.0.0/10`, `127.0.0.0/8`, as the spike used, plus a chart value of extra denied CIDRs
+(**design call**; for a cluster whose pods or nodes use public addresses). DNS is UDP and TCP 53 to pods labelled
 `k8s-app=kube-dns` in `kube-system`; both are chart values, because a cluster may name them differently or
 run a node-local cache on a link-local address.
 
@@ -146,18 +148,22 @@ run a node-local cache on a link-local address.
 `seal` is a new command in the publisher image (**proposal**: `spire-seal`). It is the first init container
 of both pods. The worker passes its targets in, because the pod has no service links and no service account:
 
-- **Canaries** (must fail): the API server's address, which the worker reads from its own
-  `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT`; plus any configured extra. The API server answers
-  every pod on every cluster when no policy stands in the way, so "blocked" there means a policy did it. A
-  public IP is a weaker canary (a cluster may have no direct route out anyway); it is an optional extra.
-- **Node canaries** (must fail; **design call**): the pod's own node IP (`status.hostIP`, through the
-  downward API) on the kubelet port 10250 and the API port 6443. A `NetworkPolicy` does not reliably govern
-  traffic from a pod to its own node, so this is measured per run. A reachable node canary fails the run
-  `RUNTIME_UNAVAILABLE`. As a second guard, unit and proxy pods get a default node affinity away from
-  control-plane nodes (a chart value, overridable), so port 6443 on the pod's node is closed by placement.
-- **Control** (must succeed, pod U only): TCP connect to `spire-model:8080`. It proves the pod's network is up
-  and the allowance is in force. Without it, "everything fails" would read as "sealed" on a pod whose network
-  is not ready yet.
+- **Canary, every pod** (must fail; **design call**): the run worker's own pod IP on a dedicated canary port
+  the worker listens on. It is a private in-cluster listener that answers any pod when no policy stands in the
+  way, so "blocked" means a policy did it. The API service address is **not** the general canary: on a cluster
+  with a public API endpoint (GKE, AKS) it maps to a public address, which pod P and the sign-in pod may
+  rightly reach on 443, and every run would fail. (Measured endpoints: homelab `192.168.6.x:6443`, DOKS
+  `100.65.11.252:443`, both private.)
+- **Canary, pod U only**: also the API service address (`KUBERNETES_SERVICE_HOST` and port, read by the
+  worker). U allows nothing but its proxy pod, so this is always a true canary there.
+- **Node canary, every pod** (must fail; **design call**; slice 2): the pod's own node IP (`status.hostIP`,
+  through the downward API) on the kubelet port 10250. A `NetworkPolicy` does not reliably govern traffic from
+  a pod to its own node, so this is measured per run. Port 6443 is not probed. Unit pods also get a
+  *preferred* (not required) node affinity away from control-plane nodes, a chart value.
+- **Control** (must succeed): for pod U, a TCP connect to `spire-model:8080`; for pod P and the sign-in pod, a
+  TCP connect to cluster DNS on port 53 (**design call**; the worker passes the address). It proves the pod's
+  network is up and its allowance is in force. Without it, "everything fails" would read as "sealed" on a pod
+  whose network is not ready yet.
 
 A round probes every target in parallel with a 500 ms connect timeout. A canary is open only when the connect
 succeeds. The seal passes after **5 rounds in a row** with every canary blocked and the control answered, 250 ms
@@ -167,9 +173,9 @@ open. The numbers are config keys (**builder call** on the defaults; k3s needed 
 A failed seal fails the run `RUNTIME_UNAVAILABLE`, detail `network_policy_not_enforced`, naming the open
 target. No later container of that pod starts, because init containers run in order.
 
-Pod P's seal has no control target and probes canaries only. It closes the same 1 s window for the model
-proxy's own egress. It measures egress, not ingress: that the ingress rule bites in the same instant is
-**not verified** (see Risks).
+Pod P's seal closes the same 1 s window for the model proxy's own egress. It measures egress, not ingress.
+The model proxy trusts anything that reaches port 8080, so ingress is measured once, by the startup self-check
+(see Portability); that it bites in the first instant of every pod is **not verified** (see Risks).
 
 ### The fetch path: the choice
 
@@ -233,12 +239,23 @@ no pod can read the API.
 | Secret | Read by | Holds |
 |---|---|---|
 | `unit-<d>-env-fetch` | `fetch` | the reviewer token, the fetch branch and ref |
-| `unit-<d>-env-agent` | `agent` | placeholders, harness variables |
+| `unit-<d>-env-agent` | `agent` | placeholder credentials, harness variables, `SPIRE_PROMPT` |
 | `unit-<d>-env-publisher` | `publisher` | its variables (no write credential on a review unit) |
 | `unit-<d>-env-model` | `model-proxy` | `SPIRE_MODEL_UPSTREAM`, `_INJECTION`, `_PATHS_*`, `SPIRE_MODEL_SECRET`, `SPIRE_MODEL_ACCOUNT` |
 | `unit-<d>-inputs` | `agent` (volume) | the input files |
 
 `argv` stays in the pod spec, as it is in `docker inspect` today.
+
+**Design calls on these Secrets:**
+
+- `env-agent` is not "placeholders only". For a harness that takes its prompt on stdin it holds `SPIRE_PROMPT`
+  (`RunUnitContainers.java:59`), which is pull request text. That is one more reason it is a Secret.
+- Size: a Secret holds 1 MiB. One environment variable cannot pass about 128 KiB on Linux anyway, so a
+  prompt is far below it. The arm still refuses a container environment above 768 KiB before any object
+  exists (`BAD_COMMAND`, `environment_too_large_for_kubernetes`).
+- Names are deterministic (`unit-<d>-env-<role>`, `unit-<d>-inputs`). `cancel` and `destroy` both delete each
+  one **by name** (404 means gone), and do not rely on ownership alone. The worker deletes `env-fetch` as soon
+  as `fetch` has ended; a started container keeps its variables.
 
 **A seat's path does not change.** The orchestrator keeps the sealed sign-in file and renews it
 (`SeatRenewal.java`: "The refresh token still never leaves the orchestrator"). The run command carries a copy
@@ -248,11 +265,29 @@ The agent gets the placeholder `auth.json` as before. The upstream and the egres
 
 ### Resources
 
-The unit's memory and CPU limits go on the agent container (4 GiB, 2 CPUs today, `RunUnitBuilder.java:92,121`).
-The disk limit (2 GiB) is the `sizeLimit` of the memory-backed volumes, as `RUN-TOPOLOGY.md` §9.7 already
-decided for Kubernetes; `RunUnitBuilder` sizes disk against memory for that reason. Proxies keep their Docker
-bounds (192 MiB and 64 MiB, half a CPU each). Requests are chart values, lower than limits. Kubernetes has no
-per-pod pid limit field; the Docker arm's 512 has no equal here, and that is recorded, not hidden.
+Every container has requests and limits (**design call**; a pure test holds "no container lacks either").
+The agent's limits are the spec's; the rest are builder-tunable defaults.
+
+| Container | Pod | Requests (CPU / memory) | Limits (CPU / memory) |
+|---|---|---|---|
+| `seal`, `fetch-closed` | U, P, sign-in | 50m / 64Mi | 500m / 256Mi (a JVM start) |
+| `fetch` | U | 250m / 256Mi | 2 / 1Gi |
+| `publisher` | U | 50m / 128Mi | 500m / 512Mi |
+| `agent` | U | 250m / 1Gi (config) | the spec: 2 / 4Gi today (`RunUnitBuilder.java:92,121`) |
+| `model-proxy` | P | 50m / 128Mi | 500m / 192Mi (`ModelProxyContainer.java`) |
+| `egress-proxy`, `fetch-proxy` | P | 25m / 16Mi | 500m / 64Mi (`EgressProxyContainer.java`) |
+| `signin` | sign-in | 100m / 128Mi | the spec: 1 / 512Mi (`HarnessSignInWorker`) |
+| `courier` | sign-in | 50m / 64Mi | 500m / 256Mi |
+
+**Disk (design call).** The workspace and handoff volumes are `emptyDir` on node disk with `sizeLimit` =
+`diskBytes` (2 GiB), not `medium: Memory`. This follows what the Docker arm does, not what
+`RUN-TOPOLOGY.md` §9.7 planned: there only `/tmp` is a tmpfs, because tmpfs pages are charged to memory and "a
+large clone could OOM the publisher before filling the mount" (`DockerRunRuntime.java:567-579`). So `fetch`
+needs no memory for the clone. The agent's `/tmp` is a memory-backed `emptyDir` of `diskBytes`, as on Docker.
+The agent's real memory headroom is therefore between 2 GiB (a full `/tmp`) and 4 GiB. A volume past its
+`sizeLimit` gets the pod evicted, not `ENOSPC`; that ends the run `SANDBOX_LOST`. §9.7 must be corrected.
+
+Kubernetes has no per-pod pid limit field; the Docker arm's 512 has no equal here, and that is recorded.
 
 ## Kubernetes arm of `RunRuntime`, method by method
 
@@ -264,11 +299,11 @@ per-pod pid limit field; the Docker arm's 512 has no equal here, and that is rec
 | `capabilities()` | `networkPolicy=true, resourceLimits=true, steering=false, archival=false, garbageCollection=false, nativeSidecar=true`. `archival=false`: a finished pod's volumes are not kept (**not verified** what the kubelet keeps). `nativeSidecar=true`: on Docker the sentinel path is unconditional (`RuntimeCapabilities.java`), but on this arm the kubelet sends the publisher `TERM` when the agent exits, so the publisher must handle it (see "The publisher's end"). |
 | `create(spec)` | Refuse what the arm cannot give (below). Then, in order: anchor ConfigMap; Secrets and the two policies, each owned by the anchor; pod P; wait until its model proxy and egress proxy pass their `tcpSocket` startup probes (120 s and 20 s, the Docker arm's waits); read P's IP; pod U. Return when the agent container is running, or fail with the cause in the table below. A second `create` for the same run id meets "already exists" on the anchor and adopts nothing: it fails, as a redelivered command is stopped earlier by `run_claim`. |
 | `attach(handle, channel, lines)` | Follow the log of U's `agent` or `publisher` container from its start, split into lines, cap 64 KiB, as `DockerRunRuntime.MAX_LINE_CHARS`. A restarted worker attaches again from the start. |
-| `cancel(handle)` | Delete both pods (grace 5 s, the Docker arm's stop grace). The anchor stays, so the unit is still discoverable and `cancel` is idempotent (`RunRuntimeContract`: `cancelDoesNotDestroyTheUnit`, `cancelIsIdempotent`). Logs are gone after it; a cancelled review keeps nothing. |
-| `salvage(handle)` | Wait up to the drain window for U to end (the kubelet stops the publisher sidecar after the agent exits). Build `Finalization` from the publisher's exit code in the pod status. A pod that is gone gives `vanished`; one past its deadline gives `overran`. Never deletes anything. |
+| `cancel(handle)` | Delete both pods (grace 5 s, the Docker arm's stop grace) and every Secret of the unit by name. The anchor stays, so the unit is still discoverable and `cancel` is idempotent (`RunRuntimeContract`: `cancelDoesNotDestroyTheUnit`, `cancelIsIdempotent`). Logs are gone after it; a cancelled review keeps nothing. |
+| `salvage(handle)` | Wait up to the drain window for U to end (the kubelet stops the publisher sidecar after the agent exits). `Finalization.exitCode` stays the **agent's** exit code, as on Docker (`DockerRunRuntime.java:896`); no new SPI field (**design call**). A publisher that got `TERM` before `DONE` gives `faulted` with a detail. A pod that is gone gives `vanished`; pod status `DeadlineExceeded` gives `overran`. Never deletes anything. |
 | `egressOf(handle)` | Read the `egress-proxy` container log of P, bounded, with the existing `ProxyLogParser`. |
 | `modelProxyOf(handle)` | Read the `model-proxy` container log of P, bounded, with the existing `ModelProxyLogParser`. |
-| `destroy(handle)` | Delete the anchor with foreground propagation; then list pods, policies and ConfigMaps by the unit label and delete what is left; return only when none is listed. Secrets go by ownership alone, because the role cannot list them. |
+| `destroy(handle)` | Delete every Secret of the unit by name (404 is "gone"); delete the anchor with foreground propagation; then list pods, policies and ConfigMaps by the unit label and delete what is left; return only when none is listed. |
 | `discoverUnits()` | List anchors by label; the run id is an annotation. The existing `OrphanWatchdog` does the rest. |
 | `drainWindow()` | U's `terminationGracePeriodSeconds` plus a margin for the log read: 30 s + 30 s (**design call**, builder-tunable). `RunAckBudget` reads it from the arm. |
 | `steer(...)` | Throws `UnsupportedOperationException`. |
@@ -276,17 +311,26 @@ per-pod pid limit field; the Docker arm's 512 has no equal here, and that is rec
 
 **The publisher's end (design call, slice 1).** `ReadOnlyPublisher.run()`
 (`spire-publisher/.../ReadOnlyPublisher.java:40-50`) polls for `DONE`, then prints the artifact. It has no
-`TERM` handler. A native sidecar gets `TERM` the moment the agent exits, so the artifact could be cut in the
-middle. Ruling: on `TERM` the publisher finishes its current poll and print, bounded by the pod's
-`terminationGracePeriodSeconds` (30 s). It exits 0 only when the artifact was printed whole. A `TERM` before
-`DONE` exits with a named non-zero code, and `salvage` reads that code. The Docker arm's behaviour does not
-change.
+`TERM` handler, and it returns 0 as soon as it has printed. Two things break on a native sidecar:
+
+- The entrypoint writes `DONE` last and then exits (`deploy/agent/spire-agent-entrypoint.sh:176`), and the
+  kubelet sends the sidecar `TERM` at that moment. The artifact could be cut in the middle.
+- A sidecar has `restartPolicy: Always`, even in a `Never` pod. A publisher that exits while the agent still
+  runs is **started again** by the kubelet, and would print the artifact twice.
+
+Ruling: `spire-publish-none` gets a **Kubernetes mode** (a flag the arm passes). It prints once when `DONE`
+appears, then blocks until `TERM`, then exits with the code it recorded. On `TERM` it does one last poll and
+finishes a print in progress, bounded by the pod's `terminationGracePeriodSeconds` (30 s). It exits 0 only
+when the artifact was printed whole; a `TERM` with no `DONE` exits with a named non-zero code. The Docker mode
+does not change.
 
 `describeImage` is slice 1 work (**design call**): `ModelProxyResults.imageMissing`, `ModelProxyImageCheck`
 and `HarnessImageWorker` call it at startup and on every run, so no unit can start without it.
 
-Every pod also carries `activeDeadlineSeconds` = wall clock + drain window + 300 s, as a backstop behind the
-worker's own clock.
+**Overrun (design call).** Pod U carries `activeDeadlineSeconds` = init timeout + wall clock. It is the
+primary stop: the kubelet kills the containers, and the pod object and its logs stay for `salvage`, which maps
+`DeadlineExceeded` to `overran`. Pod P carries wall clock + init timeout + drain window + 300 s, only as a
+backstop against a leaked proxy.
 
 **Refused before any object exists** (`BAD_COMMAND`, a named detail, an attention row where the lane has one):
 
@@ -295,6 +339,7 @@ worker's own clock.
 | no model proxy (mode `OFF`, egress `off`, or a harness with no route) | `kubernetes_requires_credential_proxy` |
 | a host mount in `EnterpriseEnvironment` | `kubernetes_has_no_host_mounts` |
 | inputs above the bound | `inputs_too_large_for_kubernetes` |
+| a container environment above the bound | `environment_too_large_for_kubernetes` |
 | a mount of another run's volume (`Mount.ofRun`) | `kubernetes_reviews_only` |
 
 **design call, slice 1:** every unit that is not a proxied review unit is refused `kubernetes_reviews_only`
@@ -318,7 +363,7 @@ Kubernetes has no copy from a stopped container, and `exec` is refused by this d
 
 ```
 Pod  signin-<d>   role=sign-in   (the chart's static "sign-in" policy: DNS + 443 to public addresses)
-  init       seal      (canaries only)
+  init       seal      (worker canary, node canary; control: cluster DNS on 53)
              courier   (native sidecar; publisher image; gets the worker's one-time PUBLIC key)
   container  signin    (the agent image; the SignInFlow command as entrypoint)
   volume     result: emptyDir medium Memory, mounted at the parent directory of resultPath in both
@@ -328,8 +373,9 @@ Pod  signin-<d>   role=sign-in   (the chart's static "sign-in" policy: DNS + 443
   the API server is `AlreadyClaimed`; the API server is the election, as the daemon is on Docker.
 - The worker streams the `signin` container's log for the link and the code, as today.
 - When `signin` exits, the kubelet sends `TERM` to the courier. The courier reads the result file, encrypts it
-  to the public key (hybrid encryption; Tink is already a dependency through `spire-encryption`), prints one
-  line of ciphertext and exits.
+  to the public key and prints one line of ciphertext. It uses JDK crypto only (**design call**: RSA-OAEP
+  wrapping an AES-GCM key); the publisher image has no Tink (`spire-publisher/build.gradle.kts` depends on
+  `spire-workspace`, `spire-secrets` and Jackson) and gets none. Like the publisher it blocks until `TERM`.
 - `result`: the worker decrypts that line with the private key it never wrote anywhere. The node's log holds
   ciphertext only. So the rule "a credential is never printed" holds in substance.
 - `awaitExit`: the `signin` container's state from the pod status: `Observed(code)`, `StillRunning`, or
@@ -397,12 +443,9 @@ enum `HarnessType { CODEX, PI, OPENCODE, CLAUDE_CODE }` (`spire-harness/.../Harn
 harness is two edits beside its module: the Gradle dependency (`spire-run-worker/build.gradle.kts`) and a line
 in `HarnessRegistry`; a fifth name would also need an enum entry.
 
-**Proposal: discovery.** Each harness module ships `META-INF/services/dev.codespire.harness.HarnessAdapter`,
-and `HarnessRegistry` loads adapters with `java.util.ServiceLoader`, keyed by `adapter.type()`; two adapters
-with one type refuse startup. `ServiceLoader` and not CDI, because the harness modules are plain libraries
-with no framework. Then a new harness is its module plus one dependency line in the run worker's build file.
-The enum stays for now (**builder call**): it is on the wire and in stored rows, and making it an open name
-is a contract change that M5 does not need.
+**Design call: the explicit list stays in M5.** One line per harness in `HarnessRegistry` is cheap and easy
+to read, and discovery (`ServiceLoader`) is not M5 work. The enum stays too: it is on the wire and in stored
+rows.
 
 **Harness knowledge that sits outside the adapters today.** None of it is in a runtime arm, but each item
 would make a new harness more than "a module":
@@ -446,8 +489,8 @@ reason.
 - `values.yaml`: `runWorker.runs.namespace` (required when enabled, and refused when equal to the release
   namespace); image names for the publisher, model proxy and egress proxy at the chart's `appVersion`;
   `factory.agentImages` as a **map** keyed by harness name (so a new harness is a value, not a template);
-  `runWorker.reviewConcurrency`; DNS selector; extra egress CIDRs; unit requests; node selector and
-  tolerations for unit pods.
+  `runWorker.reviewConcurrency`; DNS selector; extra allowed egress CIDRs and extra **denied** CIDRs for the
+  proxy pod; unit requests; node selector, tolerations and the preferred control-plane anti-affinity.
 - `configmap.yaml`: the keys below, and the orchestrator's `SPIRE_FACTORY_AGENT_IMAGE_*`.
 - `tests/render.sh` (new assertions, and `--self-test` proving they bite), `deploy/kustomize/*`, `deploy/k8s/*`
   re-rendered, `deploy/render-manifests.sh --check`.
@@ -464,7 +507,9 @@ workflow. A Keycloak client for the run worker in realm `spired`, if OIDC stays 
 |---|---|---|
 | `SPIRE_RUN_RUNTIME` | none; startup refusal when unset | `docker` or `kubernetes`. The compose files and `%dev`/`%test` set `docker`, so no existing install changes. |
 | `SPIRE_RUN_K8S_NAMESPACE` | none; required for `kubernetes` | where units run |
-| `SPIRE_RUN_K8S_SEAL_CANARIES` | the API server's address | extra `host:port` targets that must be blocked |
+| `SPIRE_RUN_K8S_SEAL_CANARY_PORT` | proposal: 34084 | the port the worker listens on as the seal's canary |
+| `SPIRE_RUN_K8S_SEAL_CANARIES` | empty | extra `host:port` targets that must be blocked |
+| `SPIRE_RUN_K8S_EGRESS_DENIED_CIDRS` | empty | extra ranges in the proxy pod's `except` list |
 | `SPIRE_RUN_K8S_SEAL_ROUNDS` / `_TIMEOUT` / `_DEADLINE` | 5 / 500 ms / 60 s | the seal |
 | `SPIRE_RUN_K8S_EGRESS_EXTRA_CIDRS` | empty | private addresses the proxy pod may reach (a self-hosted forge) |
 | `SPIRE_RUN_K8S_DNS_NAMESPACE` / `_DNS_LABELS` | `kube-system` / `k8s-app=kube-dns` | the DNS allowance |
@@ -500,11 +545,11 @@ Only existing `RunFailureCause` values are used (`spire-contract/.../RunFailureC
 
 - Kubernetes 1.29 or later (native sidecars).
 - A network plugin that enforces `networking.k8s.io/v1` `NetworkPolicy`, egress included.
-- Pods that can reach the API server's service address when no policy forbids it (true by default everywhere;
-  it is the seal's canary).
+- Pods in the run namespace that can reach the run worker's pod when no policy forbids it (it is the seal's
+  canary; a policy on the app namespace must leave the canary port open to the run namespace).
 - A route from pods to public HTTPS, and cluster DNS.
 - The images, pullable by the nodes.
-- Memory-backed `emptyDir` allowed (it is in the `restricted` profile).
+- `emptyDir` volumes, on node disk and memory-backed (both are in the `restricted` profile).
 
 **What it need not have:** a named CNI, a service mesh, a storage class, a CRD, an admission webhook,
 privileged pods, `hostPath`.
@@ -513,19 +558,26 @@ privileged pods, `hostPath`.
 the fix, the house rule for a missing requirement):
 
 1. The API answers and the server version is 1.29 or later.
-2. The run namespace exists and is not the worker's own.
+2. The run namespace is not the worker's own (a config compare). Its existence is not read: the role has no
+   cluster-scoped `get namespaces` (**design call**); a missing namespace shows as `NotFound` on step 5's pod
+   create, and that is the named reason.
 3. A `SelfSubjectAccessReview` passes for every verb in the RBAC table, and **fails** for `get secrets` and
    `create pods/exec` in the run namespace (too much is refused too).
 4. `default-deny` exists in the run namespace.
-5. A canary pod that runs only `seal` passes. This catches a cluster with no policy enforcement at install
-   time, not at the first review. The per-unit seal stays the gate.
+5. Canary pods (slice 2; **design call**). One runs only `seal` and must pass: egress is enforced, at install
+   time and not at the first review. One carries a label that a chart policy allows to the worker's canary
+   port, and must reach it: the canary is a true one. One listens, and a second pod that no policy allows
+   must fail to reach it: **ingress** is enforced, which the model proxy relies on. The per-unit seal stays
+   the gate for each run.
 
 **Tested on:** k3s v1.36.2 with flannel and kube-router; DOKS v1.36.0 with Cilium (slice 0, by hand). Both
 `amd64`. `arm64` images are published; no `arm64` cluster has run them.
 
 **Known cluster differences the design absorbs:** the 1 s open window on kube-router (the seal); a node-local
-DNS cache or another DNS label (the DNS values); a forge on a private address (extra CIDRs); a public or a
-private API endpoint (the canary is the service address, not the endpoint).
+DNS cache or another DNS label (the DNS values); a forge on a private address (extra allowed CIDRs); pods or
+nodes on public addresses (extra denied CIDRs); **a public API endpoint** (GKE, AKS: the general canary is the
+worker's own listener, and the API address is a canary only for pod U, which allows nothing but its proxy).
+A host or a node can usually reach a pod whatever the policy says; that is for `docs/SECURITY.md`.
 
 ## CI
 
@@ -558,27 +610,27 @@ Ids are stable; a retired id is never reused. Scope: **S1–S5** is the slice; *
 | M5-FR-3 | `create` places a read-only review unit: init to completion, then the agent with the publisher as a native sidecar, on volumes that die with the unit. | S1 |
 | M5-FR-4 | The model proxy and the egress proxy run in a second pod; the agent shares neither their network namespace nor their environment. | S1 |
 | M5-FR-5 | The agent reaches the model proxy at `http://spire-model:8080` with no change to a harness adapter. | S1 |
-| M5-FR-6 | From its creation the unit pod may open a connection to its own proxy pod and to nothing else: not the internet, DNS, the API, a node, the LAN, another unit, or the app namespace. "A node" is held by the seal's node canaries and by placement away from control-plane nodes, because a policy alone does not reliably cover a pod's own node. | S2 |
-| M5-FR-7 | No container after `seal` starts until the pod has measured that rule; a seal that does not pass in time fails the run `RUNTIME_UNAVAILABLE` (`network_policy_not_enforced`). | S2 |
-| M5-FR-8 | The egress proxy enforces the harness's declared hosts and is unreachable from the unit pod; `egressOf` returns the same records as on Docker. | S2 |
+| M5-FR-6 | From its creation the unit pod may open a connection to its own proxy pod and to nothing else: not the internet, DNS, the API, a node, the LAN, another unit, or the app namespace. "A node" is held by the seal's node canaries and by placement away from control-plane nodes, because a policy alone does not reliably cover a pod's own node. | S1 |
+| M5-FR-7 | No container after `seal` starts until the pod has measured that rule; a seal that does not pass in time fails the run `RUNTIME_UNAVAILABLE` (`network_policy_not_enforced`). | S1 |
+| M5-FR-8 | The egress proxy enforces the harness's declared hosts and is unreachable from the unit pod; `egressOf` returns the same records as on Docker. | S1; records S2 |
 | M5-FR-9 | `modelProxyOf` returns the same report as on Docker (`CREDENTIAL_REJECTED`, `BLOCKED_EGRESS`). | S2 |
 | M5-FR-10 | The model credential exists only in the model proxy's container; the agent gets placeholders. | S1 |
 | M5-FR-11 | No environment value of any container appears in a pod spec, label, annotation or event; each container reads its own per-unit Secret. | S1 |
 | M5-FR-12 | Inputs appear read-only at `/inputs` in the agent only, from a Secret, with no tar copy. | S1 |
-| M5-FR-13 | Inputs up to 224 KiB are delivered; inputs above the arm's bound are refused before any object exists. | S4 |
+| M5-FR-13 | Inputs up to 224 KiB are delivered; inputs above the arm's bound are refused before any object exists. | S1 |
 | M5-FR-14 | `attach` streams the agent's and the publisher's stdout by line with the 64 KiB cap, and works again after a worker restart. | S1 |
 | M5-FR-15 | A `RunReviewArtifact` of up to 256 KiB arrives whole through the publisher's log. | S1 |
-| M5-FR-16 | `cancel` ends both pods within 30 s, is idempotent, and leaves the unit discoverable until `destroy`. | S3 |
-| M5-FR-17 | `destroy` removes every object of the unit and nothing of another unit. | S1 |
+| M5-FR-16 | `cancel` ends both pods within 30 s, is idempotent, and leaves the unit discoverable until `destroy`. | S1 |
+| M5-FR-17 | `destroy` removes every object of the unit and nothing of another unit; `cancel` and `destroy` delete the unit's Secrets by name; `env-fetch` is deleted when `fetch` has ended. | S1 |
 | M5-FR-18 | Every object carries a digest label of the run id; the anchor carries the full run id as an annotation. | S1 |
-| M5-FR-19 | `discoverUnits` lists every unit from the cluster alone; `OrphanWatchdog` reaps one a dead worker left. | S3 |
-| M5-FR-20 | The wall clock ends a run as on Docker; each pod also has a hard deadline. | S3 |
+| M5-FR-19 | `discoverUnits` lists every unit from the cluster alone; `OrphanWatchdog` reaps one a dead worker left. | S1 |
+| M5-FR-20 | Pod U's `activeDeadlineSeconds` (init timeout + wall clock) ends an overrunning run; the pod and its logs stay, and `salvage` answers `overran`. | S3 |
 | M5-FR-21 | An image that cannot be pulled fails the run `IMAGE_UNAVAILABLE` within the start timeout. | S3 |
 | M5-FR-22 | `describeImage` answers labels and a digest pin from the registry (OCI manifest, config labels, digest; anonymous for a public image), with no daemon and no pod. | S1 |
-| M5-FR-23 | Containers carry the unit's memory and CPU limits; the disk limit bounds its volumes. | S1 |
+| M5-FR-23 | Every container of every pod has requests and limits; the agent's limits are the unit's; the disk limit is the `sizeLimit` of the workspace, handoff and `/tmp` volumes. | S1 |
 | M5-FR-24 | The chart deploys the run worker (off by default) with its ServiceAccount, Role and RoleBinding. | S1 |
 | M5-FR-25 | The chart names every unit image at the release version; no unit pod pulls `latest`. | S1 |
-| M5-FR-26 | The review lane keeps `SPIRE_RUN_REVIEW_CONCURRENCY`; the chart's quota and docs state the memory it needs. | S3 |
+| M5-FR-26 | The review lane keeps `SPIRE_RUN_REVIEW_CONCURRENCY`; the chart's quota and docs state the memory it needs. | S2 |
 | M5-FR-27 | A fork review runs with the same refusals as on Docker. | S4 |
 | M5-FR-28 | A spec the arm cannot serve is refused with a named detail before any object exists. | S1 |
 | M5-FR-29 | A corporate CA bundle and proxy reach every container from a ConfigMap or Secret (FR-F14). | later |
@@ -588,18 +640,19 @@ Ids are stable; a retired id is never reused. Scope: **S1–S5** is the slice; *
 | M5-FR-33 | `KubernetesSignInRuntime`: an operator signs a Codex seat in from the dashboard; the result reaches the worker encrypted and is never readable in a log. | S5 |
 | M5-FR-34 | A second build harness carries a work item to a pull request. | later |
 | M5-FR-35 | `cs.review-runs` has a stated partition count for a second replica. | later |
-| M5-FR-36 | Init clones only through the unit's fetch proxy, which allows the forge host alone; the agent starts only after a check that the fetch proxy no longer answers. | S2 |
+| M5-FR-36 | Init clones only through the unit's fetch proxy, which allows the forge host alone; the agent starts only after a check that the fetch proxy no longer answers. | S1 |
 | M5-FR-37 | The unit namespace is never the app namespace; the chart and the worker each refuse that. | S1 |
-| M5-FR-38 | The run worker's startup self-check (version, namespace, exact permissions, `default-deny`, a seal canary pod) refuses startup with a named reason. | S2 |
+| M5-FR-38 | The run worker's startup self-check (version, exact permissions, `default-deny`, canary pods for egress, for the canary itself and for ingress) refuses startup with a named reason; it needs no cluster-scoped read. | S2 |
 | M5-FR-39 | A seat review injects only the seat's access token and account id, from the model proxy's own Secret. | S5 |
 | M5-FR-40 | No code in `spire-runtime-k8s`, no chart template and no policy names a harness; a new harness needs an adapter module, an image and one chart value. | S1 |
 | M5-FR-41 | Any unit that is not a proxied review unit (a build, a `/fix`, a held build, a verify, an unproxied unit) is refused with a named cause before any object exists, so no deploy lets a build reach this arm. | S1 |
 | M5-FR-42 | Each harness is its own `spire-harness-<name>` module; harness modules depend on no other harness module and on no runtime module; runtime arms depend on no harness module; only the run worker wires them. | S1 |
 | M5-FR-43 | The model call paths whose 401 means "credential rejected" come from the harness's `CredentialRoute`, not from a list in `spire-runtime`. | S2 |
-| M5-FR-44 | (**proposal**) `HarnessRegistry` discovers adapters with `ServiceLoader`; a new harness needs no edit to a Java file outside its own module. | S4 |
-
-| M5-FR-45 | On `TERM` the read-only publisher finishes its poll and print within the grace period; it exits 0 only when the artifact was printed whole, and with a named non-zero code when `TERM` came before `DONE`. | S1 |
-| M5-FR-46 | The seal also probes the pod's own node IP on ports 10250 and 6443; unit and proxy pods avoid control-plane nodes by default. | S2 |
+| M5-FR-44 | Retired (design call). Harness discovery with `ServiceLoader` is not M5 work; the explicit `HarnessRegistry` list stays. | — |
+| M5-FR-45 | In Kubernetes mode the read-only publisher prints the artifact once, then blocks until `TERM`; on `TERM` it finishes a print in progress within the grace period. It exits 0 only when the artifact was printed whole, and with a named non-zero code when `TERM` came with no `DONE`. It is never restarted during a run. | S1 |
+| M5-FR-46 | The seal also probes the pod's own node IP on port 10250; unit pods prefer nodes that are not control-plane nodes. | S2 |
+| M5-FR-47 | The seal's canary is the run worker's own listener; the API service address is a canary for pod U only; every seal has a control target that must answer (the model proxy for U, cluster DNS for P and the sign-in pod). | S1 |
+| M5-FR-48 | A container environment above the arm's bound is refused `environment_too_large_for_kubernetes` before any object exists. | S1 |
 
 ## Non-functional and security requirements
 
@@ -629,45 +682,52 @@ test pull requests carry `TEST:` in the title. No value below is a real result.
 | Id | Check | Where | Slice |
 |---|---|---|---|
 | M5-AC-1 | `RunRuntimeContract` passes against the Kubernetes arm. | CI, kind + policy CNI | S1 |
-| M5-AC-2 | On a cluster that does not enforce policy, every unit fails `network_policy_not_enforced`, no agent container is created, and the worker refuses to start. Mutation-checked. | CI, kind without policy | S2 |
-| M5-AC-3 | From the agent container: a public address, cluster DNS, the API server, the pod's own node on 10250 and 6443, `spire-db-rw.spired`, `spire-egress:8888` and `spire-fetch:8889` each fail; `http://spire-model:8080` answers. | CI and live | S2 |
-| M5-AC-4 | A same-repository `TEST:` pull request on a harness repository (Codex, API key) gets a posted review; the unit's two pods were listed during the run. | live | S1 |
-| M5-AC-5 | `kubectl get pod … -o yaml` of both pods holds no `env` value at all; the agent's Secret (values hidden) holds only placeholders; only the model proxy container names the model Secret. | live | S1 |
+| M5-AC-2 | On a cluster that does not enforce policy, every unit fails `network_policy_not_enforced` and no agent container is created. Mutation-checked. | CI, kind without policy | S1 |
+| M5-AC-3 | From the agent container: a public address, cluster DNS, the API server, the worker's canary port, `spire-db-rw.spired`, `spire-egress:8888` and `spire-fetch:8889` each fail; `http://spire-model:8080` answers. From slice 2 also the pod's own node on 10250. | CI and live | S1; node S2 |
+| M5-AC-4 | A same-repository `TEST:` pull request on a harness repository (Codex, API key) gets a posted review; the unit's two pods were listed during the run. Slice 1: in a homelab scratch namespace, installed by the chart with the run worker on, against a test repository. Slice 2: again on spired.dev. | live | S1, S2 |
+| M5-AC-5 | `kubectl get pod … -o yaml` of both pods holds no `env` value at all; the agent's Secret (values hidden) holds placeholder credentials, harness variables and the prompt, and no real credential; only the model proxy container names the model Secret. | live | S1 |
 | M5-AC-6 | `run_egress` for the run holds only the declared host on port 443, allowed. | live | S2 |
 | M5-AC-7 | The model proxy log names only declared paths. | live | S2 |
 | M5-AC-8 | One charge row under the review's call slot, kind `REVIEW`, equal to the reported usage. | live | S4 |
 | M5-AC-9 | A second commit gives one `RECONCILE` unit; the agent read `/inputs/prior-findings.md`. | live | S4 |
 | M5-AC-10 | A reply gives one `FOLLOWUP` unit and one posted answer. | live | S4 |
-| M5-AC-11 | Closing the pull request mid-run removes both pods within 60 s; the run ends `CANCELLED`. | live | S3 |
+| M5-AC-11 | Closing the pull request mid-run removes both pods within 60 s; the run ends `CANCELLED`. | live | S1 |
 | M5-AC-12 | Deleting the run worker pod mid-run: the new worker finishes the run or the watchdog reaps it within `orphan-stale-after-seconds` plus one sweep; nothing with the unit's label is left. | live | S3 |
 | M5-AC-13 | A key the vendor refuses fails the run `CREDENTIAL_REJECTED` and marks its pool member. | live | S2 |
 | M5-AC-14 | An image tag that does not exist fails the run `IMAGE_UNAVAILABLE` and leaves nothing. | live | S3 |
 | M5-AC-15 | A fork `TEST:` pull request is reviewed on Claude Code on a key; under mode `OFF` it is refused and no object is created. | live | S4 |
-| M5-AC-16 | After ten reviews, `kubectl -n <runs> get pods,configmaps,networkpolicies -l dev.codespire/unit` and `get secrets` show nothing of a unit. | live | S3 |
+| M5-AC-16 | After ten reviews, `kubectl -n <runs> get pods,configmaps,networkpolicies -l dev.codespire/unit` shows nothing, and a `get secret` **by each unit's deterministic names** answers `NotFound`. | live | S3 |
 | M5-AC-17 | `kubectl auth can-i --as=system:serviceaccount:<app>:<sa>`: no for `get secrets` and `create pods/exec` in the run namespace, and for every verb in the app namespace and at cluster scope. | live | S1 |
 | M5-AC-18 | `render.sh --self-test` and `render-manifests.sh --check` pass with the run worker on and off; the off render equals today's. | CI | S1 |
 | M5-AC-19 | With `SPIRE_RUN_RUNTIME=docker`, `M0WalkingSkeletonTest` and `DockerRunRuntimeIT` pass unchanged. | CI | S1 |
 | M5-AC-20 | Three reviews at once with concurrency 2 run as two units, then one. | live | S3 |
 | M5-AC-21 | An operator signs a Codex seat in from the dashboard on spired.dev; the pod's log holds no token (the result line is ciphertext); the pod is gone afterwards. | live | S5 |
 | M5-AC-22 | A `TEST:` pull request is reviewed on that seat at cost 0, with `chatgpt.com` the only egress host and no `auth.openai.com`. | live | S5 |
-| M5-AC-23 | A fetch that never sends the close fails the run `fetch_proxy_not_closed` and starts no agent. Mutation-checked. | CI | S2 |
+| M5-AC-23 | A fetch that never sends the close fails the run `fetch_proxy_not_closed` and starts no agent. Mutation-checked. | CI | S1 |
 | M5-AC-24 | The same chart and images pass M5-AC-3 and M5-AC-4 on a second cluster with another CNI (DOKS, Cilium). | live | S4 |
 | M5-AC-25 | A fake harness, declared only through `HarnessAdapter` in the run worker's test sources (its own hosts, route, paths and test image), runs a unit on kind with no change under `spire-runtime-k8s` or `deploy/helm`; its model call 401 is reported `CREDENTIAL_REJECTED` from the route it declared. | CI | S4 |
 | M5-AC-26 | An architecture test in `spire-arch` reads the Gradle build files and the imports: no `spire-harness-*` module depends on another `spire-harness-*` or on any `spire-runtime*` module; no `spire-runtime-*` arm depends on or imports any `spire-harness*` module; only `spire-run-worker` has both. Proven to bite by adding a forbidden dependency in the test's own self-check. | CI | S1 |
 | M5-AC-27 | `CoreIsProviderNeutralTest` covers `spire-runtime-k8s` and `deploy/helm/spire/templates`: no harness or vendor name appears there. The image values file is the one allowed place. | CI | S1 |
-| M5-AC-28 | A `TERM` sent to the read-only publisher right after `DONE` still yields the whole artifact and exit 0; a `TERM` before `DONE` yields the named non-zero code. Mutation-checked. | CI | S1 |
+| M5-AC-28 | In Kubernetes mode: a `TERM` right after `DONE` still yields the whole artifact and exit 0; a `TERM` with no `DONE` yields the named non-zero code and `salvage` answers `faulted`; on kind the publisher's `restartCount` is 0 and the artifact is printed exactly once. Mutation-checked. | CI | S1 |
 | M5-AC-29 | A build-lane command and an unproxied unit sent to a worker on the Kubernetes arm are each refused with their named cause, and no object is created. | CI | S1 |
-| M5-AC-30 | A unit whose node canary answers fails `RUNTIME_UNAVAILABLE` and starts no agent. | CI | S2 |
+| M5-AC-30 | A unit whose node canary (10250) answers fails `RUNTIME_UNAVAILABLE` and starts no agent. | CI | S2 |
+| M5-AC-31 | Inputs of 224 KiB reach `/inputs` byte for byte; inputs above the bound, and an environment above its bound, are each refused with their named cause and no object is created. (FR-13, FR-48) | CI | S1 |
+| M5-AC-32 | `describeImage` returns the labels and the digest pin from a recorded GHCR response (manifest index, manifest, config); and once, live, for the published Codex agent image. (FR-22) | CI and live | S1 |
+| M5-AC-33 | A pure test over every generated pod (unit, proxy, sign-in): no container lacks requests or limits, and the three volumes carry the unit's `sizeLimit`. (FR-23) | CI | S1 |
+| M5-AC-34 | The chart render fails when a unit image value has no tag or the tag `latest`; the default render names each at `appVersion`. (FR-25) | CI | S1 |
+| M5-AC-35 | With the run namespace equal to the app namespace, the chart render fails and the worker refuses to start, each naming the value. (FR-37) | CI | S1 |
+| M5-AC-36 | The startup self-check refuses to start on a cluster that enforces no policy, and when the ingress canary is reached by a pod no policy allows; it passes on kind with a policy CNI. It makes no cluster-scoped read. (FR-38) | CI | S2 |
+| M5-AC-37 | A unit that outlives pod U's deadline ends `overran`; its pod and logs are still there until `destroy`. (FR-20) | CI | S3 |
 
 ## Slices
 
 | Slice | Content | Proves |
 |---|---|---|
 | 0 | The spike. **Done 2026-11-28.** | Two pods, policy, seal, native sidecar, Secret inputs, on two CNIs. |
-| 1 | The module; anchor, Secrets, both pods, `hostAliases`; `create`, `attach`, `salvage`, `destroy`; `describeImage` from the registry; the publisher's `TERM` handling; the refusal of every non-review or unproxied unit; the config switch; the chart with the run worker, RBAC and the run namespace; Codex on an API key, same-repository pull request. The seal and fetch proxy may be stubs **only on a branch**: slice 1 is not deployed to spired.dev without slice 2. | AC-1, 4, 5, 17, 18, 19, 26, 27, 28, 29 |
-| 2 | `seal` with the node canaries, node affinity, the fetch proxy and `fetch-closed`, `egressOf`, `modelProxyOf`, the startup self-check. First deploy to spired.dev. | AC-2, 3, 6, 7, 13, 23, 30 |
-| 3 | Cancel, supersede, wall clock, image failure, discovery and the watchdog, worker restart, quota. | AC-11, 12, 14, 16, 20 |
-| 4 | `RECONCILE`, `FOLLOWUP`, forks, Claude Code, harness discovery, the second cluster. | AC-8, 9, 10, 15, 24, 25 |
+| 1 | **One review pod that is safe (design call).** The module; anchor, per-container Secrets (deleted by name), both pods, `hostAliases`; the chart's static policies and the per-unit policies; `seal` (worker canary, API canary for U, controls); the fetch proxy with close and `fetch-closed`; the egress proxy enforcing; `create`, `attach`, `cancel`, `salvage`, `destroy`, `discoverUnits`; `describeImage` from the registry; the publisher's Kubernetes mode; the resources table; every refusal (non-review, unproxied, sizes, namespace); the config switch; the chart with the run worker, RBAC and the run namespace; the architecture tests. Codex on an API key, same-repository pull request. **Live checks run in a homelab scratch namespace**, installed by the chart, against a test repository. Not on spired.dev yet. | AC-1, 2, 3 (no node), 4 (scratch), 5, 11, 17, 18, 19, 23, 26, 27, 28, 29, 31, 32, 33, 34, 35 |
+| 2 | **Hardening, then spired.dev.** The startup self-check with its canary pods (egress, the canary itself, ingress); the node canary and the preferred anti-affinity; the ResourceQuota; `egressOf` and `modelProxyOf` records; model call paths from the route. Ends with the first deploy to spired.dev. | AC-3 (node), 4 (spired.dev), 6, 7, 13, 30, 36 |
+| 3 | **Lifecycle under load.** Supersede, the deadline and `overran`, image failure, the watchdog after a worker restart, concurrency. | AC-12, 14, 16, 20, 37 |
+| 4 | **The whole lane.** `RECONCILE`, `FOLLOWUP`, forks, Claude Code, the fake harness, the second cluster. | AC-8, 9, 10, 15, 24, 25 |
 | 5 | `KubernetesSignInRuntime`, a seat review. | AC-21, 22 |
 
 Each slice ends with its entries in `docs/UNVERIFIED.md` and `docs/HISTORY.md`. At the end: ADR-052 (the
@@ -684,13 +744,15 @@ acceptance record `docs/factory/M5-REVIEW-LANE-ACCEPTANCE.md`.
    must be proven against rotation (**not verified**).
 2. **The proxy pod's first second.** On kube-router a new pod is open for about 1 s. Pod P's seal measures
    egress. Whether its ingress rule bites at the same instant is not measured; until it does, another pod in
-   the cluster that guessed the IP could call the model proxy. The model proxy starts only after P's seal,
-   which narrows this to "ingress lags egress".
+   the cluster that guessed the IP could call the model proxy, which trusts anything that reaches port 8080.
+   The model proxy starts only after P's seal, and the startup self-check measures ingress once (slice 2).
+   A host or a node can reach a pod whatever the policy says; `docs/SECURITY.md` must record both.
 3. **Two pods can be left half-made.** A crash between the Secrets and the pods leaves a credential in a
    Secret. The anchor is created first and owns everything, so discovery and the watchdog cover it; that
    ordering is a guard to mutation-check.
-4. **Memory.** A unit may use 4 GiB and its workspace counts against it. Homelab workers are at 42% to 75%
-   memory (`kubectl top nodes`, 2026-11-27). A large clone can end in `OOMKilled`.
+4. **Memory and disk.** A unit may use 4 GiB, and a full `/tmp` takes 2 GiB of it. Homelab workers are at
+   42% to 75% memory (`kubectl top nodes`, 2026-11-27). The workspace is on node disk; past its `sizeLimit`
+   the pod is evicted, which loses its logs.
 5. **The SPI is Docker-shaped in places.** Init's environment placement, the inputs wording, `cancel` keeping
    a stopped unit, and the per-container pid limit each need a Kubernetes answer written into the SPI. A quiet
    per-arm difference is how "green, documented, and did not work" happens (`docs/UNVERIFIED.md`).
@@ -711,7 +773,11 @@ acceptance record `docs/factory/M5-REVIEW-LANE-ACCEPTANCE.md`.
 - Where the shared parsers and `TinyproxyConfig` live once two arms need them (`spire-runtime` must stay
   dependency-light).
 - The Kubernetes client (**proposal**: fabric8, through `quarkus-kubernetes-client` in the worker).
-- The courier's encryption scheme and whether a second worker replica can ever read a sign-in result.
+- Whether a second worker replica can ever read a sign-in result (the private key is in one process).
+- The worker's canary listener: its port, and that an app-namespace policy leaves it open to the run
+  namespace (the self-check's second canary pod proves it).
+- Later, not M5 (**proposal**): a per-unit random placeholder that the model proxy checks on every request,
+  so reaching port 8080 is not enough to spend the credential.
 - What `HarnessSignInWorker` expects after `cancel` (Docker keeps a stopped container; this arm deletes).
 - `describeImage` for a multi-architecture index: which platform's labels, and that the pin is the index.
 - The seal's defaults, after timing them on both clusters; and whether a refused connect counts as blocked.
