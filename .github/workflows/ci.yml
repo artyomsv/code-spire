@@ -182,3 +182,5 @@ jobs:
           kubectl -n kube-system describe pods -l k8s-app=kube-dns || true
           kubectl -n kube-system logs -l k8s-app=kube-dns --tail=50 || true
           kubectl -n kube-flannel logs -l app=flannel --tail=50 --all-containers || true
+          kubectl get events -A --sort-by=.lastTimestamp | tail -30 || true
+          docker exec spire-test-control-plane sh -c 'ls /etc/cni/net.d /opt/cni/bin; journalctl -u kubelet --no-pager | tail -40' || true
