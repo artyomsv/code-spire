@@ -25,23 +25,12 @@ proxy_pid=$!
 sleep 1
 kill -0 "$proxy_pid" 2>/dev/null || {
     echo "tinyproxy exited early" >&2
-    n=$(wc -l < /tmp/tinyproxy.conf)
-    i=1
-    while [ "$i" -le "$n" ]; do
-        sed "${i}d" /tmp/tinyproxy.conf > /tmp/t$i.conf
-        timeout 2 tinyproxy -d -c /tmp/t$i.conf >/dev/null 2>&1
-        echo "without line $i ($(sed -n "${i}p" /tmp/tinyproxy.conf)): exit $?" >&2
-        i=$((i+1))
-    done
-    timeout 2 tinyproxy -d -c /tmp/tinyproxy.conf; echo "full: exit $?" >&2
-    echo "Port 8889" > /tmp/min.conf; timeout 2 tinyproxy -d -c /tmp/min.conf >/dev/null 2>&1; echo "min: exit $?" >&2
-    ls -ln /dev/null /dev/stdout /dev/stderr /etc/tinyproxy 2>&1 | head -12 >&2
-    grep -E "Cap|Seccomp|NoNewPrivs" /proc/self/status >&2
-    timeout 2 tinyproxy -d -c /etc/tinyproxy/tinyproxy.conf; echo "stock conf: exit $?" >&2
-    timeout 2 tinyproxy -d -c /tmp/min.conf </dev/null; echo "min with stdin null: exit $?" >&2
-    cat /tmp/min.conf | head -3 >&2
-    HOME=/tmp timeout 2 tinyproxy -d -c /tmp/min.conf; echo "min HOME=/tmp: exit $?" >&2
-    timeout 2 tinyproxy -v >&2
+    cp /etc/tinyproxy/tinyproxy.conf /tmp/stock.conf; timeout 1 tinyproxy -d -c /tmp/stock.conf >/dev/null 2>&1; echo "stock copy in tmp: exit $?" >&2
+    echo "Port 8888" > /tmp/p8888.conf; timeout 1 tinyproxy -d -c /tmp/p8888.conf >/dev/null 2>&1; echo "p8888: exit $?" >&2
+    printf 'Port 8889\nUser egress\n' > /tmp/pu.conf; timeout 1 tinyproxy -d -c /tmp/pu.conf >/dev/null 2>&1; echo "port+user: exit $?" >&2
+    : > /tmp/empty.conf; timeout 1 tinyproxy -d -c /tmp/empty.conf >/dev/null 2>&1; echo "empty: exit $?" >&2
+    timeout 1 tinyproxy -d -c /etc/tinyproxy/tinyproxy.conf >/dev/null 2>&1; echo "stock: exit $?" >&2
+    echo "Port 8889" > /tmp/min.conf; timeout 1 tinyproxy -d -c /tmp/min.conf >/dev/null 2>&1; echo "min: exit $?" >&2
     exit 1
 }
 
