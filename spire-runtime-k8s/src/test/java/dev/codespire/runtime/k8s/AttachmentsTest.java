@@ -177,8 +177,7 @@ class AttachmentsTest {
         CountDownLatch release = new CountDownLatch(1);
         CountDownLatch readerDone = new CountDownLatch(1);
         InputStream late = new InputStream() {
-            private final InputStream rest = new ByteArrayInputStream("TEST-late
-".getBytes(StandardCharsets.UTF_8));
+            private final InputStream rest = new ByteArrayInputStream("TEST-late\n".getBytes(StandardCharsets.UTF_8));
 
             @Override
             public int read() throws IOException {
