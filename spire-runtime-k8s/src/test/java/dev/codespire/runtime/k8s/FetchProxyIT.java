@@ -153,6 +153,14 @@ class FetchProxyIT {
     }
 
     private static String podLog(String namespace, String name) {
+        try {
+            KindCluster.client().pods().inNamespace(namespace).withName(name)
+                    .waitUntilCondition(p -> p != null && p.getStatus() != null
+                            && ("Succeeded".equals(p.getStatus().getPhase())
+                            || "Failed".equals(p.getStatus().getPhase())), 90, TimeUnit.SECONDS);
+        } catch (io.fabric8.kubernetes.client.KubernetesClientTimeoutException stillRunning) {
+            // The log so far is still the most useful thing to report.
+        }
         return KindCluster.client().pods().inNamespace(namespace).withName(name).getLog();
     }
 }
