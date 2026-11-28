@@ -160,6 +160,10 @@ jobs:
           cluster_name: spire-test
           config: .github/kind/open.yaml
           wait: 0s
+      # flannel refuses to start without the bridge netfilter sysctls, which the runner kernel only has once
+      # the module is loaded.
+      - name: Load br_netfilter
+        run: sudo modprobe br_netfilter
       - name: Install flannel (no network policy)
         # flannel v0.27.4, pinned by release tag.
         run: |
