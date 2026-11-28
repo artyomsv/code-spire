@@ -54,16 +54,18 @@ class FetchProxyIT {
         // Exit codes name the failed step: 11 the allowed host was not forwarded, 12 the other host was,
         // 13 the close did not connect, 14 the proxy still answers after the close.
         String script = "export http_proxy=http://" + ip + ":" + PROXY_PORT + "; "
-                + "wget -q -T 20 -O /dev/null http://" + ALLOWED_HOST + "/ || exit 11; "
-                + "wget -q -T 20 -O /dev/null http://" + DENIED_HOST + "/ && exit 12; "
+                + "wget -T 20 -O /dev/null http://" + ALLOWED_HOST + "/ || exit 11; "
+                + "wget -T 20 -O /dev/null http://" + DENIED_HOST + "/ && exit 12; "
                 + "nc -w 5 " + ip + " " + CLOSE_PORT + " </dev/null || exit 13; "
                 + "sleep 3; "
                 + "nc -w 3 " + ip + " " + PROXY_PORT + " </dev/null && exit 14; "
                 + "exit 0";
         int exit = KindCluster.runToCompletion(namespace, "test-fetch-b", "test-fetch-b", script,
                 Duration.ofSeconds(180));
+        String logs = exit == 0 ? "" : " client log: " + podLog(namespace, "test-fetch-b")
+                + " proxy log: " + podLog(namespace, "test-fetch-a");
         assertEquals(0, exit, "the client's step failed (11 allowed host not forwarded, 12 other host forwarded, "
-                + "13 close did not connect, 14 proxy still answering after the close)");
+                + "13 close did not connect, 14 proxy still answering after the close)" + logs);
 
         Pod done = KindCluster.client().pods().inNamespace(namespace).withName("test-fetch-a")
                 .waitUntilCondition(p -> p != null && p.getStatus() != null
@@ -140,5 +142,9 @@ class FetchProxyIT {
                 .build();
         KindCluster.client().network().v1().networkPolicies().inNamespace(namespace).resource(proxy).create();
         KindCluster.client().network().v1().networkPolicies().inNamespace(namespace).resource(client).create();
+    }
+
+    private static String podLog(String namespace, String name) {
+        return KindCluster.client().pods().inNamespace(namespace).withName(name).getLog();
     }
 }
