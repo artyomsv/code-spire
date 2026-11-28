@@ -25,6 +25,7 @@ val quarkusPlatformVersion: String by project
 
 dependencies {
     implementation(project(":spire-runtime"))
+    implementation(project(":spire-harness"))
     implementation(platform("$quarkusPlatformGroupId:$quarkusPlatformArtifactId:$quarkusPlatformVersion"))
     implementation("io.fabric8:kubernetes-client")
 
