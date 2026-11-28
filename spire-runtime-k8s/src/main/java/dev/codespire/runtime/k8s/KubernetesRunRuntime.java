@@ -12,12 +12,14 @@ import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.ConfigMapBuilder;
 import io.fabric8.kubernetes.api.model.OwnerReference;
 import io.fabric8.kubernetes.api.model.OwnerReferenceBuilder;
+import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.dsl.LogWatch;
 import java.net.HttpURLConnection;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +46,10 @@ public final class KubernetesRunRuntime implements RunRuntime {
     /** The Docker arm's stop grace. */
     static final Duration STOP_GRACE = Duration.ofSeconds(5);
 
+    static final String CANCELLED_BEFORE_START = "the run was cancelled before its unit pod was created";
+
+    private static final Duration POLL = Duration.ofMillis(500);
+
     private final KubernetesClient client;
 
     private final KubernetesRuntimeConfig config;
@@ -52,11 +58,16 @@ public final class KubernetesRunRuntime implements RunRuntime {
 
     private final UnitStart start;
 
+    private final UnitTeardown teardown;
+
+    private final Attachments attachments = new Attachments();
+
     public KubernetesRunRuntime(KubernetesClient client, KubernetesRuntimeConfig config, RegistryImageReader images) {
         this.client = Objects.requireNonNull(client, "client");
         this.config = Objects.requireNonNull(config, "config");
         this.images = Objects.requireNonNull(images, "images");
         this.start = new UnitStart(client, config);
+        this.teardown = new UnitTeardown(client, config.namespace());
     }
 
     @Override
@@ -94,29 +105,32 @@ public final class KubernetesRunRuntime implements RunRuntime {
         client.network().v1().networkPolicies().inNamespace(config.namespace())
                 .resource(UnitPolicies.proxy(runId, config, anchor)).create();
         client.pods().inNamespace(config.namespace()).resource(ProxyPod.of(spec, config, anchor)).create();
-        String proxyIp = start.awaitProxies(runId);
-        client.pods().inNamespace(config.namespace()).resource(UnitPod.of(spec, config, anchor, proxyIp)).create();
         try {
+            String proxyIp = start.awaitProxies(runId);
+            if (teardown.isCancelled(runId)) {
+                throw new UnitNotStarted(CANCELLED_BEFORE_START, false);
+            }
+            client.pods().inNamespace(config.namespace()).resource(UnitPod.of(spec, config, anchor, proxyIp)).create();
             start.awaitAgent(runId);
-        } catch (UnitNotStarted notStarted) {
-            stopPods(runId, notStarted);
-            throw notStarted;
+        } catch (RuntimeException failed) {
+            // Whatever failed, a pod left behind may still start a paid agent, or hold the model credential, with
+            // nobody attached to stop it. The anchor and the Secrets stay, so the unit is discoverable.
+            teardown.stopPods(runId, failed);
+            throw failed;
         }
+        dropFetchSecret(runId);
         return new RunHandle(runId, UnitNames.anchor(runId));
     }
 
     /**
-     * A unit whose agent did not start in time may still start it later, with nobody attached to stop it. The proxy
-     * pod goes first, since it holds the model path. The anchor and the Secrets stay, so the unit is discoverable.
+     * The agent starts only after the fetch has ended, so the forge credential is no longer needed. Best effort: the
+     * agent runs already, and destroy deletes the Secret anyway.
      */
-    private void stopPods(String runId, UnitNotStarted notStarted) {
-        for (String pod : List.of(UnitNames.proxyPod(runId), UnitNames.unitPod(runId))) {
-            try {
-                client.pods().inNamespace(config.namespace()).withName(pod)
-                        .withGracePeriod(STOP_GRACE.toSeconds()).delete();
-            } catch (KubernetesClientException unstopped) {
-                notStarted.addSuppressed(unstopped);
-            }
+    private void dropFetchSecret(String runId) {
+        try {
+            teardown.deleteSecret(UnitNames.environmentSecret(runId, "fetch"));
+        } catch (KubernetesClientException kept) {
+            // Kept until destroy; failing create here would leave a running agent with no handle.
         }
     }
 
@@ -149,22 +163,32 @@ public final class KubernetesRunRuntime implements RunRuntime {
                 .withKind("ConfigMap")
                 .withName(created.getMetadata().getName())
                 .withUid(created.getMetadata().getUid())
+                .withController(true)
+                .withBlockOwnerDeletion(true)
                 .build();
     }
 
-    /** Follows the container's log from its start and returns when the stream ends, as the Docker arm does. */
+    /**
+     * Follows the container's log from its start and returns when the stream ends, as the Docker arm does. It also
+     * returns when the unit is cancelled or destroyed, and when the calling thread is interrupted.
+     */
     @Override
     public void attach(RunHandle handle, LogChannel channel, Consumer<String> lines) {
         String container = channel == LogChannel.AGENT ? UnitPod.AGENT : UnitPod.PUBLISHER;
         try (LogWatch watch = client.pods().inNamespace(config.namespace())
                 .withName(UnitNames.unitPod(handle.runId())).inContainer(container).watchLog()) {
-            PodLogs.follow(watch.getOutput(), lines);
+            attachments.follow(handle.runId(), watch.getOutput(), watch::close, lines);
         }
     }
 
+    /** Both pods and every Secret go; the anchor stays, marked first, so the unit is still discoverable. */
     @Override
     public void cancel(RunHandle handle) {
-        throw notYet("cancel");
+        String runId = handle.runId();
+        teardown.markCancelled(runId);
+        attachments.closeAll(runId);
+        teardown.deletePods(runId);
+        teardown.deleteSecrets(runId);
     }
 
     @Override
@@ -172,19 +196,92 @@ public final class KubernetesRunRuntime implements RunRuntime {
         throw new UnsupportedOperationException("run " + handle.runId() + ": the Kubernetes arm cannot steer a run");
     }
 
+    /**
+     * Waits for the unit pod to end, then reads it. The worker calls this as soon as the agent runs, so the wait is
+     * the pod's whole deadline (init timeout plus wall clock) plus the drain window for its grace. Deletes nothing.
+     */
     @Override
     public Finalization salvage(RunHandle handle) {
-        throw notYet("salvage");
+        String runId = handle.runId();
+        String name = UnitNames.unitPod(runId);
+        Duration limit = salvageWait(runId);
+        long deadline = System.nanoTime() + limit.toNanos();
+        while (true) {
+            Pod pod;
+            try {
+                pod = client.pods().inNamespace(config.namespace()).withName(name).get();
+            } catch (KubernetesClientException unreadable) {
+                return Finalization.faulted("the unit pod " + name + " could not be read: " + unreadable.getMessage());
+            }
+            if (pod == null) {
+                return Finalization.vanished("no unit pod of run " + runId + " remains");
+            }
+            if (UnitOutcome.hasEnded(pod)) {
+                return UnitOutcome.of(pod, proxyPodOf(runId));
+            }
+            if (System.nanoTime() > deadline || !pause()) {
+                return Finalization.faulted("the unit pod " + name + " did not end within " + limit
+                        + "; it is left running for inspection");
+            }
+        }
+    }
+
+    /** The pod's own deadline plus the drain window, from the wall clock the anchor records. */
+    private Duration salvageWait(String runId) {
+        Duration wallClock = Duration.ZERO;
+        try {
+            ConfigMap anchor = client.configMaps().inNamespace(config.namespace())
+                    .withName(UnitNames.anchor(runId)).get();
+            String seconds = anchor == null || anchor.getMetadata().getAnnotations() == null
+                    ? null : anchor.getMetadata().getAnnotations().get(WALL_CLOCK_ANNOTATION);
+            if (seconds != null) {
+                wallClock = Duration.ofSeconds(Long.parseLong(seconds));
+            }
+        } catch (KubernetesClientException | NumberFormatException unread) {
+            // The pod's deadline still stops the agent; only this wait is shorter.
+        }
+        return wallClock.plus(config.initTimeout()).plus(DRAIN_WINDOW);
+    }
+
+    /** Best effort: the proxy pod only adds a note to the outcome. */
+    private Pod proxyPodOf(String runId) {
+        try {
+            return client.pods().inNamespace(config.namespace()).withName(UnitNames.proxyPod(runId)).get();
+        } catch (KubernetesClientException unreadable) {
+            return null;
+        }
+    }
+
+    /** @return false when interrupted, with the flag set again */
+    private static boolean pause() {
+        try {
+            Thread.sleep(POLL);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     @Override
     public void destroy(RunHandle handle) {
-        throw notYet("destroy");
+        attachments.closeAll(handle.runId());
+        teardown.destroy(handle.runId());
     }
 
+    /** Every anchor in the namespace; the run id is its annotation. */
     @Override
     public List<RunHandle> discoverUnits() {
-        throw notYet("discoverUnits");
+        List<RunHandle> units = new ArrayList<>();
+        for (ConfigMap anchor : client.configMaps().inNamespace(config.namespace())
+                .withLabel(UnitNames.ROLE_LABEL, ANCHOR_ROLE).list().getItems()) {
+            Map<String, String> annotations = anchor.getMetadata().getAnnotations();
+            String runId = annotations == null ? null : annotations.get(UnitNames.RUN_ID_ANNOTATION);
+            if (runId != null) {
+                units.add(new RunHandle(runId, anchor.getMetadata().getName()));
+            }
+        }
+        return List.copyOf(units);
     }
 
     @Override
@@ -195,9 +292,5 @@ public final class KubernetesRunRuntime implements RunRuntime {
     @Override
     public ImageDescription describeImage(String image) {
         return images.describe(image);
-    }
-
-    private static UnsupportedOperationException notYet(String method) {
-        return new UnsupportedOperationException("the Kubernetes arm has no " + method + " yet");
     }
 }
