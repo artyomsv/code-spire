@@ -29,9 +29,9 @@ if ! kill -0 "$proxy_pid" 2>/dev/null; then
     exit 1
 fi
 
-# The close: one connection ends the wait. nc -l serves a single connection and returns when it ends;
-# timeout ends it at the deadline.
-timeout "$deadline" nc -l -p "$close_port" </dev/null >/dev/null 2>&1
+# The close: one connection ends the wait. nc -l accepts it, -e /bin/true answers by closing it at once (without -e
+# nc would wait for the client to hang up), and nc returns. timeout ends the wait at the deadline.
+timeout "$deadline" nc -l -p "$close_port" -e /bin/true </dev/null >/dev/null 2>&1
 
 kill "$proxy_pid" 2>/dev/null
 wait "$proxy_pid" 2>/dev/null
