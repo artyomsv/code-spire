@@ -34,7 +34,8 @@ class UnitNamesTest {
     @Test
     void theDigestIsSixteenHexCharactersAndStable() {
         assertTrue(UnitNames.digest(RUN).matches("[0-9a-f]{16}"));
-        assertEquals(UnitNames.digest(RUN), UnitNames.digest(RUN));
+        // Golden value: SHA-256 of RUN, first eight bytes. A change renames every live unit's objects.
+        assertEquals("ef148d679aaba80c", UnitNames.digest(RUN));
     }
 
     @Test
