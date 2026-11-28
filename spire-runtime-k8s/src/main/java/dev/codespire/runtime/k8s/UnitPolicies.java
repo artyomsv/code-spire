@@ -39,22 +39,15 @@ final class UnitPolicies {
     private UnitPolicies() {
     }
 
-    static String unitPolicyName(String runId) {
-        return UnitNames.anchor(runId) + "-unit-policy";
-    }
-
-    static String proxyPolicyName(String runId) {
-        return UnitNames.anchor(runId) + "-proxy-policy";
-    }
-
-    static NetworkPolicy unit(String runId, OwnerReference anchor) {
+    static NetworkPolicy unit(String runId, KubernetesRuntimeConfig config, OwnerReference anchor) {
         NetworkPolicyEgressRule toProxy = new NetworkPolicyEgressRuleBuilder()
                 .withTo(peer(runId, PROXY_ROLE))
                 .withPorts(ports("TCP", PROXY_PORTS))
                 .build();
         return new NetworkPolicyBuilder()
                 .withNewMetadata()
-                .withName(unitPolicyName(runId))
+                .withName(UnitNames.unitPolicy(runId))
+                .withNamespace(config.namespace())
                 .withLabels(UnitNames.labels(runId, UNIT_ROLE))
                 .withOwnerReferences(anchor)
                 .endMetadata()
@@ -99,7 +92,8 @@ final class UnitPolicies {
 
         return new NetworkPolicyBuilder()
                 .withNewMetadata()
-                .withName(proxyPolicyName(runId))
+                .withName(UnitNames.proxyPolicy(runId))
+                .withNamespace(config.namespace())
                 .withLabels(UnitNames.labels(runId, PROXY_ROLE))
                 .withOwnerReferences(anchor)
                 .endMetadata()

@@ -41,7 +41,7 @@ class UnitPoliciesTest {
 
     @Test
     void theUnitPodMayOnlyOpenTcpToItsOwnProxyPod() {
-        NetworkPolicy policy = UnitPolicies.unit(RUN, ANCHOR);
+        NetworkPolicy policy = UnitPolicies.unit(RUN, config(List.of(), List.of()), ANCHOR);
         assertEquals(UnitNames.labels(RUN, "unit"), policy.getSpec().getPodSelector().getMatchLabels());
         assertEquals(List.of("Ingress", "Egress"), policy.getSpec().getPolicyTypes());
         assertTrue(policy.getSpec().getIngress().isEmpty());
@@ -99,7 +99,7 @@ class UnitPoliciesTest {
     @Test
     void twoUnitsNeverSelectEachOther() {
         Map<String, String> otherProxy = UnitNames.labels(OTHER_RUN, "proxy");
-        Map<String, String> selected = UnitPolicies.unit(RUN, ANCHOR).getSpec().getEgress().get(0).getTo().get(0)
+        Map<String, String> selected = UnitPolicies.unit(RUN, config(List.of(), List.of()), ANCHOR).getSpec().getEgress().get(0).getTo().get(0)
                 .getPodSelector().getMatchLabels();
         assertFalse(otherProxy.entrySet().containsAll(selected.entrySet()));
         Map<String, String> otherUnit = UnitNames.labels(OTHER_RUN, "unit");
@@ -110,7 +110,7 @@ class UnitPoliciesTest {
 
     @Test
     void everyPolicyIsOwnedByTheAnchor() {
-        assertEquals(List.of(ANCHOR), UnitPolicies.unit(RUN, ANCHOR).getMetadata().getOwnerReferences());
+        assertEquals(List.of(ANCHOR), UnitPolicies.unit(RUN, config(List.of(), List.of()), ANCHOR).getMetadata().getOwnerReferences());
         assertEquals(List.of(ANCHOR),
                 UnitPolicies.proxy(RUN, config(List.of(), List.of()), ANCHOR).getMetadata().getOwnerReferences());
     }

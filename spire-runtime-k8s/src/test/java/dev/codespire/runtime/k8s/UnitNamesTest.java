@@ -22,6 +22,8 @@ class UnitNamesTest {
             names.add(UnitNames.anchor(runId));
             names.add(UnitNames.unitPod(runId));
             names.add(UnitNames.proxyPod(runId));
+            names.add(UnitNames.unitPolicy(runId));
+            names.add(UnitNames.proxyPolicy(runId));
             names.addAll(UnitNames.secretNames(runId));
             for (String name : names) {
                 assertTrue(name.length() <= 63, name);

@@ -50,6 +50,14 @@ final class UnitNames {
         return anchor(runId) + "-proxy";
     }
 
+    static String unitPolicy(String runId) {
+        return anchor(runId) + "-unit-policy";
+    }
+
+    static String proxyPolicy(String runId) {
+        return anchor(runId) + "-proxy-policy";
+    }
+
     static String environmentSecret(String runId, String role) {
         if (!ENVIRONMENT_ROLES.contains(role)) {
             throw new IllegalArgumentException("not an environment role: " + role);
