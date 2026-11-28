@@ -50,7 +50,7 @@ final class UnitPolicies {
     static NetworkPolicy unit(String runId, OwnerReference anchor) {
         NetworkPolicyEgressRule toProxy = new NetworkPolicyEgressRuleBuilder()
                 .withTo(peer(runId, PROXY_ROLE))
-                .withPorts(ports("TCP", PROXY_PORTS))
+                .withPorts(ports("TCP", List.of(8080, 8889, 8890, 8888)))
                 .build();
         return new NetworkPolicyBuilder()
                 .withNewMetadata()
@@ -107,7 +107,8 @@ final class UnitPolicies {
                 .withPodSelector(selector(runId, PROXY_ROLE))
                 .withPolicyTypes("Ingress", "Egress")
                 .addNewIngress()
-                .withFrom(peer(runId, UNIT_ROLE))
+                .withFrom(new NetworkPolicyPeerBuilder().withPodSelector(new LabelSelectorBuilder()
+                        .withMatchLabels(Map.of(UnitNames.ROLE_LABEL, UNIT_ROLE)).build()).build())
                 .withPorts(ports("TCP", PROXY_PORTS))
                 .endIngress()
                 .withEgress(egress)
