@@ -26,6 +26,13 @@ COPY LICENSE /usr/share/licenses/code-spire/LICENSE
 # No --chmod: the Docker runtime tests build this image through a client without BuildKit.
 COPY spire-fetch-proxy.sh /usr/local/bin/spire-fetch-proxy
 RUN chmod 755 /usr/local/bin/spire-fetch-proxy
+# A second copy of the binary under our own name, for spire-fetch-proxy. On a host that carries a tinyproxy
+# AppArmor profile, an unconfined container (a Kubernetes pod without an AppArmor profile) that execs
+# tinyproxy is moved into that profile by the binary's path, and the profile refuses every file outside
+# /etc/tinyproxy, so tinyproxy cannot read its config or filter under /tmp ("Could not open config file",
+# "filter file: Permission denied"; found on the Ubuntu CI runner). A different path attaches no profile.
+# Docker confines the container first, so the CMD below is not affected.
+RUN cp "$(command -v tinyproxy)" /usr/local/bin/spire-tinyproxy
 LABEL org.opencontainers.image.title="spire-egress-proxy" \
       org.opencontainers.image.description="Code Spire run-unit egress proxy (tinyproxy, configured per run)" \
       org.opencontainers.image.source="https://github.com/artyomsv/code-spire" \

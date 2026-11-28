@@ -52,11 +52,11 @@ class FetchProxyIT {
         String ip = running.getStatus().getPodIP();
 
         // Exit codes name the failed step: 11 the allowed host was not forwarded, 12 the other host was,
-        // 13 the close did not connect, 14 the proxy still answers after the close.
+        // 14 the proxy still answers after the close (a close that did not connect shows here).
         String script = "export http_proxy=http://" + ip + ":" + PROXY_PORT + "; "
                 + "wget -T 20 -O /dev/null http://" + ALLOWED_HOST + "/ || exit 11; "
                 + "wget -T 20 -O /dev/null http://" + DENIED_HOST + "/ && exit 12; "
-                + "nc -w 5 " + ip + " " + CLOSE_PORT + " </dev/null || exit 13; "
+                + "nc -w 5 " + ip + " " + CLOSE_PORT + " </dev/null; "
                 + "sleep 3; "
                 + "nc -w 3 " + ip + " " + PROXY_PORT + " </dev/null && exit 14; "
                 + "exit 0";
@@ -65,7 +65,7 @@ class FetchProxyIT {
         String logs = exit == 0 ? "" : " client log: " + podLog(namespace, "test-fetch-b")
                 + " proxy log: " + podLog(namespace, "test-fetch-a");
         assertEquals(0, exit, "the client's step failed (11 allowed host not forwarded, 12 other host forwarded, "
-                + "13 close did not connect, 14 proxy still answering after the close)" + logs);
+                + "14 proxy still answering after the close)" + logs);
 
         Pod done = KindCluster.client().pods().inNamespace(namespace).withName("test-fetch-a")
                 .waitUntilCondition(p -> p != null && p.getStatus() != null

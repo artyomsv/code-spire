@@ -6,12 +6,6 @@
 #
 # Writes the tinyproxy files exactly as the image's CMD does, starts tinyproxy, waits for ONE TCP connection
 # on <close-port> or for the deadline, stops tinyproxy and exits 0. POSIX sh and busybox only (nc, timeout).
-#
-# The pod must run this container with the runtime's default AppArmor profile (appArmorProfile RuntimeDefault).
-# On a host that carries a tinyproxy AppArmor profile, an unconfined container that execs tinyproxy is moved into
-# that profile, which refuses every file outside /etc/tinyproxy: tinyproxy then cannot read its own config or
-# filter under /tmp ("Could not open config file", "filter file: Permission denied"), found on the Ubuntu CI
-# runner. A container confined by the runtime's profile is not moved.
 set -u
 
 if [ "$#" -ne 2 ]; then
@@ -24,8 +18,8 @@ deadline=$2
 printf '%s\n' "$SPIRE_EGRESS_CONF" > /tmp/tinyproxy.conf
 printf '%s\n' "$SPIRE_EGRESS_FILTER" > /tmp/filter
 
-cp "$(command -v tinyproxy)" /tmp/spire-tp && chmod 755 /tmp/spire-tp
-/tmp/spire-tp -d -c /tmp/tinyproxy.conf &
+# spire-tinyproxy is tinyproxy under a path no host AppArmor profile names (see the Dockerfile).
+spire-tinyproxy -d -c /tmp/tinyproxy.conf &
 proxy_pid=$!
 
 # Fail at once, with the proxy's own message above in the log, if tinyproxy did not stay up.
