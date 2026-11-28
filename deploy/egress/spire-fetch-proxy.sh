@@ -30,9 +30,9 @@ if ! kill -0 "$proxy_pid" 2>/dev/null; then
 fi
 
 # The close: one connection ends the wait. nc -l accepts it, -e /bin/true answers by closing it at once (without -e
-# nc would wait for the client to hang up), and nc returns. timeout ends the wait at the deadline.
-( sleep 3; netstat -ltn >&2; nc -h >&2 ) &
-timeout "$deadline" nc -l -p "$close_port" -e /bin/true </dev/null >/dev/null
+# nc would wait for the client to hang up), and nc returns. timeout ends the wait at the deadline. -s 0.0.0.0: busybox
+# nc listens on IPv6 only without it, and a client dials the pod's IPv4 address (netstat showed :::8890 alone).
+timeout "$deadline" nc -l -s 0.0.0.0 -p "$close_port" -e /bin/true </dev/null >/dev/null
 wait_status=$?
 echo "spire-fetch-proxy: the wait ended with status $wait_status; stopping tinyproxy" >&2
 
