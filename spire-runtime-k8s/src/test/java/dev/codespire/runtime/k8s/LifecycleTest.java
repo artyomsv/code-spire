@@ -15,6 +15,7 @@ import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.server.mock.EnableKubernetesMockClient;
+import io.fabric8.kubernetes.client.server.mock.KubernetesMockServer;
 import org.junit.jupiter.api.Test;
 
 import java.net.http.HttpClient;
@@ -47,6 +48,8 @@ class LifecycleTest {
     private static final Duration WAIT_FOR_POD = Duration.ofSeconds(20);
 
     KubernetesClient client;
+
+    KubernetesMockServer server;
 
     /** Short waits, as in UnitStartMappingTest: 2 s for the proxies, and for the agent 2 + 1 + 1 s. */
     private KubernetesRunRuntime runtime() {
@@ -178,8 +181,20 @@ class LifecycleTest {
     }
 
     private static ContainerStatus ended(String name, int exit) {
+        return ended(name, exit, null);
+    }
+
+    private static ContainerStatus ended(String name, int exit, String reason) {
         return new ContainerStatusBuilder().withName(name)
-                .withNewState().withNewTerminated().withExitCode(exit).endTerminated().endState().build();
+                .withNewState().withNewTerminated().withExitCode(exit).withReason(reason).endTerminated().endState()
+                .build();
+    }
+
+    private void markAnchorCancelled(String runId) {
+        client.configMaps().inNamespace(NAMESPACE).withName(UnitNames.anchor(runId)).edit(anchor ->
+                new ConfigMapBuilder(anchor).editMetadata()
+                        .addToAnnotations(UnitTeardown.CANCELLED_ANNOTATION, UnitTeardown.CANCELLED)
+                        .endMetadata().build());
     }
 
     private CompletableFuture<RunHandle> createInBackground(String runId) {
@@ -282,10 +297,7 @@ class LifecycleTest {
         String runId = "TEST-run-cancel-early";
         CompletableFuture<RunHandle> creating = createInBackground(runId);
         awaitPod(UnitNames.proxyPod(runId));
-        client.configMaps().inNamespace(NAMESPACE).withName(UnitNames.anchor(runId)).edit(anchor ->
-                new ConfigMapBuilder(anchor).editMetadata()
-                        .addToAnnotations(UnitTeardown.CANCELLED_ANNOTATION, UnitTeardown.CANCELLED)
-                        .endMetadata().build());
+        markAnchorCancelled(runId);
         markProxiesStarted(runId);
 
         UnitNotStarted stopped = assertInstanceOf(UnitNotStarted.class, failureOf(creating));
@@ -293,6 +305,41 @@ class LifecycleTest {
         assertEquals(KubernetesRunRuntime.CANCELLED_BEFORE_START, stopped.detail());
         assertNull(client.pods().inNamespace(NAMESPACE).withName(UnitNames.proxyPod(runId)).get(),
                 "the proxy pod, which holds the model credential, was left running");
+    }
+
+    @Test
+    void aCancelWhileTheAgentStartsStopsTheUnit() {
+        // The mark lands after create's first look and before the agent runs: create must look again, since the
+        // cancel found no unit pod to stop when it ran.
+        String runId = "TEST-run-cancel-late";
+        CompletableFuture<RunHandle> creating = createInBackground(runId);
+        markProxiesStarted(runId);
+        awaitPod(UnitNames.unitPod(runId));
+        markAnchorCancelled(runId);
+        setStatus(UnitNames.unitPod(runId), "Running", null,
+                List.of(ended(UnitPod.SEAL, 0), ended(UnitPod.FETCH, 0), ended(UnitPod.FETCH_CLOSED, 0),
+                        started(UnitPod.PUBLISHER)),
+                List.of(started(UnitPod.AGENT)));
+
+        UnitNotStarted stopped = assertInstanceOf(UnitNotStarted.class, failureOf(creating));
+
+        assertEquals(KubernetesRunRuntime.CANCELLED_BEFORE_START, stopped.detail());
+        assertEquals(List.of(), client.pods().inNamespace(NAMESPACE)
+                .withLabel(UnitNames.UNIT_LABEL, UnitNames.digest(runId)).list().getItems(),
+                "a cancelled unit's pods were left running");
+    }
+
+    @Test
+    void anAnchorWhoseNameIsNotItsRunIdsIsNotDiscovered() {
+        String runId = "TEST-run-real";
+        seedAnchor(runId);
+        client.configMaps().inNamespace(NAMESPACE).resource(new ConfigMapBuilder()
+                .withNewMetadata().withName("unit-0000000000000000").withNamespace(NAMESPACE)
+                .withLabels(UnitNames.labels("TEST-run-foreign", KubernetesRunRuntime.ANCHOR_ROLE))
+                .withAnnotations(Map.of(UnitNames.RUN_ID_ANNOTATION, "TEST-run-foreign"))
+                .endMetadata().build()).create();
+
+        assertEquals(List.of(handle(runId)), runtime().discoverUnits());
     }
 
     // ---- create's own cleanup ----
@@ -358,13 +405,52 @@ class LifecycleTest {
     }
 
     @Test
-    void aPublisherStoppedBeforeDoneIsFaulted() {
+    void anAgentThatFailedBeforeDoneIsSalvagedWithItsCode() {
+        // As on Docker: the agent's own failure is the run's outcome, and its cause is kept.
+        String runId = "TEST-run-killed";
+        seedUnit(runId);
+        setStatus(UnitNames.unitPod(runId), "Failed", null,
+                List.of(ended(UnitPod.SEAL, 0), ended(UnitPod.FETCH, 0), ended(UnitPod.FETCH_CLOSED, 0),
+                        ended(UnitPod.PUBLISHER, UnitOutcome.PUBLISHER_TERM_BEFORE_DONE)),
+                List.of(ended(UnitPod.AGENT, 137, "OOMKilled")));
+
+        assertEquals(Finalization.salvaged(137, "agent exited 137 (OOMKilled); the publisher was stopped before DONE"),
+                runtime().salvage(handle(runId)));
+    }
+
+    @Test
+    void anAgentThatExitedZeroWithoutDoneIsFaulted() {
         String runId = "TEST-run-no-done";
         seedUnit(runId);
         markUnitEnded(runId, "Succeeded", null, UnitOutcome.PUBLISHER_TERM_BEFORE_DONE, 0);
 
-        assertEquals(Finalization.faulted("the publisher was stopped before the agent wrote DONE"),
+        assertEquals(Finalization.faulted("the publisher was stopped before the agent wrote DONE; agent exited 0"),
                 runtime().salvage(handle(runId)));
+    }
+
+    @Test
+    void aReadErrorWhileWaitingIsRetried() {
+        String runId = "TEST-run-api-blip";
+        seedUnit(runId);
+        markUnitEnded(runId, "Succeeded", null, 0, 0);
+        server.expect().get().withPath("/api/v1/namespaces/" + NAMESPACE + "/pods/" + UnitNames.unitPod(runId))
+                .andReturn(500, "TEST error").once();
+
+        assertEquals(Finalization.salvaged(0, "agent exited 0"), runtime().salvage(handle(runId)),
+                "one failed read ended a review that was still running");
+    }
+
+    @Test
+    void theSalvageWaitIsThePodsDeadlinePlusTheDrainWindow() {
+        // From the pod this arm made, not from the anchor: an anchor that cannot be read must not shorten it.
+        String runId = "TEST-run-wait";
+        RunUnitSpec spec = TestUnits.proxiedReview(runId);
+        UnitSalvage salvage = new UnitSalvage(client, PodFixtures.CONFIG, KubernetesRunRuntime.DRAIN_WINDOW);
+
+        Duration wait = salvage.waitFor(UnitPod.of(spec, PodFixtures.CONFIG, owner(runId), PodFixtures.PROXY_IP));
+
+        assertEquals(PodFixtures.CONFIG.initTimeout().plus(spec.wallClock()).plus(KubernetesRunRuntime.DRAIN_WINDOW),
+                wait);
     }
 
     @Test

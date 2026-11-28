@@ -12,7 +12,6 @@ import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.ConfigMapBuilder;
 import io.fabric8.kubernetes.api.model.OwnerReference;
 import io.fabric8.kubernetes.api.model.OwnerReferenceBuilder;
-import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
@@ -45,12 +44,12 @@ public final class KubernetesRunRuntime implements RunRuntime {
 
     static final String REVIEWS_ONLY = "kubernetes_reviews_only";
 
+    private static final System.Logger LOG = System.getLogger(KubernetesRunRuntime.class.getName());
+
     /** The Docker arm's stop grace. */
     static final Duration STOP_GRACE = Duration.ofSeconds(5);
 
     static final String CANCELLED_BEFORE_START = "the run was cancelled before its unit pod was created";
-
-    private static final Duration POLL = Duration.ofMillis(500);
 
     private final KubernetesClient client;
 
@@ -64,12 +63,15 @@ public final class KubernetesRunRuntime implements RunRuntime {
 
     private final Attachments attachments = new Attachments();
 
+    private final UnitSalvage unitSalvage;
+
     public KubernetesRunRuntime(KubernetesClient client, KubernetesRuntimeConfig config, RegistryImageReader images) {
         this.client = Objects.requireNonNull(client, "client");
         this.config = Objects.requireNonNull(config, "config");
         this.images = Objects.requireNonNull(images, "images");
         this.start = new UnitStart(client, config);
         this.teardown = new UnitTeardown(client, config.namespace());
+        this.unitSalvage = new UnitSalvage(client, config, DRAIN_WINDOW);
     }
 
     @Override
@@ -114,6 +116,10 @@ public final class KubernetesRunRuntime implements RunRuntime {
             }
             client.pods().inNamespace(config.namespace()).resource(UnitPod.of(spec, config, anchor, proxyIp)).create();
             start.awaitAgent(runId);
+            // A cancel that marked the anchor while the agent started finds no unit pod to stop if this returned.
+            if (teardown.isCancelled(runId)) {
+                throw new UnitNotStarted(CANCELLED_BEFORE_START, false);
+            }
         } catch (RuntimeException failed) {
             // Whatever failed, a pod left behind may still start a paid agent, or hold the model credential, with
             // nobody attached to stop it. The anchor and the Secrets stay, so the unit is discoverable.
@@ -209,71 +215,10 @@ public final class KubernetesRunRuntime implements RunRuntime {
         throw new UnsupportedOperationException("run " + handle.runId() + ": the Kubernetes arm cannot steer a run");
     }
 
-    /**
-     * Waits for the unit pod to end, then reads it. The worker calls this as soon as the agent runs, so the wait is
-     * the pod's whole deadline (init timeout plus wall clock) plus the drain window for its grace. Deletes nothing.
-     */
+    /** See {@link UnitSalvage}: waits for the unit pod's deadline plus the drain window. Deletes nothing. */
     @Override
     public Finalization salvage(RunHandle handle) {
-        String runId = handle.runId();
-        String name = UnitNames.unitPod(runId);
-        Duration limit = salvageWait(runId);
-        long deadline = System.nanoTime() + limit.toNanos();
-        while (true) {
-            Pod pod;
-            try {
-                pod = client.pods().inNamespace(config.namespace()).withName(name).get();
-            } catch (KubernetesClientException unreadable) {
-                return Finalization.faulted("the unit pod " + name + " could not be read: " + unreadable.getMessage());
-            }
-            if (pod == null) {
-                return Finalization.vanished("no unit pod of run " + runId + " remains");
-            }
-            if (UnitOutcome.hasEnded(pod)) {
-                return UnitOutcome.of(pod, proxyPodOf(runId));
-            }
-            if (System.nanoTime() > deadline || !pause()) {
-                return Finalization.faulted("the unit pod " + name + " did not end within " + limit
-                        + "; it is left running for inspection");
-            }
-        }
-    }
-
-    /** The pod's own deadline plus the drain window, from the wall clock the anchor records. */
-    private Duration salvageWait(String runId) {
-        Duration wallClock = Duration.ZERO;
-        try {
-            ConfigMap anchor = client.configMaps().inNamespace(config.namespace())
-                    .withName(UnitNames.anchor(runId)).get();
-            String seconds = anchor == null || anchor.getMetadata().getAnnotations() == null
-                    ? null : anchor.getMetadata().getAnnotations().get(WALL_CLOCK_ANNOTATION);
-            if (seconds != null) {
-                wallClock = Duration.ofSeconds(Long.parseLong(seconds));
-            }
-        } catch (KubernetesClientException | NumberFormatException unread) {
-            // The pod's deadline still stops the agent; only this wait is shorter.
-        }
-        return wallClock.plus(config.initTimeout()).plus(DRAIN_WINDOW);
-    }
-
-    /** Best effort: the proxy pod only adds a note to the outcome. */
-    private Pod proxyPodOf(String runId) {
-        try {
-            return client.pods().inNamespace(config.namespace()).withName(UnitNames.proxyPod(runId)).get();
-        } catch (KubernetesClientException unreadable) {
-            return null;
-        }
-    }
-
-    /** @return false when interrupted, with the flag set again */
-    private static boolean pause() {
-        try {
-            Thread.sleep(POLL);
-            return true;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
+        return unitSalvage.salvage(handle.runId());
     }
 
     @Override
@@ -290,9 +235,17 @@ public final class KubernetesRunRuntime implements RunRuntime {
                 .withLabel(UnitNames.ROLE_LABEL, ANCHOR_ROLE).list().getItems()) {
             Map<String, String> annotations = anchor.getMetadata().getAnnotations();
             String runId = annotations == null ? null : annotations.get(UnitNames.RUN_ID_ANNOTATION);
-            if (runId != null) {
-                units.add(new RunHandle(runId, anchor.getMetadata().getName()));
+            if (runId == null) {
+                continue;
             }
+            String name = anchor.getMetadata().getName();
+            if (!UnitNames.anchor(runId).equals(name)) {
+                // Not a unit this arm made for that run id: acting on it could destroy another unit's objects.
+                LOG.log(System.Logger.Level.WARNING, "skipping the anchor {0}: its run id {1} names the anchor {2}",
+                        name, runId, UnitNames.anchor(runId));
+                continue;
+            }
+            units.add(new RunHandle(runId, name));
         }
         return List.copyOf(units);
     }

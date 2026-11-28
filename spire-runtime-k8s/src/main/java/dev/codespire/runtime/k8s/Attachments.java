@@ -4,7 +4,6 @@ import java.io.InputStream;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
@@ -15,8 +14,9 @@ import java.util.function.Consumer;
  * watch does not end it either (measured on kind: the read went on past the pod's stop). The worker interrupts its
  * readers when a salvage fails, and a reader left blocked would hold its thread for the life of the process. So the
  * read runs on its own virtual thread, and the caller returns as soon as the stream ends, it is closed through
- * {@link #closeAll}, or the caller is interrupted. A line the reader still gets after that is dropped, so the
- * caller's consumer is never called once {@code follow} has returned for a close.
+ * {@link #closeAll}, or the caller is interrupted. A line the reader still gets after that is dropped. Delivery and
+ * close share one lock, and close takes it before the caller is released, so no line reaches the consumer once
+ * {@code follow} has returned.
  */
 final class Attachments {
 
@@ -64,11 +64,7 @@ final class Attachments {
         AtomicReference<RuntimeException> fault = new AtomicReference<>();
         Thread.ofVirtual().name("spire-attach").start(() -> {
             try {
-                PodLogs.follow(log, line -> {
-                    if (!attachment.isClosed()) {
-                        lines.accept(line);
-                    }
-                });
+                PodLogs.follow(log, line -> attachment.deliver(line, lines));
             } catch (RuntimeException e) {
                 fault.set(e);
             } finally {
@@ -93,7 +89,10 @@ final class Attachments {
 
         private final Runnable close;
 
-        private final AtomicBoolean closed = new AtomicBoolean();
+        private final Object lock = new Object();
+
+        /** Written under {@link #lock}; read without it only where a stale answer is harmless. */
+        private volatile boolean closed;
 
         /** Counted down when the read ends or the attachment is closed, whichever is first. */
         private final CountDownLatch done = new CountDownLatch(1);
@@ -102,10 +101,23 @@ final class Attachments {
             this.close = close;
         }
 
+        /** Waits for a line being delivered, so the caller is released only after the consumer's last call. */
         void close() {
-            if (closed.compareAndSet(false, true)) {
-                done.countDown();
-                Thread.ofVirtual().name("spire-attach-close").start(this::runClose);
+            synchronized (lock) {
+                if (closed) {
+                    return;
+                }
+                closed = true;
+            }
+            done.countDown();
+            Thread.ofVirtual().name("spire-attach-close").start(this::runClose);
+        }
+
+        void deliver(String line, Consumer<String> lines) {
+            synchronized (lock) {
+                if (!closed) {
+                    lines.accept(line);
+                }
             }
         }
 
@@ -126,7 +138,7 @@ final class Attachments {
         }
 
         boolean isClosed() {
-            return closed.get();
+            return closed;
         }
     }
 }

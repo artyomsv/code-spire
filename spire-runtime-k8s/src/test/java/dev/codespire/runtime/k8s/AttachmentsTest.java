@@ -172,6 +172,42 @@ class AttachmentsTest {
     }
 
     @Test
+    void aLineReadAfterTheCloseNeverReachesTheConsumer() throws InterruptedException {
+        Attachments attachments = new Attachments();
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch readerDone = new CountDownLatch(1);
+        InputStream late = new InputStream() {
+            private final InputStream rest = new ByteArrayInputStream("TEST-late
+".getBytes(StandardCharsets.UTF_8));
+
+            @Override
+            public int read() throws IOException {
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("interrupted", e);
+                }
+                int next = rest.read();
+                if (next < 0) {
+                    readerDone.countDown();
+                }
+                return next;
+            }
+        };
+        List<String> lines = new CopyOnWriteArrayList<>();
+        Thread follower = Thread.ofPlatform().start(() -> attachments.follow(RUN, late, () -> { }, lines::add));
+        awaitOpen(attachments);
+
+        attachments.closeAll(RUN);
+        assertTrue(follower.join(PROMPTLY), "the follow did not return on close");
+        release.countDown();
+
+        assertTrue(readerDone.await(PROMPTLY.toSeconds(), TimeUnit.SECONDS), "the reader never read the late line");
+        assertEquals(List.of(), lines, "a line reached the consumer after follow returned");
+    }
+
+    @Test
     void aReadFaultNobodyCausedReachesTheCaller() {
         InputStream broken = new InputStream() {
             @Override
