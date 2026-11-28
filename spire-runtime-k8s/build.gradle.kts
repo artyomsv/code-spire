@@ -45,6 +45,7 @@ tasks.test {
     }
     // CI keeps no test report, so a failure's message must reach the job log.
     testLogging {
+        events("passed", "failed", "skipped")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
 }
@@ -58,6 +59,7 @@ tasks.register<Test>("openClusterTest") {
         includeTags("open-cluster")
     }
     testLogging {
+        events("passed", "failed", "skipped")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
 }

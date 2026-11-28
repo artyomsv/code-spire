@@ -128,6 +128,12 @@ jobs:
           kind load docker-image --name spire-test \
             spire-publisher:TEST spire-model-proxy:TEST spire-egress-proxy:TEST spire-test-unit:TEST
       - run: ./gradlew testKubernetes --no-daemon --console=plain
+      - name: Cluster diagnostics
+        if: failure()
+        run: |
+          kubectl get nodes,pods -A -o wide || true
+          kubectl -n kube-system describe pods -l k8s-app=kube-dns || true
+          kubectl -n kube-system logs -l k8s-app=calico-node --tail=50 --all-containers || true
 
   # The same arm against a cluster that enforces nothing (flannel): proves the tests that need an open
   # cluster see one.
@@ -165,3 +171,10 @@ jobs:
           kind load docker-image --name spire-test \
             spire-publisher:TEST spire-model-proxy:TEST spire-egress-proxy:TEST spire-test-unit:TEST
       - run: ./gradlew :spire-runtime-k8s:openClusterTest --no-daemon --console=plain
+      - name: Cluster diagnostics
+        if: failure()
+        run: |
+          kubectl get nodes,pods -A -o wide || true
+          kubectl -n kube-system describe pods -l k8s-app=kube-dns || true
+          kubectl -n kube-system logs -l k8s-app=kube-dns --tail=50 || true
+          kubectl -n kube-flannel logs -l app=flannel --tail=50 --all-containers || true
