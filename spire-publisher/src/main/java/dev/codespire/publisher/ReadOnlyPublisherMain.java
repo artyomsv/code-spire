@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 
 /**
  * Distinct executable, like {@link HeldPublisherMain}: an older publisher image has no {@code spire-publish-none}, so
@@ -23,20 +24,63 @@ public final class ReadOnlyPublisherMain {
     private ReadOnlyPublisherMain() {
     }
 
+    static final String STAY_UNTIL_TERM = "--stay-until-term";
+
+    private static final int BAD_ARGUMENTS = 2;
+
     public static void main(String[] args) {
+        if (args.length == 1 && STAY_UNTIL_TERM.equals(args[0])) {
+            stay();
+            return;
+        }
+        if (args.length > 0) {
+            System.err.println("spire-publish-none: unknown argument " + args[0]);
+            System.exit(BAD_ARGUMENTS);
+        }
         int exitCode = run(System.getenv(), System.out);
         if (exitCode != 0) {
             System.exit(exitCode);
         }
     }
 
+    /**
+     * A shutdown hook counts the latch down and waits for the main thread; the main thread finishes its last poll and
+     * print, then ends the JVM with {@code halt}, since {@code System.exit} would block inside a shutdown already
+     * under way.
+     */
+    private static void stay() {
+        CountDownLatch term = new CountDownLatch(1);
+        Thread main = Thread.currentThread();
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            term.countDown();
+            try {
+                main.join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }));
+        int exitCode = run(System.getenv(), System.out, term);
+        System.out.flush();
+        Runtime.getRuntime().halt(exitCode);
+    }
+
     static int run(Map<String, String> env, PrintStream out) {
+        return run(env, out, null);
+    }
+
+    /** @param term null for the Docker mode (return at DONE); a latch for stay mode */
+    static int run(Map<String, String> env, PrintStream out, CountDownLatch term) {
         OutcomeWriter outcome = new OutcomeWriter(out);
         Path handoff = Path.of(env.getOrDefault("SPIRE_HANDOFF_DIR", DEFAULT_HANDOFF_DIR));
         try {
             // Read inside the guard: a malformed cap is a named publisher failure, never a silent 32 KiB.
             int artifactMaxBytes = HandoffFiles.artifactMaxBytes(env);
-            return new ReadOnlyPublisher(handoff, outcome, POLL_MILLIS).artifactMaxBytes(artifactMaxBytes).run();
+            ReadOnlyPublisher publisher = new ReadOnlyPublisher(handoff, outcome, POLL_MILLIS)
+                    .artifactMaxBytes(artifactMaxBytes);
+            if (term != null) {
+                publisher.stayUntilTerm(term);
+            }
+            return publisher.run();
         } catch (IOException | RuntimeException e) {
             outcome.failed("PUBLISHER_FAILED", e.getClass().getSimpleName() + ": " + e.getMessage());
             return 1;

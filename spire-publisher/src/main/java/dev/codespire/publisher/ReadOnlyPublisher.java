@@ -4,6 +4,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 /**
@@ -15,6 +17,12 @@ import java.util.stream.Stream;
  * counted by name and never read, and the change is discarded with the unit.
  */
 final class ReadOnlyPublisher {
+
+    /** Exit code of a stay-mode run told to stop before the agent finished (EX_TEMPFAIL). */
+    static final int TERM_BEFORE_DONE = 75;
+
+    /** Set by {@link #stayUntilTerm}; null in the Docker mode, which returns at DONE. */
+    private CountDownLatch term;
 
     private final Path handoff;
 
@@ -36,10 +44,23 @@ final class ReadOnlyPublisher {
         return this;
     }
 
+    /**
+     * Stay mode for a Kubernetes native sidecar: print the artifact once at DONE, then wait for the latch so the
+     * container never exits and is never restarted. TERM before DONE exits {@link #TERM_BEFORE_DONE}.
+     */
+    ReadOnlyPublisher stayUntilTerm(CountDownLatch termLatch) {
+        this.term = termLatch;
+        return this;
+    }
+
     /** @return the exit code: always 0 once DONE was seen, since no handoff file can fail the run here */
     int run() throws IOException, InterruptedException {
-        while (!Files.exists(handoff.resolve(PublisherMain.DONE_SENTINEL))) {
-            Thread.sleep(pollMillis);
+        if (term == null) {
+            while (!doneExists()) {
+                Thread.sleep(pollMillis);
+            }
+        } else if (!awaitDoneOrTerm()) {
+            return TERM_BEFORE_DONE;
         }
         long bundles = countBundles();
         if (bundles > 0) {
@@ -47,7 +68,24 @@ final class ReadOnlyPublisher {
         }
         HandoffReport.artifact(handoff, outcome, artifactMaxBytes);
         HandoffReport.stepSummary(handoff, outcome);
+        if (term != null) {
+            term.await();
+        }
         return 0;
+    }
+
+    private boolean doneExists() {
+        return Files.exists(handoff.resolve(PublisherMain.DONE_SENTINEL));
+    }
+
+    /** @return true when DONE exists; false when TERM came first and a last look found no DONE */
+    private boolean awaitDoneOrTerm() throws InterruptedException {
+        while (!doneExists()) {
+            if (term.await(pollMillis, TimeUnit.MILLISECONDS)) {
+                return doneExists();
+            }
+        }
+        return true;
     }
 
     private long countBundles() throws IOException {
