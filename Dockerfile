@@ -44,6 +44,7 @@ COPY spire-review-worker/build.gradle.kts spire-review-worker/
 COPY spire-run-worker/build.gradle.kts spire-run-worker/
 COPY spire-runtime/build.gradle.kts spire-runtime/
 COPY spire-runtime-docker/build.gradle.kts spire-runtime-docker/
+COPY spire-runtime-k8s/build.gradle.kts spire-runtime-k8s/
 COPY spire-scm-bitbucket/build.gradle.kts spire-scm-bitbucket/
 COPY spire-scm-github/build.gradle.kts spire-scm-github/
 COPY spire-scm-gitlab/build.gradle.kts spire-scm-gitlab/

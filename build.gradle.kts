@@ -273,6 +273,15 @@ val e2eTestModules = listOf(
     "spire-e2e",
 )
 
+/**
+ * The fourth tier: modules whose tests run against a real Kubernetes cluster that CI starts (kind, with a
+ * CNI that enforces network policy). The job, not the build, owns the cluster, so these tests cannot run
+ * in the service tier, which boots its own dependencies and needs nothing handed in.
+ */
+val kubernetesTestModules = listOf(
+    "spire-runtime-k8s",
+)
+
 tasks.register("testFast") {
     group = "verification"
     description = "Runs every module whose tests need no Docker. The fast half of CI."
@@ -284,6 +293,13 @@ tasks.register("testServices") {
     description = "Runs the four deployables plus spire-runtime-docker and spire-agent-image " +
             "(Dev Services: Postgres + Kafka; the last two also drive a real daemon)."
     dependsOn(serviceTestModules.map { ":$it:test" })
+}
+
+tasks.register("testKubernetes") {
+    group = "verification"
+    description = "Runs the tests that drive a real Kubernetes cluster (kind with a policy-enforcing CNI). " +
+            "Needs a kubeconfig and the test images loaded; CI's kubernetes job provides both."
+    dependsOn(kubernetesTestModules.map { ":$it:test" })
 }
 
 tasks.register("testE2e") {

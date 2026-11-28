@@ -38,6 +38,7 @@ libraries you build *against* are Apache-2.0, the services you *run* are FSL.
 | `spire-workspace` | Apache-2.0 | The publisher's git library: bare clone, bundle fetch, diff, gated push. |
 | `spire-runtime` | Apache-2.0 | The run-placement SPI. Every runtime arm implements it (ADR-039). |
 | `spire-runtime-docker` | Apache-2.0 | Reference runtime arm — the three-container unit on a Docker daemon. |
+| `spire-runtime-k8s` | Apache-2.0 | Kubernetes runtime arm — the run unit as one pod under default-deny network policy. |
 | `spire-agent-image` | Apache-2.0 | Conformance checker for the published agent-image contract. The contract is published for ANY image to satisfy, and a contract whose checker a third party may not run is not much of a contract. |
 | `spire-arch` | Apache-2.0 | Build-time architecture check (ADR-020). Tooling, not product. |
 | `deploy/agent` | Apache-2.0 | The reference agent image recipes and their shared entrypoint. They are reference implementations of the published agent-image contract, which any image may satisfy, so they take the reference adapters' licence. The harness CLIs they install keep their vendors' terms — see "Published images" below. |
