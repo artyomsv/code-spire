@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * How {@code create} reads the unit pod's own start, against the fabric8 mock API server. No kubelet runs here, so
  * the test writes the pod statuses a kubelet would: the proxies started, then an init container of the unit pod
- * ended. The mock server has no log endpoint, so the printed line is absent and only the cause is checked.
+ * ended. The mock server answers a log read with the pod itself, not a container log, so only the cause is checked.
  */
 @EnableKubernetesMockClient(crud = true)
 class UnitStartMappingTest {
