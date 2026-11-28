@@ -50,8 +50,8 @@ final class ContainerResources {
         return new ResourceRequirementsBuilder()
                 .addToRequests("cpu", new Quantity(requestCpu))
                 .addToRequests("memory", new Quantity(requestMemory))
-                .addToLimits("cpu", new Quantity(limitCpu))
-                .addToLimits("memory", new Quantity(limitMemory))
+                //MUT
+                //MUT2
                 .build();
     }
 }

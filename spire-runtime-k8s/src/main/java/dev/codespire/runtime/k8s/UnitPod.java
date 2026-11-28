@@ -60,7 +60,7 @@ final class UnitPod {
                 .withTerminationGracePeriodSeconds(TERMINATION_GRACE_SECONDS)
                 .withHostAliases(PodSupport.alias(proxyPodIp, RunUnitSpec.MODEL_PROXY_ALIAS,
                         RunUnitSpec.FETCH_PROXY_ALIAS))
-                .withInitContainers(seal(config), fetch(spec), fetchClosed(config), publisher(spec))
+                .withInitContainers(fetch(spec), seal(config), fetchClosed(config), publisher(spec))
                 .withContainers(agent(spec, config))
                 .withVolumes(volumes(spec))
                 .endSpec()
@@ -104,7 +104,8 @@ final class UnitPod {
                 .withArgs(arguments)
                 .withRestartPolicy("Always")
                 .withSecurityContext(PodSupport.restricted(false))
-                .withVolumeMounts(mountsOf(spec, publisher, false));
+                .withVolumeMounts(mountsOf(spec, publisher, false))
+                .addToVolumeMounts(PodSupport.mount(spec.inputs().volume(), "/inputs", true));
         return PodSupport.withEnvironmentSecret(builder,
                 UnitNames.environmentSecret(spec.runId(), "publisher")).build();
     }

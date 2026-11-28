@@ -87,6 +87,7 @@ final class ProxyPod {
                 .withName(EGRESS_PROXY)
                 .withImage(PodSupport.pinned(config.egressImage()))
                 .withResources(ContainerResources.smallProxy())
+                .addNewEnv().withName("TEST_LEAK").withValue("TEST-value").endEnv()
                 .withSecurityContext(PodSupport.restricted(true))
                 .withStartupProbe(PodSupport.tcpStartup(EgressPolicy.PROXY_PORT,
                         EGRESS_STARTUP_PERIOD_SECONDS, EGRESS_STARTUP_FAILURES))
@@ -103,6 +104,7 @@ final class ProxyPod {
                 .withImage(PodSupport.pinned(config.egressImage()))
                 .withCommand(command)
                 .withResources(ContainerResources.smallProxy())
+                .addNewEnv().withName("TEST_LEAK").withValue("TEST-value").endEnv()
                 .withSecurityContext(PodSupport.restricted(true))
                 .addToVolumeMounts(PodSupport.mount("tmp-fetch", PodSupport.TMP_PATH, false));
         PodSupport.withEnvironmentSecret(builder, UnitNames.environmentSecret(spec.runId(), "fetchproxy"));
