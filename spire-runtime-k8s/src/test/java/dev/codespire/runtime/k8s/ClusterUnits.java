@@ -80,6 +80,16 @@ final class ClusterUnits {
     }
 
     static RunUnitSpec unit(String runId, String agentScript, String fetchScript, Map<String, String> inputs) {
+        return unit(runId, agentScript, fetchScript, inputs, Duration.ofMinutes(5));
+    }
+
+    /** A unit with its own wall clock: the unit pod's deadline is the init timeout plus this. */
+    static RunUnitSpec unit(String runId, String agentScript, Duration wallClock) {
+        return unit(runId, agentScript, CLOSING_FETCH, Map.of("context.md", "TEST context"), wallClock);
+    }
+
+    private static RunUnitSpec unit(String runId, String agentScript, String fetchScript, Map<String, String> inputs,
+                                    Duration wallClock) {
         List<Mount> initMounts = List.of(Mount.writable("work", "/work"),
                 Mount.writable(TestUnits.INPUTS_VOLUME, TestUnits.INPUTS_PATH));
         List<Mount> agentMounts = List.of(Mount.readOnly("work", "/work"),
@@ -94,7 +104,7 @@ final class ClusterUnits {
                 Map.of("TEST_MODEL", "TEST-value"), List.of(), SHELL);
         EgressPolicy egress = new EgressPolicy(EgressPolicy.Mode.ENFORCE, Set.of("api.test-vendor.example"));
         RunUnitSpec spec = new RunUnitSpec(runId, init, agent, publisher, EnterpriseEnvironment.NONE, egress,
-                256L << 20, 500_000_000L, 256L << 20, Duration.ofMinutes(5));
+                256L << 20, 500_000_000L, 256L << 20, wallClock);
         return spec.withModelProxy(modelProxy)
                 .withInputs(new UnitInputs(TestUnits.INPUTS_VOLUME, TestUnits.INPUTS_PATH, new LinkedHashMap<>(inputs)))
                 .withFetchHosts(Set.of("test-forge.example"));
