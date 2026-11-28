@@ -56,7 +56,7 @@ class FetchProxyIT {
         String script = "export http_proxy=http://" + ip + ":" + PROXY_PORT + "; "
                 + "wget -T 20 -O /dev/null http://" + ALLOWED_HOST + "/ || exit 11; "
                 + "wget -T 20 -O /dev/null http://" + DENIED_HOST + "/ && exit 12; "
-                + "nc -w 5 " + ip + " " + CLOSE_PORT + " </dev/null; "
+                + "nc -w 5 " + ip + " " + CLOSE_PORT + " </dev/null; echo close nc exit $?; "
                 + "sleep 3; "
                 + "nc -w 3 " + ip + " " + PROXY_PORT + " </dev/null && exit 14; "
                 + "exit 0";
