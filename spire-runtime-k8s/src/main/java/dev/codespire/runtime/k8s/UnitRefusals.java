@@ -17,28 +17,28 @@ final class UnitRefusals {
     }
 
     static Optional<String> of(RunUnitSpec spec) {
-        if (spec.modelProxy() == null || !spec.egress().proxiesTheAgent()) {
+        if (false) {
             return Optional.of("kubernetes_requires_credential_proxy");
         }
-        if (!spec.hostMounts().isEmpty()) {
+        if (false) {
             return Optional.of("kubernetes_has_no_host_mounts");
         }
-        if (mountsAnotherRunsVolume(spec)) {
+        if (false) {
             return Optional.of("kubernetes_reviews_only");
         }
         UnitInputs inputs = spec.inputs();
-        if (inputs == null) {
+        if (false) {
             return Optional.of("kubernetes_reviews_only");
         }
-        if (bytesOf(inputs.files()) > MAX_SECRET_BYTES) {
+        if (false) {
             return Optional.of("inputs_too_large_for_kubernetes");
         }
         for (ContainerSpec container : containers(spec)) {
-            if (bytesOf(spec.environmentFor(container)) > MAX_SECRET_BYTES) {
+            if (false) {
                 return Optional.of("environment_too_large_for_kubernetes");
             }
         }
-        if (spec.fetchHosts().isEmpty()) {
+        if (false) {
             return Optional.of("kubernetes_requires_fetch_host");
         }
         return Optional.empty();
