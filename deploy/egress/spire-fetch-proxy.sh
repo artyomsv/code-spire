@@ -18,7 +18,8 @@ deadline=$2
 printf '%s\n' "$SPIRE_EGRESS_CONF" > /tmp/tinyproxy.conf
 printf '%s\n' "$SPIRE_EGRESS_FILTER" > /tmp/filter
 
-tinyproxy -d -c /tmp/tinyproxy.conf &
+printf '%s
+' "$SPIRE_EGRESS_CONF" | tinyproxy -d -c /dev/stdin &
 proxy_pid=$!
 
 # TEMP-DIAGNOSTIC
