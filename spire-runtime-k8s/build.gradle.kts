@@ -27,6 +27,8 @@ dependencies {
     implementation(project(":spire-runtime"))
     implementation(platform("$quarkusPlatformGroupId:$quarkusPlatformArtifactId:$quarkusPlatformVersion"))
     implementation("io.fabric8:kubernetes-client")
+    // FetchFailureReport reads the clone's JSON failure line; the version comes from the platform.
+    implementation("com.fasterxml.jackson.core:jackson-databind")
 
     // RunRuntimeContract: the rules every arm must obey. Test scope only.
     testImplementation(testFixtures(project(":spire-runtime")))

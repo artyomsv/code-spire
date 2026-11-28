@@ -41,6 +41,9 @@ public final class KubernetesRunRuntime implements RunRuntime {
 
     static final String REVIEWS_ONLY = "kubernetes_reviews_only";
 
+    /** The Docker arm's stop grace. */
+    static final Duration STOP_GRACE = Duration.ofSeconds(5);
+
     private final KubernetesClient client;
 
     private final KubernetesRuntimeConfig config;
@@ -93,8 +96,28 @@ public final class KubernetesRunRuntime implements RunRuntime {
         client.pods().inNamespace(config.namespace()).resource(ProxyPod.of(spec, config, anchor)).create();
         String proxyIp = start.awaitProxies(runId);
         client.pods().inNamespace(config.namespace()).resource(UnitPod.of(spec, config, anchor, proxyIp)).create();
-        start.awaitAgent(runId);
+        try {
+            start.awaitAgent(runId);
+        } catch (UnitNotStarted notStarted) {
+            stopPods(runId, notStarted);
+            throw notStarted;
+        }
         return new RunHandle(runId, UnitNames.anchor(runId));
+    }
+
+    /**
+     * A unit whose agent did not start in time may still start it later, with nobody attached to stop it. The proxy
+     * pod goes first, since it holds the model path. The anchor and the Secrets stay, so the unit is discoverable.
+     */
+    private void stopPods(String runId, UnitNotStarted notStarted) {
+        for (String pod : List.of(UnitNames.proxyPod(runId), UnitNames.unitPod(runId))) {
+            try {
+                client.pods().inNamespace(config.namespace()).withName(pod)
+                        .withGracePeriod(STOP_GRACE.toSeconds()).delete();
+            } catch (KubernetesClientException unstopped) {
+                notStarted.addSuppressed(unstopped);
+            }
+        }
     }
 
     /** An existing anchor is an error: a redelivered command is stopped earlier, and nothing here is adopted. */

@@ -89,8 +89,15 @@ final class UnitStart {
         }
     }
 
+    /** A read the API server refused is a runtime that is not available, never a raw client error. */
     private Pod present(String name) {
-        Pod pod = client.pods().inNamespace(config.namespace()).withName(name).get();
+        Pod pod;
+        try {
+            pod = client.pods().inNamespace(config.namespace()).withName(name).get();
+        } catch (KubernetesClientException unreadable) {
+            throw new UnitNotStarted("could not read the pod " + name + " while it started: "
+                    + unreadable.getMessage(), false);
+        }
         if (pod == null) {
             throw new UnitNotStarted("the pod " + name + " is gone before it started", false);
         }
