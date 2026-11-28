@@ -30,6 +30,12 @@ kill -0 "$proxy_pid" 2>/dev/null || {
     printf 'Port 8889\nUser egress\n' > /tmp/pu.conf; timeout 1 tinyproxy -d -c /tmp/pu.conf >/dev/null 2>&1; echo "port+user: exit $?" >&2
     : > /tmp/empty.conf; timeout 1 tinyproxy -d -c /tmp/empty.conf >/dev/null 2>&1; echo "empty: exit $?" >&2
     timeout 1 tinyproxy -d -c /etc/tinyproxy/tinyproxy.conf >/dev/null 2>&1; echo "stock: exit $?" >&2
+    ls -ld /tmp /dev/shm /etc/tinyproxy >&2
+    cp /tmp/p8888.conf /dev/shm/a.conf; timeout 1 tinyproxy -d -c /dev/shm/a.conf >/dev/null 2>&1; echo "dev/shm: exit $?" >&2
+    (cd /tmp; timeout 1 tinyproxy -d -c p8888.conf >/dev/null 2>&1; echo "relative in tmp: exit $?" >&2)
+    timeout 1 tinyproxy -d -c /proc/self/fd/0 < /tmp/p8888.conf >/dev/null 2>&1; echo "via stdin fd: exit $?" >&2
+    timeout 1 tinyproxy -d -c /tmp/p8888.conf 2>&1 | head -5 >&2
+    cat /tmp/p8888.conf >&2
     echo "Port 8889" > /tmp/min.conf; timeout 1 tinyproxy -d -c /tmp/min.conf >/dev/null 2>&1; echo "min: exit $?" >&2
     exit 1
 }
