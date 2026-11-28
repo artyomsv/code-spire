@@ -118,7 +118,10 @@ final class UnitPod {
         return PodSupport.withEnvironmentSecret(builder, UnitNames.environmentSecret(spec.runId(), "agent")).build();
     }
 
-    /** Init's inputs mount is an empty directory (the arm delivers the files); the agent's is the Secret. */
+    /**
+     * Init's inputs mount is an empty directory: the clone never reads inputs, and the arm delivers the files as a
+     * Secret the agent alone mounts.
+     */
     private static List<VolumeMount> mountsOf(RunUnitSpec spec, ContainerSpec container, boolean isInit) {
         List<VolumeMount> mounts = new ArrayList<>();
         for (Mount mount : container.mounts()) {

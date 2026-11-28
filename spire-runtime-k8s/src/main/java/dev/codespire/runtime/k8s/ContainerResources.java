@@ -29,11 +29,22 @@ final class ContainerResources {
         return of("50m", "128Mi", "500m", "512Mi");
     }
 
-    /** The agent's limits are the spec's; its requests are the deployment's. */
+    /**
+     * The agent's limits are the spec's; its requests are the deployment's, clamped to the limits because the API
+     * server refuses a pod whose request exceeds its limit. A limit below one millicore rounds up to one.
+     */
     static ResourceRequirements agent(RunUnitSpec spec, KubernetesRuntimeConfig config) {
-        String cpuLimit = (spec.nanoCpus() / NANO_CPUS_PER_MILLICORE) + "m";
-        String memoryLimit = String.valueOf(spec.memoryBytes());
-        return of(config.agentRequestCpu(), config.agentRequestMemory(), cpuLimit, memoryLimit);
+        long millicores = Math.max(1, (spec.nanoCpus() + NANO_CPUS_PER_MILLICORE - 1) / NANO_CPUS_PER_MILLICORE);
+        Quantity cpuLimit = new Quantity(millicores + "m");
+        Quantity memoryLimit = new Quantity(String.valueOf(spec.memoryBytes()));
+        Quantity cpuRequest = smaller(new Quantity(config.agentRequestCpu()), cpuLimit);
+        Quantity memoryRequest = smaller(new Quantity(config.agentRequestMemory()), memoryLimit);
+        return of(cpuRequest.toString(), memoryRequest.toString(), cpuLimit.toString(), memoryLimit.toString());
+    }
+
+    private static Quantity smaller(Quantity request, Quantity limit) {
+        boolean requestFits = Quantity.getAmountInBytes(request).compareTo(Quantity.getAmountInBytes(limit)) <= 0;
+        return requestFits ? request : limit;
     }
 
     static ResourceRequirements modelProxy() {

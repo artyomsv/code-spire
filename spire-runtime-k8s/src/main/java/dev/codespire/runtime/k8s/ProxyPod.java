@@ -23,7 +23,7 @@ final class ProxyPod {
     static final String EGRESS_PROXY = "egress-proxy";
     static final String FETCH_PROXY = "fetch-proxy";
 
-    static final String EGRESS_ALIAS = "spire-egress";
+    static final String EGRESS_ALIAS = EgressPolicy.PROXY_ALIAS;
     static final String FETCH_PROXY_COMMAND = "spire-fetch-proxy";
 
     /** Slack after the init timeout and the wall clock: the pod is a backstop, the worker deletes it first. */
