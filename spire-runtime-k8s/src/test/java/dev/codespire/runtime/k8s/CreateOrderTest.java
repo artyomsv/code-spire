@@ -2,11 +2,10 @@ package dev.codespire.runtime.k8s;
 
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.ConfigMapBuilder;
-import io.fabric8.kubernetes.api.model.StatusBuilder;
+import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.server.mock.EnableKubernetesMockClient;
-import io.fabric8.kubernetes.client.server.mock.KubernetesMockServer;
 import org.junit.jupiter.api.Test;
 
 import java.net.http.HttpClient;
@@ -29,8 +28,6 @@ class CreateOrderTest {
 
     private static final Duration SHORT_START = Duration.ofSeconds(2);
 
-    KubernetesMockServer server;
-
     KubernetesClient client;
 
     private KubernetesRunRuntime runtime(Duration unitStartTimeout) {
@@ -52,16 +49,21 @@ class CreateOrderTest {
 
     @Test
     void theAnchorExistsBeforeAnySecret() {
-        server.expect().post().withPath("/api/v1/namespaces/" + NAMESPACE + "/secrets")
-                .andReturn(500, new StatusBuilder().withCode(500).withMessage("TEST refused").build()).once();
+        // The crud mock answers every request itself, so the first Secret create is made to fail the way a real API
+        // server would: a Secret of that name is already there, and the create meets 409.
         String runId = "TEST-run-anchor-first";
+        String firstSecret = UnitNames.secretNames(runId).getFirst();
+        client.secrets().inNamespace(NAMESPACE).resource(new SecretBuilder()
+                .withNewMetadata().withName(firstSecret).withNamespace(NAMESPACE).endMetadata().build()).create();
 
-        assertThrows(KubernetesClientException.class,
+        KubernetesClientException refused = assertThrows(KubernetesClientException.class,
                 () -> runtime(SHORT_START).create(TestUnits.proxiedReview(runId)));
 
+        assertEquals(409, refused.getCode(), refused.getMessage());
         assertNotNull(client.configMaps().inNamespace(NAMESPACE).withName(UnitNames.anchor(runId)).get(),
                 "the anchor must exist before the first Secret is attempted, so a unit that fails there is found");
-        assertEquals(0, client.secrets().inNamespace(NAMESPACE).list().getItems().size());
+        assertEquals(List.of(firstSecret), client.secrets().inNamespace(NAMESPACE).list().getItems().stream()
+                .map(secret -> secret.getMetadata().getName()).toList(), "no Secret after the failed one");
     }
 
     @Test
