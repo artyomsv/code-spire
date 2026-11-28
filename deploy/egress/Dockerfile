@@ -22,6 +22,8 @@ RUN echo "apk upgrade for build ${APK_UPGRADE_BUST}" \
 # Published as ghcr.io/artyomsv/spire-egress-proxy. The recipe is Apache-2.0 (LICENSE, LICENSING.md);
 # tinyproxy keeps its own licence from the Alpine package.
 COPY LICENSE /usr/share/licenses/code-spire/LICENSE
+# The fetch proxy of a Kubernetes unit: tinyproxy that stops for good when its close port is touched.
+COPY --chmod=755 spire-fetch-proxy.sh /usr/local/bin/spire-fetch-proxy
 LABEL org.opencontainers.image.title="spire-egress-proxy" \
       org.opencontainers.image.description="Code Spire run-unit egress proxy (tinyproxy, configured per run)" \
       org.opencontainers.image.source="https://github.com/artyomsv/code-spire" \
