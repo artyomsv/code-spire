@@ -36,6 +36,10 @@ kill -0 "$proxy_pid" 2>/dev/null || {
     timeout 1 tinyproxy -d -c /proc/self/fd/0 < /tmp/p8888.conf >/dev/null 2>&1; echo "via stdin fd: exit $?" >&2
     timeout 1 tinyproxy -d -c /tmp/p8888.conf 2>&1 | head -5 >&2
     cat /tmp/p8888.conf >&2
+    chmod 444 /tmp/p8888.conf; timeout 1 tinyproxy -d -c /tmp/p8888.conf >/dev/null 2>&1; echo "chmod 444: exit $?" >&2
+    chmod 400 /tmp/p8888.conf; timeout 1 tinyproxy -d -c /tmp/p8888.conf >/dev/null 2>&1; echo "chmod 400: exit $?" >&2
+    echo "Port 8888" > /tmp/q.conf; chmod 444 /tmp/q.conf; timeout 1 tinyproxy -d -c /tmp/q.conf >/dev/null 2>&1; echo "fresh 444: exit $?" >&2
+    timeout 1 tinyproxy -d -c /tmp/q.conf; echo "fresh 444 visible: exit $?" >&2
     echo "Port 8889" > /tmp/min.conf; timeout 1 tinyproxy -d -c /tmp/min.conf >/dev/null 2>&1; echo "min: exit $?" >&2
     exit 1
 }
