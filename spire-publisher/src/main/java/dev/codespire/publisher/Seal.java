@@ -73,6 +73,10 @@ final class Seal {
         record Open(Target target) implements Result {
         }
 
+        /** The deadline came with nothing open but too few sealed rounds to prove a seal. */
+        record Unproven(int sealedRounds) implements Result {
+        }
+
         record NoControl(Target target) implements Result {
         }
     }
@@ -146,8 +150,8 @@ final class Seal {
         if (!controlAnswered) {
             return new Result.NoControl(settings.control());
         }
-        // Blocked and answered, but too few rounds fitted before the deadline: not proven.
-        return new Result.Open(settings.canaries().get(0));
+        // Nothing open and the control answered, but too few rounds fitted before the deadline.
+        return new Result.Unproven(sealedInARow);
     }
 
     private Target firstOpenCanary() {

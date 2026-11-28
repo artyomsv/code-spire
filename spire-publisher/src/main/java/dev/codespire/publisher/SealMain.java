@@ -1,6 +1,7 @@
 package dev.codespire.publisher;
 
 import java.io.PrintStream;
+import java.net.InetAddress;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -42,6 +43,10 @@ public final class SealMain {
                 out.println("{\"sealed\":false,\"open\":\"" + Json.escape(open.target().toString()) + "\"}");
                 return NOT_SEALED;
             }
+            if (result instanceof Seal.Result.Unproven unproven) {
+                out.println("{\"sealed\":false,\"rounds\":" + unproven.sealedRounds() + "}");
+                return NOT_SEALED;
+            }
             if (result instanceof Seal.Result.NoControl none) {
                 out.println("{\"sealed\":false,\"control\":\"" + Json.escape(none.target().toString()) + "\"}");
                 return NOT_SEALED;
@@ -68,7 +73,7 @@ public final class SealMain {
             }
             String value = args[++i];
             switch (flag) {
-                case "--canary" -> canaries.add(Seal.Target.parse(value));
+                case "--canary" -> canaries.add(literal(Seal.Target.parse(value)));
                 case "--control" -> control = Seal.Target.parse(value);
                 case "--rounds" -> rounds = Json.positive(flag, value);
                 case "--timeout-ms" -> timeoutMs = Json.positive(flag, value);
@@ -79,5 +84,18 @@ public final class SealMain {
         }
         return new Seal.Settings(canaries, control, rounds, Duration.ofMillis(timeoutMs),
                 Duration.ofMillis(intervalMs), Duration.ofSeconds(deadlineS));
+    }
+
+    /**
+     * A canary must be an IP literal. A host name that does not resolve would fail to connect and read as blocked, so
+     * a typo or a DNS fault would pass for a seal. {@code ofLiteral} never asks DNS.
+     */
+    private static Seal.Target literal(Seal.Target canary) {
+        try {
+            InetAddress.ofLiteral(canary.host());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("canary must be an IP address, not a name: " + canary, e);
+        }
+        return canary;
     }
 }

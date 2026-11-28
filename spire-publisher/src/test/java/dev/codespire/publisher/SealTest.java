@@ -101,11 +101,38 @@ class SealTest {
         PrintStream out = new PrintStream(bytes, true, StandardCharsets.UTF_8);
         PrintStream err = new PrintStream(new ByteArrayOutputStream());
 
-        int open = SealMain.run(new String[] {"--canary", "TEST-canary:1"}, out, err, (t, d) -> true, time, time);
+        int open = SealMain.run(new String[] {"--canary", "192.0.2.1:1"}, out, err, (t, d) -> true, time, time);
         assertEquals(3, open);
-        assertEquals("{\"sealed\":false,\"open\":\"TEST-canary:1\"}", bytes.toString(StandardCharsets.UTF_8).trim());
+        assertEquals("{\"sealed\":false,\"open\":\"192.0.2.1:1\"}", bytes.toString(StandardCharsets.UTF_8).trim());
 
         int bad = SealMain.run(new String[] {"--bogus", "x"}, out, err, (t, d) -> true, time, time);
         assertEquals(2, bad);
+    }
+
+    @Test
+    void tooFewSealedRoundsAtTheDeadlineIsUnprovenNotOpen() throws Exception {
+        Seal.Settings settings = new Seal.Settings(List.of(CANARY), CONTROL, 5, Duration.ofMillis(500),
+                Duration.ofMillis(500), Duration.ofSeconds(1));
+        Seal.Connector blockedAndAnswering = (target, timeout) -> target.equals(CONTROL);
+
+        assertEquals(new Seal.Result.Unproven(3), new Seal(settings, blockedAndAnswering, time, time).run());
+
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        int code = SealMain.run(new String[] {"--canary", "192.0.2.1:1", "--control", "TEST-control:2",
+                "--interval-ms", "500", "--deadline-s", "1"}, new PrintStream(bytes, true, StandardCharsets.UTF_8),
+                new PrintStream(new ByteArrayOutputStream()), blockedAndAnswering, new FakeTime(), new FakeTime());
+        assertEquals(3, code);
+        assertEquals("{\"sealed\":false,\"rounds\":3}", bytes.toString(StandardCharsets.UTF_8).trim());
+    }
+
+    @Test
+    void aCanaryThatIsAHostNameIsRefusedWithExitTwo() {
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int code = SealMain.run(new String[] {"--canary", "TEST-canary:1"},
+                new PrintStream(new ByteArrayOutputStream()), new PrintStream(err, true, StandardCharsets.UTF_8),
+                (t, d) -> false, time, time);
+
+        assertEquals(2, code);
+        assertTrue(err.toString(StandardCharsets.UTF_8).contains("IP address"), err.toString());
     }
 }
