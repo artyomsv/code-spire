@@ -106,7 +106,7 @@ class CreateOrderTest {
         assertEquals(runId, anchors.getFirst().getMetadata().getAnnotations().get(UnitNames.RUN_ID_ANNOTATION));
         assertEquals(String.valueOf(TestUnits.proxiedReview(runId).wallClock().toSeconds()),
                 anchors.getFirst().getMetadata().getAnnotations().get(KubernetesRunRuntime.WALL_CLOCK_ANNOTATION));
-        assertEquals(0, client.pods().inNamespace(NAMESPACE).withName(UnitNames.unitPod(runId)).list()
-                .getItems().size(), "no unit pod before the proxies start");
+        assertEquals(null, client.pods().inNamespace(NAMESPACE).withName(UnitNames.unitPod(runId)).get(),
+                "no unit pod before the proxies start");
     }
 }
