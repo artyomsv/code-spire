@@ -32,7 +32,10 @@ fi
 # The close: one connection ends the wait. nc -l accepts it, -e /bin/true answers by closing it at once (without -e
 # nc would wait for the client to hang up), and nc returns. timeout ends the wait at the deadline.
 timeout "$deadline" nc -l -p "$close_port" -e /bin/true </dev/null >/dev/null
+wait_status=$?
+echo "spire-fetch-proxy: the wait ended with status $wait_status; stopping tinyproxy" >&2
 
 kill "$proxy_pid" 2>/dev/null
 wait "$proxy_pid" 2>/dev/null
+echo "spire-fetch-proxy: tinyproxy stopped" >&2
 exit 0
