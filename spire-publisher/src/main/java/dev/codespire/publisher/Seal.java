@@ -93,6 +93,8 @@ final class Seal {
 
         @Override
         public boolean connects(Target target, Duration timeout) {
+            // A reachability probe: it completes the TCP handshake and sends no byte, so TLS has nothing to protect.
+            // nosemgrep: java.lang.security.audit.crypto.unencrypted-socket.unencrypted-socket
             try (Socket socket = new Socket()) {
                 socket.connect(new InetSocketAddress(target.host(), target.port()), (int) timeout.toMillis());
                 return true;
