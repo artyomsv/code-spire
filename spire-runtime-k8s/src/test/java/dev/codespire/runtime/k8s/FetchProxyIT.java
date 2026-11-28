@@ -107,6 +107,8 @@ class FetchProxyIT {
                 .withAllowPrivilegeEscalation(false)
                 .withNewCapabilities().addToDrop("ALL").endCapabilities()
                 .withNewSeccompProfile().withType("RuntimeDefault").endSeccompProfile()
+                // Without this the host's tinyproxy AppArmor profile applies; see spire-fetch-proxy.sh.
+                .withNewAppArmorProfile().withType("RuntimeDefault").endAppArmorProfile()
                 .endSecurityContext()
                 .addNewVolumeMount().withName("tmp").withMountPath("/tmp").endVolumeMount()
                 .endContainer()
