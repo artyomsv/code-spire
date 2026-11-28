@@ -3,6 +3,7 @@ package dev.codespire.runtime.k8s;
 import dev.codespire.runtime.EgressPolicy;
 import dev.codespire.runtime.EnterpriseEnvironment;
 import dev.codespire.runtime.TinyproxyConfig;
+import io.fabric8.kubernetes.api.model.ContainerStateTerminated;
 import io.fabric8.kubernetes.api.model.ContainerStatus;
 import io.fabric8.kubernetes.api.model.IntOrString;
 import io.fabric8.kubernetes.api.model.Pod;
@@ -13,11 +14,13 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The fetch proxy of the Kubernetes unit: it forwards to the one host it allows, and a connection to its close
@@ -52,12 +55,12 @@ class FetchProxyIT {
         String ip = running.getStatus().getPodIP();
 
         // Exit codes name the failed step: 11 the allowed host was not forwarded, 12 the other host was,
-        // 14 the proxy still answers after the close (a close that did not connect shows here).
+        // 13 the close port was not open once the proxy answered, 14 the proxy still answers after the close.
         String script = "export http_proxy=http://" + ip + ":" + PROXY_PORT + "; "
                 + "wget -T 20 -O /dev/null http://" + ALLOWED_HOST + "/ || exit 11; "
                 + "wget -T 20 -O /dev/null http://" + DENIED_HOST + "/ && exit 12; "
-                // The close port opens a moment after the proxy: retry until a connection is accepted.
-                + "for i in $(seq 1 20); do nc -z -w 2 " + ip + " " + CLOSE_PORT + " && break; sleep 1; done; "
+                // One attempt, no retry, right after the proxy has answered: the close port must be open by then.
+                + "nc -z -w 2 " + ip + " " + CLOSE_PORT + " || exit 13; "
                 + "sleep 3; "
                 + "nc -w 3 " + ip + " " + PROXY_PORT + " </dev/null && exit 14; "
                 + "exit 0";
@@ -66,7 +69,7 @@ class FetchProxyIT {
         String logs = exit == 0 ? "" : " client log: " + podLog(namespace, "test-fetch-b")
                 + " proxy log: " + podLog(namespace, "test-fetch-a");
         assertEquals(0, exit, "the client's step failed (11 allowed host not forwarded, 12 other host forwarded, "
-                + "14 proxy still answering after the close)" + logs);
+                + "13 close port not open, 14 proxy still answering after the close)" + logs);
 
         Pod done = KindCluster.client().pods().inNamespace(namespace).withName("test-fetch-a")
                 .waitUntilCondition(p -> p != null && p.getStatus() != null
@@ -84,7 +87,12 @@ class FetchProxyIT {
         Pod done = KindCluster.client().pods().inNamespace(namespace).withName("test-fetch-d")
                 .waitUntilCondition(p -> p != null && p.getStatus() != null
                         && "Succeeded".equals(p.getStatus().getPhase()), 30, TimeUnit.SECONDS);
-        assertEquals(0, done.getStatus().getContainerStatuses().get(0).getState().getTerminated().getExitCode());
+        ContainerStateTerminated ended = done.getStatus().getContainerStatuses().get(0).getState().getTerminated();
+        assertEquals(0, ended.getExitCode());
+        // An instant exit (a refused start, a failed listener) must not pass as "stopped at the deadline".
+        long ranSeconds = Duration.between(Instant.parse(ended.getStartedAt()), Instant.parse(ended.getFinishedAt()))
+                .toSeconds();
+        assertTrue(ranSeconds >= 4, "the proxy ran only " + ranSeconds + " s of its 5 s deadline");
     }
 
     private static void startProxy(String namespace, String name, int deadlineSeconds) {
