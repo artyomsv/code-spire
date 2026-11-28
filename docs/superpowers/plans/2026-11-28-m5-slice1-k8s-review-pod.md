@@ -35,7 +35,7 @@ Read it first. Slice 1 is its "Slices" row 1. Ids `M5-FR-n` / `M5-AC-n` below ar
   keywords. No mention of AI or tools.
 - **One pull request** for the slice, not a draft, opened in Task 1 with the first commit that needs CI.
   Branch: `feat/m5-k8s-review-runtime`. After each push that answers review findings or red CI, run
-  `node "$HOME/.claude/skills/pr-review/scripts/pr-review.mjs" request-review --pr <n>`.
+  `node "E:/Projects/Stukans/dotai/shared/skills/pr-review/scripts/pr-review.mjs" request-review --pr <n>`.
 - A new module gets its own `LICENSE` (first line names the module) and a row in `LICENSING.md`
   (`ModuleLicensingIsDeclaredTest`), an `include` in `settings.gradle.kts`, and a `COPY` line in the root
   `Dockerfile` (`ImageBuildSeesEveryModuleTest`).
