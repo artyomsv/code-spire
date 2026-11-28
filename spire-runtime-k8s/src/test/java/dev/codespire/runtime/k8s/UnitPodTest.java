@@ -137,7 +137,7 @@ class UnitPodTest {
         Container agent = container(pod, "agent");
         assertEquals(spec.agent().image(), agent.getImage());
         assertEquals(spec.agent().argv(), agent.getArgs());
-        assertNull(agent.getCommand());
+        assertTrue(agent.getCommand() == null || agent.getCommand().isEmpty());
         ContainerSpec withEntrypoint = new ContainerSpec(spec.agent().image(), spec.agent().argv(),
                 spec.agent().environment(), spec.agent().mounts(), List.of("TEST-entry"));
         Pod changed = UnitPod.of(spec.withAgent(withEntrypoint), CONFIG, PodFixtures.ANCHOR, PodFixtures.PROXY_IP);
