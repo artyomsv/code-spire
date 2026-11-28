@@ -30,11 +30,11 @@ final class UnitRefusals {
         if (inputs == null) {
             return Optional.of("kubernetes_reviews_only");
         }
-        if (bytesOf(inputs.files()) >= MAX_SECRET_BYTES) {
+        if (bytesOf(inputs.files()) > MAX_SECRET_BYTES) {
             return Optional.of("inputs_too_large_for_kubernetes");
         }
         for (ContainerSpec container : containers(spec)) {
-            if (bytesOf(spec.environmentFor(container)) >= MAX_SECRET_BYTES) {
+            if (bytesOf(spec.environmentFor(container)) > MAX_SECRET_BYTES) {
                 return Optional.of("environment_too_large_for_kubernetes");
             }
         }
