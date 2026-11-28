@@ -71,7 +71,7 @@ final class UnitStart {
         long deadline = System.nanoTime() + limit.toNanos();
         while (true) {
             Pod pod = present(name);
-            failIfSealFailed(pod, UnitPod.SEAL);
+            // MUTATION: the unit pod seal mapping removed
             failIfFetchFailed(pod, runId);
             failIfFetchProxyOpen(pod);
             // Before the generic check: once the agent ran, a publisher stopped by its end is no start failure.
