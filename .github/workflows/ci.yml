@@ -111,6 +111,7 @@ jobs:
           docker build -t spire-model-proxy:TEST spire-model-proxy
           docker build -t spire-egress-proxy:TEST deploy/egress
           docker build -t spire-test-unit:TEST spire-runtime-k8s/src/test/docker/unit
+          docker build -t spire-test-stubborn-egress:TEST spire-runtime-k8s/src/test/docker/stubborn-egress
       # wait: 0s because a cluster with no CNI has no Ready node until the CNI is applied below.
       - uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
         with:
@@ -130,7 +131,7 @@ jobs:
       - name: Load the images into the cluster
         run: |
           kind load docker-image --name spire-test \
-            spire-publisher:TEST spire-model-proxy:TEST spire-egress-proxy:TEST spire-test-unit:TEST
+            spire-publisher:TEST spire-model-proxy:TEST spire-egress-proxy:TEST spire-test-unit:TEST spire-test-stubborn-egress:TEST
       - run: ./gradlew testKubernetes --no-daemon --console=plain
       - name: Cluster diagnostics
         if: failure()
