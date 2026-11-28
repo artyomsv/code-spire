@@ -34,7 +34,7 @@ final class UnitSecrets {
         secrets.add(secret(runId, config, anchor, UnitNames.environmentSecret(runId, "fetch"),
                 spec.environmentBehindFetch(spec.init())));
         secrets.add(secret(runId, config, anchor, UnitNames.environmentSecret(runId, "agent"),
-                spec.environmentFor(spec.modelProxy())));
+                spec.environmentFor(spec.agent())));
         secrets.add(secret(runId, config, anchor, UnitNames.environmentSecret(runId, "publisher"),
                 spec.environmentFor(spec.publisher())));
         secrets.add(secret(runId, config, anchor, UnitNames.environmentSecret(runId, "model"),
