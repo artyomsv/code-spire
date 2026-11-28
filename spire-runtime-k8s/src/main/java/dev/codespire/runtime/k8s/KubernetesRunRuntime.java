@@ -109,6 +109,9 @@ public final class KubernetesRunRuntime implements RunRuntime {
         client.pods().inNamespace(config.namespace()).resource(ProxyPod.of(spec, config, anchor)).create();
         try {
             String proxyIp = start.awaitProxies(runId);
+            if (teardown.isCancelled(runId)) {
+                throw new UnitNotStarted(CANCELLED_BEFORE_START, false);
+            }
             client.pods().inNamespace(config.namespace()).resource(UnitPod.of(spec, config, anchor, proxyIp)).create();
             start.awaitAgent(runId);
         } catch (RuntimeException failed) {
@@ -198,6 +201,7 @@ public final class KubernetesRunRuntime implements RunRuntime {
         teardown.markCancelled(runId);
         attachments.closeAll(runId);
         teardown.deletePods(runId);
+        teardown.deleteSecrets(runId);
     }
 
     @Override

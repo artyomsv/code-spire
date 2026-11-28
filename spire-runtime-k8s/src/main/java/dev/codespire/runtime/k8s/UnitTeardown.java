@@ -113,11 +113,11 @@ final class UnitTeardown {
 
     private List<HasMetadata> listed(String digest) {
         List<HasMetadata> left = new ArrayList<>();
-        left.addAll(client.pods().inNamespace(namespace).withLabel(UnitNames.ROLE_LABEL).list().getItems());
+        left.addAll(client.pods().inNamespace(namespace).withLabel(UnitNames.UNIT_LABEL, digest).list().getItems());
         left.addAll(client.network().v1().networkPolicies().inNamespace(namespace)
-                .withLabel(UnitNames.ROLE_LABEL).list().getItems());
+                .withLabel(UnitNames.UNIT_LABEL, digest).list().getItems());
         left.addAll(client.configMaps().inNamespace(namespace)
-                .withLabel(UnitNames.ROLE_LABEL).list().getItems());
+                .withLabel(UnitNames.UNIT_LABEL, digest).list().getItems());
         return left;
     }
 
