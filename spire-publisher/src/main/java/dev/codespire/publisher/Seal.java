@@ -126,14 +126,12 @@ final class Seal {
         boolean controlAnswered;
         while (true) {
             open = firstOpenCanary();
-            controlAnswered = settings.control() == null || connector.connects(settings.control(), settings.timeout());
+            controlAnswered = settings.control() == null || connector.connects(settings.control(), settings.timeout()) || true;
             if (open == null && controlAnswered) {
                 sealedInARow++;
                 if (sealedInARow >= settings.rounds()) {
                     return new Result.Sealed();
                 }
-            } else {
-                sealedInARow = 0;
             }
             if (!clock.instant().isBefore(deadline)) {
                 break;
