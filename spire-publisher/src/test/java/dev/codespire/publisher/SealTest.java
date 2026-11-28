@@ -114,13 +114,14 @@ class SealTest {
         Seal.Settings settings = new Seal.Settings(List.of(CANARY), CONTROL, 5, Duration.ofMillis(500),
                 Duration.ofMillis(500), Duration.ofSeconds(1));
         Seal.Connector blockedAndAnswering = (target, timeout) -> target.equals(CONTROL);
+        FakeTime fresh = new FakeTime();
 
-        assertEquals(new Seal.Result.Unproven(3), new Seal(settings, blockedAndAnswering, time, time).run());
+        assertEquals(new Seal.Result.Unproven(3), new Seal(settings, blockedAndAnswering, fresh, fresh).run());
 
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         int code = SealMain.run(new String[] {"--canary", "192.0.2.1:1", "--control", "TEST-control:2",
                 "--interval-ms", "500", "--deadline-s", "1"}, new PrintStream(bytes, true, StandardCharsets.UTF_8),
-                new PrintStream(new ByteArrayOutputStream()), blockedAndAnswering, new FakeTime(), new FakeTime());
+                new PrintStream(new ByteArrayOutputStream()), blockedAndAnswering, fresh, fresh);
         assertEquals(3, code);
         assertEquals("{\"sealed\":false,\"rounds\":3}", bytes.toString(StandardCharsets.UTF_8).trim());
     }
