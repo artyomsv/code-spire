@@ -9,7 +9,6 @@ import org.junit.jupiter.api.Test;
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 /**
  * Proves the cluster under test enforces network policy, so no later "this pod cannot reach X" result
@@ -26,8 +25,10 @@ class ClusterEnforcesPolicyIT {
         String canaryIp = canary.substring(0, canary.lastIndexOf(':'));
 
         int denied = KindCluster.runToCompletion(namespace, "test-denied", "test-denied",
-                KindCluster.tryOnce(canary), Duration.ofSeconds(60));
-        assertNotEquals(0, denied, "a pod under default-deny reached the canary: the cluster enforces no policy");
+                KindCluster.tryDropOrReach(canary), Duration.ofSeconds(60));
+        assertEquals(KindCluster.EXIT_DROPPED, denied, "a pod under default-deny must time out against a canary "
+                + "already proven to listen; 0 means it connected (no enforcement), "
+                + KindCluster.EXIT_REFUSED + " means the connection was refused, not dropped");
 
         NetworkPolicy allowCanary = new NetworkPolicyBuilder()
                 .withNewMetadata().withName("allow-canary").withNamespace(namespace).endMetadata()

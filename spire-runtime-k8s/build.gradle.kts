@@ -44,6 +44,8 @@ tasks.test {
         excludeTags("open-cluster")
     }
     // CI keeps no test report, so a failure's message must reach the job log.
+    // A tag filter that matches nothing must fail the job, not pass it with zero tests.
+    failOnNoDiscoveredTests = true
     testLogging {
         events("passed", "failed", "skipped")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
@@ -58,6 +60,8 @@ tasks.register<Test>("openClusterTest") {
     useJUnitPlatform {
         includeTags("open-cluster")
     }
+    // A tag filter that matches nothing must fail the job, not pass it with zero tests.
+    failOnNoDiscoveredTests = true
     testLogging {
         events("passed", "failed", "skipped")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL

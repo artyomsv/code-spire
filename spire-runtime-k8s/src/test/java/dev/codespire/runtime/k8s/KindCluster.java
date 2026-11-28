@@ -33,7 +33,15 @@ final class KindCluster {
 
     static final int CANARY_PORT = 8080;
 
+    /** Exit code of {@link #tryDropOrReach}: every attempt ran into the timeout, so packets were dropped. */
+    static final int EXIT_DROPPED = 1;
+
+    /** Exit code of {@link #tryDropOrReach}: an attempt failed fast, so something refused it, not a policy. */
+    static final int EXIT_REFUSED = 99;
+
     private static KubernetesClient client;
+
+    private static String provenCanary;
 
     private KindCluster() {
     }
@@ -73,6 +81,9 @@ final class KindCluster {
      * decided only by the caller's own namespace.
      */
     static synchronized String canaryTarget() {
+        if (provenCanary != null) {
+            return provenCanary;
+        }
         if (client().namespaces().withName(CANARY_NAMESPACE).get() == null) {
             client().namespaces().resource(new NamespaceBuilder()
                     .withNewMetadata().withName(CANARY_NAMESPACE).addToLabels("spire-test", "TEST").endMetadata()
@@ -89,7 +100,7 @@ final class KindCluster {
                     .withImage(UNIT_IMAGE)
                     .withImagePullPolicy("IfNotPresent")
                     .withCommand("/bin/sh", "-c",
-                            "while true; do nc -l -p " + CANARY_PORT + " -e /bin/true; done")
+                            "nc -ll -p " + CANARY_PORT + " -e /bin/true")
                     .endContainer()
                     .endSpec()
                     .build();
@@ -100,7 +111,25 @@ final class KindCluster {
                                 && pod.getStatus().getPodIP() != null
                                 && "Running".equals(pod.getStatus().getPhase()),
                         120, TimeUnit.SECONDS);
-        return running.getStatus().getPodIP() + ":" + CANARY_PORT;
+        String target = running.getStatus().getPodIP() + ":" + CANARY_PORT;
+        proveListening(target);
+        provenCanary = target;
+        return target;
+    }
+
+    /**
+     * Connects to the canary from its own namespace, which has no policy, and fails unless it answers. A
+     * running pod is not a listening one, so every later "cannot reach" result rests on this proof: without
+     * it a refused connection would read the same as a dropped one.
+     */
+    private static void proveListening(String target) {
+        String probe = "test-probe-" + UUID.randomUUID().toString().substring(0, 8);
+        int exit = runToCompletion(CANARY_NAMESPACE, probe, "test-probe", tryUntilConnected(target),
+                Duration.ofSeconds(90));
+        if (exit != 0) {
+            throw new IllegalStateException("The canary " + target + " never accepted a connection from its own "
+                    + "namespace (exit " + exit + "), so no reachability result can be trusted.");
+        }
     }
 
     /** The cluster DNS Service's address, {@code clusterIP:53}. */
@@ -147,6 +176,18 @@ final class KindCluster {
     static String tryOnce(String target) {
         int colon = target.lastIndexOf(':');
         return "nc -w 2 " + target.substring(0, colon) + " " + target.substring(colon + 1) + " </dev/null";
+    }
+
+    /**
+     * The command that tries the canary three times, two seconds each. Exit 0 on the first connection;
+     * {@link #EXIT_REFUSED} if an attempt failed in under two seconds (a refusal or a reset, not a drop);
+     * {@link #EXIT_DROPPED} only when all three attempts ran the full timeout. A policy drop makes a connect
+     * hang until the timeout, a refusal returns at once, so only the first proves enforcement.
+     */
+    static String tryDropOrReach(String target) {
+        return "for i in 1 2 3; do s=$(date +%s); " + tryOnce(target) + "; rc=$?; e=$(date +%s); "
+                + "[ $rc -eq 0 ] && exit 0; [ $((e-s)) -lt 2 ] && exit " + EXIT_REFUSED + "; done; exit "
+                + EXIT_DROPPED;
     }
 
     /** The command that tries the canary for up to about 40 seconds and succeeds on the first connection. */

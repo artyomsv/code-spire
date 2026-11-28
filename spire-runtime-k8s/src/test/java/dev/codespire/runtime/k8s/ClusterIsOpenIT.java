@@ -21,7 +21,7 @@ class ClusterIsOpenIT {
         String namespace = KindCluster.newNamespace("test-open");
 
         int exit = KindCluster.runToCompletion(namespace, "test-denied", "test-denied",
-                KindCluster.tryUntilConnected(canary), Duration.ofSeconds(90));
+                KindCluster.tryDropOrReach(canary), Duration.ofSeconds(90));
 
         assertEquals(0, exit, "the denied pod could not reach the canary: this cluster enforces policy");
     }
