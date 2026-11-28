@@ -164,6 +164,12 @@ jobs:
       # the module is loaded.
       - name: Load br_netfilter
         run: sudo modprobe br_netfilter
+      # The kind node image carries no reference CNI plugins once its own CNI is off, and flannel delegates to
+      # "bridge". containernetworking/plugins v1.7.1, pinned by release tag.
+      - name: Install the reference CNI plugins
+        run: |
+          curl -fsSL https://github.com/containernetworking/plugins/releases/download/v1.7.1/cni-plugins-linux-amd64-v1.7.1.tgz \
+            | docker exec -i spire-test-control-plane tar -xz -C /opt/cni/bin
       - name: Install flannel (no network policy)
         # flannel v0.27.4, pinned by release tag.
         run: |
