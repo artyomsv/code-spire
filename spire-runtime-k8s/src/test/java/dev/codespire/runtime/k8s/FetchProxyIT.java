@@ -89,7 +89,7 @@ class FetchProxyIT {
     private static void startProxy(String namespace, String name, int deadlineSeconds) {
         EgressPolicy policy = new EgressPolicy(EgressPolicy.Mode.ENFORCE, Set.of(ALLOWED_HOST));
         String conf = TinyproxyConfig.configFor(policy, EnterpriseEnvironment.NONE,
-                new TinyproxyConfig.Listener(PROXY_PORT, null));
+                new TinyproxyConfig.Listener(PROXY_PORT, "0.0.0.0/0"));
         Pod pod = new PodBuilder()
                 .withNewMetadata().withName(name).withNamespace(namespace)
                 .addToLabels("app", "test-fetch-a").addToLabels("spire-test", "TEST").endMetadata()
