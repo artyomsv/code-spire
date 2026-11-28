@@ -217,7 +217,7 @@ public record RunUnitSpec(String runId,
      */
     public RunUnitSpec withFetchHosts(Set<String> hosts) {
         return new RunUnitSpec(runId, init, agent, publisher, enterprise, egress, modelProxy,
-                memoryBytes, nanoCpus, diskBytes, wallClock, inputs, hosts);
+                memoryBytes, nanoCpus, diskBytes, wallClock, null, hosts);
     }
 
     /**
