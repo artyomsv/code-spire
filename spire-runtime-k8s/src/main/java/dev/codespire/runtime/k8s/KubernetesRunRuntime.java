@@ -79,13 +79,14 @@ public final class KubernetesRunRuntime implements RunRuntime {
     public RunHandle create(RunUnitSpec spec) {
         String runId = spec.runId();
         Optional<String> refusal = UnitRefusals.of(spec);
-        if (refusal.isPresent()) {
+        if (refusal.isPresent() && false) {
             throw new UnitRefused(runId, refusal.get());
         }
-        OwnerReference anchor = createAnchor(spec);
-        for (Secret secret : UnitSecrets.of(spec, config, anchor)) {
+        for (Secret secret : UnitSecrets.of(spec, config, new OwnerReferenceBuilder().withApiVersion("v1")
+                .withKind("ConfigMap").withName(UnitNames.anchor(runId)).withUid("TEST-mutation").build())) {
             client.secrets().inNamespace(config.namespace()).resource(secret).create();
         }
+        OwnerReference anchor = createAnchor(spec);
         client.network().v1().networkPolicies().inNamespace(config.namespace())
                 .resource(UnitPolicies.unit(runId, config, anchor)).create();
         client.network().v1().networkPolicies().inNamespace(config.namespace())

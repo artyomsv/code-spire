@@ -25,7 +25,8 @@ class OpenClusterIT {
     @Test
     void aUnitOnAClusterThatEnforcesNoPolicyNeverRunsItsAgent() {
         namespace = KindCluster.newNamespace("test-open-unit");
-        KubernetesRunRuntime runtime = ClusterUnits.runtime(ClusterUnits.config(namespace));
+        KubernetesRunRuntime runtime = ClusterUnits.runtime(ClusterUnits.config(namespace,
+                ClusterUnits.EGRESS_IMAGE, java.util.List.of("127.0.0.1:1"), null));
         String runId = ClusterUnits.runId();
 
         UnitNotStarted failed = assertThrows(UnitNotStarted.class,
