@@ -35,6 +35,13 @@ kill -0 "$proxy_pid" 2>/dev/null || {
     done
     timeout 2 tinyproxy -d -c /tmp/tinyproxy.conf; echo "full: exit $?" >&2
     echo "Port 8889" > /tmp/min.conf; timeout 2 tinyproxy -d -c /tmp/min.conf >/dev/null 2>&1; echo "min: exit $?" >&2
+    ls -ln /dev/null /dev/stdout /dev/stderr /etc/tinyproxy 2>&1 | head -12 >&2
+    grep -E "Cap|Seccomp|NoNewPrivs" /proc/self/status >&2
+    timeout 2 tinyproxy -d -c /etc/tinyproxy/tinyproxy.conf; echo "stock conf: exit $?" >&2
+    timeout 2 tinyproxy -d -c /tmp/min.conf </dev/null; echo "min with stdin null: exit $?" >&2
+    cat /tmp/min.conf | head -3 >&2
+    HOME=/tmp timeout 2 tinyproxy -d -c /tmp/min.conf; echo "min HOME=/tmp: exit $?" >&2
+    timeout 2 tinyproxy -v >&2
     exit 1
 }
 
