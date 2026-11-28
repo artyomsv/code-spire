@@ -102,7 +102,15 @@ class FetchProxyIT {
                 .withCommand("spire-fetch-proxy", String.valueOf(CLOSE_PORT), String.valueOf(deadlineSeconds))
                 .addNewEnv().withName("SPIRE_EGRESS_CONF").withValue(conf).endEnv()
                 .addNewEnv().withName("SPIRE_EGRESS_FILTER").withValue(TinyproxyConfig.filterFor(policy)).endEnv()
+                .withNewSecurityContext()
+                .withReadOnlyRootFilesystem(true)
+                .withAllowPrivilegeEscalation(false)
+                .withNewCapabilities().addToDrop("ALL").endCapabilities()
+                .withNewSeccompProfile().withType("RuntimeDefault").endSeccompProfile()
+                .endSecurityContext()
+                .addNewVolumeMount().withName("tmp").withMountPath("/tmp").endVolumeMount()
                 .endContainer()
+                .addNewVolume().withName("tmp").withNewEmptyDir().withMedium("Memory").endEmptyDir().endVolume()
                 .endSpec()
                 .build();
         KindCluster.client().pods().inNamespace(namespace).resource(pod).create();
